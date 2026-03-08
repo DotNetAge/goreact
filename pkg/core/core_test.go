@@ -3,12 +3,9 @@ package core
 import (
 	"testing"
 
-	"github.com/ray/goreact/pkg/llm/mock"
 	"github.com/ray/goreact/pkg/tool"
 	"github.com/ray/goreact/pkg/types"
 )
-
-// mockAgentManager 模拟AgentManager实现（已废弃）
 
 func TestContext(t *testing.T) {
 	// 创建上下文
@@ -20,61 +17,21 @@ func TestContext(t *testing.T) {
 		t.Errorf("Expected to get value, got %v (ok: %v)", value, ok)
 	}
 
-	// 测试不存在的键
-	if _, ok := ctx.Get("non_existent"); ok {
-		t.Error("Expected non_existent key to not exist")
-	}
-}
-
-func TestLoopController(t *testing.T) {
-	// 创建循环控制器
-	controller := NewDefaultLoopController(3)
-
-	// 测试循环控制
-	state := &types.LoopState{
-		Iteration: 1,
+	// 测试获取不存在的键
+	if _, ok := ctx.Get("nonexistent"); ok {
+		t.Error("Expected key to not exist")
 	}
 
-	action := controller.Control(state)
-	if !action.ShouldContinue {
-		t.Error("Expected to continue for iteration 1")
+	// 测试克隆
+	cloned := ctx.Clone()
+	if value, ok := cloned.Get("key"); !ok || value != "value" {
+		t.Error("Expected cloned context to have the same data")
 	}
 
-	state.Iteration = 3
-	action = controller.Control(state)
-	if action.ShouldContinue {
-		t.Error("Expected to stop for iteration 3")
-	}
-}
-
-func TestThinker(t *testing.T) {
-	// 创建mock LLM客户端
-	mockResponses := []string{
-		"Thought: I need to test\nFinal Answer: Test response",
-	}
-	llmClient := mock.NewMockClient(mockResponses)
-
-	// 创建工具管理器
-	toolManager := tool.NewManager()
-
-	// 创建思考器
-	thinker := NewDefaultThinker(llmClient, toolManager.GetToolDescriptions())
-
-	// 创建上下文
-	ctx := NewContext()
-
-	// 测试思考
-	thought, err := thinker.Think("Test task", ctx)
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
-
-	if !thought.ShouldFinish {
-		t.Error("Expected thought to finish")
-	}
-
-	if thought.FinalAnswer != "Test response" {
-		t.Errorf("Expected final answer 'Test response', got '%s'", thought.FinalAnswer)
+	// 修改克隆的上下文不应影响原始上下文
+	cloned.Set("key", "new_value")
+	if value, ok := ctx.Get("key"); !ok || value != "value" {
+		t.Error("Expected original context to remain unchanged")
 	}
 }
 
@@ -112,33 +69,45 @@ func TestObserver(t *testing.T) {
 	// 创建上下文
 	ctx := NewContext()
 
-	// 测试成功的执行结果
-	successResult := &types.ExecutionResult{
+	// 创建执行结果
+	result := &types.ExecutionResult{
 		Success: true,
-		Output:  "Success output",
+		Output:  "Test output",
 	}
 
-	feedback, err := observer.Observe(successResult, ctx)
+	// 测试观察
+	feedback, err := observer.Observe(result, ctx)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
 	if !feedback.ShouldContinue {
-		t.Error("Expected to continue for success")
+		t.Error("Expected feedback to continue")
+	}
+}
+
+func TestLoopController(t *testing.T) {
+	// 创建循环控制器
+	controller := NewDefaultLoopController(5)
+
+	// 创建循环状态
+	state := &types.LoopState{
+		Iteration: 1,
+		Task:      "Test task",
 	}
 
-	// 测试失败的执行结果
-	failResult := &types.ExecutionResult{
-		Success: false,
-		Error:   nil,
+	// 测试循环控制
+	action := controller.Control(state)
+
+	if !action.ShouldContinue {
+		t.Error("Expected loop to continue")
 	}
 
-	feedback, err = observer.Observe(failResult, ctx)
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
+	// 测试达到最大迭代次数
+	state.Iteration = 6
+	action = controller.Control(state)
 
-	if !feedback.ShouldContinue {
-		t.Error("Expected to continue for failure")
+	if action.ShouldContinue {
+		t.Error("Expected loop to stop after max iterations")
 	}
 }

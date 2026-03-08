@@ -9,6 +9,7 @@ import (
 
 	"github.com/ray/goreact/pkg/cache"
 	"github.com/ray/goreact/pkg/core"
+	"github.com/ray/goreact/pkg/core/thinker"
 	"github.com/ray/goreact/pkg/llm"
 	"github.com/ray/goreact/pkg/llm/mock"
 	"github.com/ray/goreact/pkg/metrics"
@@ -48,7 +49,7 @@ func New(options ...Option) *Engine {
 
 	// 如果没有设置核心模块，使用默认实现
 	if engine.thinker == nil {
-		engine.thinker = core.NewDefaultThinker(engine.llmClient, engine.toolManager.GetToolDescriptions())
+		engine.thinker = thinker.NewSimpleThinker(engine.llmClient, engine.toolManager.GetToolDescriptions())
 	}
 	if engine.actor == nil {
 		engine.actor = core.NewDefaultActor(engine.toolManager)
@@ -64,7 +65,7 @@ func New(options ...Option) *Engine {
 func (e *Engine) RegisterTool(t tool.Tool) {
 	e.toolManager.RegisterTool(t)
 	// 更新 Thinker 的工具描述
-	e.thinker = core.NewDefaultThinker(e.llmClient, e.toolManager.GetToolDescriptions())
+	e.thinker = thinker.NewSimpleThinker(e.llmClient, e.toolManager.GetToolDescriptions())
 }
 
 // RegisterTools 注册多个工具
@@ -73,7 +74,7 @@ func (e *Engine) RegisterTools(tools ...tool.Tool) {
 		e.toolManager.RegisterTool(t)
 	}
 	// 更新 Thinker 的工具描述
-	e.thinker = core.NewDefaultThinker(e.llmClient, e.toolManager.GetToolDescriptions())
+	e.thinker = thinker.NewSimpleThinker(e.llmClient, e.toolManager.GetToolDescriptions())
 }
 
 // Execute 执行任务
