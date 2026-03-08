@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/ray/goreact/pkg/llm/mock"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/prompt"
 	"github.com/ray/goreact/pkg/tool"
 	"github.com/ray/goreact/pkg/types"
 )
@@ -60,9 +58,7 @@ func TestThinker(t *testing.T) {
 	toolManager := tool.NewManager()
 
 	// 创建思考器
-	promptManager := prompt.NewDefaultPromptManager()
-	memoryManager := memory.NewDefaultMemoryManager("")
-	thinker := NewDefaultThinker(llmClient, toolManager.GetToolDescriptions(), promptManager, memoryManager)
+	thinker := NewDefaultThinker(llmClient, toolManager.GetToolDescriptions())
 
 	// 创建上下文
 	ctx := NewContext()

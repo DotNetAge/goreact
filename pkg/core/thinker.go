@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/ray/goreact/pkg/llm"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/prompt"
 	"github.com/ray/goreact/pkg/types"
 )
 
@@ -18,37 +16,33 @@ type Thinker interface {
 
 // DefaultThinker 默认思考模块实现
 type DefaultThinker struct {
-	llmClient      llm.Client
-	toolDesc       string
-	promptManager  prompt.PromptManager
-	memoryManager  memory.MemoryManager
+	llmClient llm.Client
+	toolDesc  string
 }
 
 // NewDefaultThinker 创建默认思考模块
-func NewDefaultThinker(llmClient llm.Client, toolDesc string, promptManager prompt.PromptManager, memoryManager memory.MemoryManager) *DefaultThinker {
+func NewDefaultThinker(llmClient llm.Client, toolDesc string) *DefaultThinker {
 	return &DefaultThinker{
-		llmClient:      llmClient,
-		toolDesc:       toolDesc,
-		promptManager:  promptManager,
-		memoryManager:  memoryManager,
+		llmClient: llmClient,
+		toolDesc:  toolDesc,
 	}
 }
 
 // Think 执行思考
 func (t *DefaultThinker) Think(task string, context *Context) (*types.Thought, error) {
-	// 从内存管理器中获取历史信息
+	// 从 Context 中获取历史信息
 	var history string
-	if lastAction := t.memoryManager.Retrieve("default", "last_action"); lastAction != nil {
+	if lastAction, ok := context.Get("last_action"); ok {
 		if action, ok := lastAction.(*types.Action); ok {
 			history += fmt.Sprintf("Action: %s with params %v\n", action.ToolName, action.Parameters)
 		}
 	}
-	if lastResult := t.memoryManager.Retrieve("default", "last_result"); lastResult != nil {
+	if lastResult, ok := context.Get("last_result"); ok {
 		if result, ok := lastResult.(*types.ExecutionResult); ok {
 			history += fmt.Sprintf("Result: %v (Success: %v)\n", result.Output, result.Success)
 		}
 	}
-	if lastFeedback := t.memoryManager.Retrieve("default", "last_feedback"); lastFeedback != nil {
+	if lastFeedback, ok := context.Get("last_feedback"); ok {
 		if feedback, ok := lastFeedback.(*types.Feedback); ok {
 			history += fmt.Sprintf("Feedback: %s\n", feedback.Message)
 		}
@@ -75,30 +69,6 @@ func (t *DefaultThinker) Think(task string, context *Context) (*types.Thought, e
 
 // buildPrompt 构建 LLM prompt
 func (t *DefaultThinker) buildPrompt(task string, context *Context) string {
-	// 检查是否有预设的提示模板
-	if t.promptManager != nil {
-		// 尝试获取模板
-		template := t.promptManager.GetTemplate("react")
-		if template != "" {
-			// 准备变量
-			variables := map[string]interface{}{
-				"tool_desc": t.toolDesc,
-				"task":      task,
-			}
-
-			// 添加历史记录
-			if history, ok := context.Get("history"); ok {
-				if historyStr, ok := history.(string); ok && historyStr != "" {
-					variables["history"] = historyStr
-				}
-			}
-
-			// 渲染模板
-			return t.promptManager.RenderTemplate("react", variables)
-		}
-	}
-
-	// 如果没有模板，使用默认格式
 	var sb strings.Builder
 
 	sb.WriteString("You are a helpful AI assistant that uses tools to solve tasks.\n\n")

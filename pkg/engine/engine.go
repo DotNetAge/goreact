@@ -7,32 +7,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ray/goreact/pkg/agent"
 	"github.com/ray/goreact/pkg/cache"
 	"github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/llm"
 	"github.com/ray/goreact/pkg/llm/mock"
-	"github.com/ray/goreact/pkg/memory"
 	"github.com/ray/goreact/pkg/metrics"
-	"github.com/ray/goreact/pkg/model"
-	"github.com/ray/goreact/pkg/prompt"
-	"github.com/ray/goreact/pkg/skill"
 	"github.com/ray/goreact/pkg/tool"
 	"github.com/ray/goreact/pkg/types"
 )
 
 // Engine ReAct 引擎核心
 type Engine struct {
-	toolManager    *tool.Manager
-	modelManager   model.ModelManager
-	agentManager   *agent.Manager
-	skillManager   *skill.DefaultManager
-	memoryManager  memory.MemoryManager
-	promptManager  prompt.PromptManager
 	thinker        core.Thinker
 	actor          core.Actor
 	observer       core.Observer
 	loopController core.LoopController
+	toolManager    *tool.Manager
 	llmClient      llm.Client
 	cache          cache.Cache
 	maxRetries     int
@@ -42,27 +32,13 @@ type Engine struct {
 
 // New 创建新的引擎实例
 func New(options ...Option) *Engine {
-	// 创建默认组件
-	toolManager := tool.NewManager()
-	modelManager := model.NewDefaultModelManager()
-	agentManager := agent.NewManager()
-	skillManager := skill.NewDefaultManager()
-	memoryManager := memory.NewDefaultMemoryManager("")
-	promptManager := prompt.NewDefaultPromptManager()
-	llmClient := mock.NewMockClient([]string{})
-
 	engine := &Engine{
-		toolManager:    toolManager,
-		modelManager:   modelManager,
-		agentManager:   agentManager,
-		skillManager:   skillManager,
-		memoryManager:  memoryManager,
-		promptManager:  promptManager,
-		llmClient:      llmClient,
-		loopController: core.NewDefaultLoopController(10), // 默认最大 10 次迭代
-		maxRetries:     3,                                 // 默认最多重试 3 次
-		retryInterval:  1 * time.Second,                   // 默认重试间隔 1 秒
-		metrics:        metrics.NewDefaultMetrics(),       // 默认指标收集器
+		toolManager:    tool.NewManager(),
+		llmClient:      mock.NewMockClient([]string{}),
+		loopController: core.NewDefaultLoopController(10),
+		maxRetries:     3,
+		retryInterval:  1 * time.Second,
+		metrics:        metrics.NewDefaultMetrics(),
 	}
 
 	// 应用选项
@@ -72,7 +48,7 @@ func New(options ...Option) *Engine {
 
 	// 如果没有设置核心模块，使用默认实现
 	if engine.thinker == nil {
-		engine.thinker = core.NewDefaultThinker(engine.llmClient, engine.toolManager.GetToolDescriptions(), engine.promptManager, engine.memoryManager)
+		engine.thinker = core.NewDefaultThinker(engine.llmClient, engine.toolManager.GetToolDescriptions())
 	}
 	if engine.actor == nil {
 		engine.actor = core.NewDefaultActor(engine.toolManager)
@@ -88,50 +64,16 @@ func New(options ...Option) *Engine {
 func (e *Engine) RegisterTool(t tool.Tool) {
 	e.toolManager.RegisterTool(t)
 	// 更新 Thinker 的工具描述
-	e.thinker = core.NewDefaultThinker(e.llmClient, e.toolManager.GetToolDescriptions(), e.promptManager, e.memoryManager)
+	e.thinker = core.NewDefaultThinker(e.llmClient, e.toolManager.GetToolDescriptions())
 }
 
 // RegisterTools 注册多个工具
 func (e *Engine) RegisterTools(tools ...tool.Tool) {
 	for _, t := range tools {
-		e.RegisterTool(t)
+		e.toolManager.RegisterTool(t)
 	}
-}
-
-// RegisterModel 注册单个模型
-func (e *Engine) RegisterModel(m model.Model) {
-	e.modelManager.RegisterModel(m)
-}
-
-// RegisterModels 注册多个模型
-func (e *Engine) RegisterModels(models ...model.Model) {
-	for _, m := range models {
-		e.RegisterModel(m)
-	}
-}
-
-// RegisterAgent 注册单个智能体
-func (e *Engine) RegisterAgent(a *agent.Agent) {
-	e.agentManager.Register(a)
-}
-
-// RegisterAgents 注册多个智能体
-func (e *Engine) RegisterAgents(agents ...*agent.Agent) {
-	for _, a := range agents {
-		e.RegisterAgent(a)
-	}
-}
-
-// RegisterSkill 注册单个技能
-func (e *Engine) RegisterSkill(s *skill.Skill) {
-	e.skillManager.RegisterSkill(s)
-}
-
-// RegisterSkills 注册多个技能
-func (e *Engine) RegisterSkills(skills ...*skill.Skill) {
-	for _, s := range skills {
-		e.RegisterSkill(s)
-	}
+	// 更新 Thinker 的工具描述
+	e.thinker = core.NewDefaultThinker(e.llmClient, e.toolManager.GetToolDescriptions())
 }
 
 // Execute 执行任务
@@ -355,10 +297,10 @@ func (e *Engine) Execute(task string, ctx *core.Context) *types.Result {
 				Timestamp: time.Now(),
 			})
 
-			// 更新内存管理器中的上下文信息
-			e.memoryManager.Store("default", "last_action", thought.Action)
-			e.memoryManager.Store("default", "last_result", execResult)
-			e.memoryManager.Store("default", "last_feedback", feedback)
+			// 更新 Context 中的上下文信息
+			ctx.Set("last_action", thought.Action)
+			ctx.Set("last_result", execResult)
+			ctx.Set("last_feedback", feedback)
 		}
 
 		// 4. 循环控制
