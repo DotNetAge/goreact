@@ -9,10 +9,10 @@ type TaskDecomposer interface {
 
 // SubTask 子任务
 type SubTask struct {
-	ID          string                 // 子任务 ID
-	Description string                 // 子任务描述
-	Dependencies []string              // 依赖的子任务 ID
-	Metadata    map[string]interface{} // 元数据
+	ID           string                 // 子任务 ID
+	Description  string                 // 子任务描述
+	Dependencies []string               // 依赖的子任务 ID
+	Metadata     map[string]interface{} // 元数据
 }
 
 // DefaultTaskDecomposer 默认任务拆解器（简单实现）
@@ -27,10 +27,10 @@ func NewDefaultTaskDecomposer() *DefaultTaskDecomposer {
 func (d *DefaultTaskDecomposer) Decompose(task string, context interface{}) ([]SubTask, error) {
 	return []SubTask{
 		{
-			ID:          "task-1",
-			Description: task,
+			ID:           "task-1",
+			Description:  task,
 			Dependencies: []string{},
-			Metadata:    make(map[string]interface{}),
+			Metadata:     make(map[string]interface{}),
 		},
 	}, nil
 }

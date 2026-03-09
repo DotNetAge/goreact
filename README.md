@@ -9,6 +9,13 @@ GoReAct is a lightweight framework that implements the ReAct pattern - a powerfu
 **Current Status**: Phase 3 - Advanced Features (Completed)
 
 ## Phase 3 Features (NEW)
+- **Thinker Middleware System**: Web-inspired middleware pattern for enhancing the Think phase
+- **Prompt Toolkit**: Complete toolbox for Prompt construction and context management
+  - FluentPromptBuilder with fluent API
+  - Multiple tool formatters (JSON Schema, Markdown, Compact)
+  - Accurate token counters (supports Chinese/English/Mixed)
+  - Smart compression strategies (Priority, Sliding Window, Hybrid)
+  - Debugging and tracking tools
 - **Multi-agent Coordination**: Support for multiple agents with different skills
 - **SKILLS System**: Skill evaluation and management
 - **Task Decomposition**: Break down complex tasks into sub-tasks
@@ -273,6 +280,28 @@ go run examples/with_cache/main.go
 
 This example demonstrates the performance improvement from caching - the second execution is ~900,000x faster!
 
+### Thinker Middleware Example (NEW)
+
+```bash
+go run examples/thinker_middleware/main.go
+```
+
+Demonstrates the powerful middleware system for enhancing the Think phase with logging, retry, caching, RAG, rate limiting, and more. See [MIDDLEWARE_GUIDE.md](./docs/MIDDLEWARE_GUIDE.md) for details.
+
+### Prompt Toolkit Example (NEW)
+
+```bash
+go run examples/prompt_toolkit/main.go
+```
+
+Demonstrates the complete Prompt construction and context management toolbox. Learn how to:
+- Format tools for different LLMs (JSON Schema, Markdown, Compact)
+- Count tokens accurately (supports Chinese/English/Mixed)
+- Compress conversation history intelligently
+- Debug and optimize Prompt construction
+
+See [PROMPT_TOOLKIT_USAGE.md](./docs/PROMPT_TOOLKIT_USAGE.md) for practical usage guide.
+
 ## Configuration Options
 
 ```go
@@ -344,6 +373,7 @@ cache.NewMemoryCache(
 - Graceful degradation
 
 ### ✅ Phase 3: Advanced Features (Completed)
+- **Thinker Middleware System**: Composable middleware for Think phase enhancement
 - Multi-agent coordination
 - SKILLS system with evaluation
 - Task decomposition
@@ -376,7 +406,9 @@ goreact/
     ├── simple/      # Simple example with mock LLM
     ├── calculator/  # Calculator example with mock LLM
     ├── ollama/      # Ollama integration example
-    └── with_cache/  # Caching demonstration
+    ├── with_cache/  # Caching demonstration
+    ├── thinker_middleware/ # Middleware system demonstration
+    └── multi_agent/ # Multi-agent coordination example
 ```
 
 ## Contributing

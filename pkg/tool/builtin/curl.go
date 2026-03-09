@@ -5,14 +5,27 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Curl curl工具
-type Curl struct{}
+type Curl struct {
+	httpClient *http.Client
+}
 
 // NewCurl 创建curl工具
 func NewCurl() *Curl {
-	return &Curl{}
+	return &Curl{
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
+		},
+	}
 }
 
 // Name 返回工具名称
@@ -61,8 +74,7 @@ func (c *Curl) Execute(params map[string]interface{}) (interface{}, error) {
 	}
 
 	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -76,10 +88,10 @@ func (c *Curl) Execute(params map[string]interface{}) (interface{}, error) {
 
 	// 构建结果
 	result := map[string]interface{}{
-		"status":   resp.Status,
+		"status":     resp.Status,
 		"statusCode": resp.StatusCode,
-		"body":     string(respBody),
-		"headers":  resp.Header,
+		"body":       string(respBody),
+		"headers":    resp.Header,
 	}
 
 	return result, nil

@@ -69,6 +69,12 @@ func NewOllamaClient(options ...Option) *OllamaClient {
 		temperature: DefaultTemperature,
 		httpClient: &http.Client{
 			Timeout: DefaultTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
 		},
 	}
 

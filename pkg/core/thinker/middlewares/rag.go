@@ -16,9 +16,9 @@ type RAGRetriever interface {
 
 // Document 文档
 type Document struct {
-	ID      string                 // 文档 ID
-	Content string                 // 文档内容
-	Score   float64                // 相关性得分
+	ID       string                 // 文档 ID
+	Content  string                 // 文档内容
+	Score    float64                // 相关性得分
 	Metadata map[string]interface{} // 元数据
 }
 

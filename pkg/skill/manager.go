@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ray/goreact/pkg/llm"
@@ -68,6 +69,7 @@ type DefaultManager struct {
 	llmClient      llm.Client        // LLM 客户端（用于语义匹配）
 	selectionMode  SelectionMode     // 选择模式
 	topN           int               // 混合模式下筛选的候选数量
+	mu             sync.RWMutex      // 保护并发访问
 }
 
 // ManagerOption 管理器配置选项
@@ -226,7 +228,9 @@ func (m *DefaultManager) RegisterSkill(skill *Skill) error {
 	if err := validateSkill(skill); err != nil {
 		return fmt.Errorf("invalid skill: %w", err)
 	}
+	m.mu.Lock()
 	m.skills[skill.Name] = skill
+	m.mu.Unlock()
 	return nil
 }
 
@@ -272,7 +276,9 @@ func validateSkill(skill *Skill) error {
 
 // GetSkill 获取技能
 func (m *DefaultManager) GetSkill(name string) (*Skill, error) {
+	m.mu.RLock()
 	skill, ok := m.skills[name]
+	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("skill not found: %s", name)
 	}
@@ -281,16 +287,22 @@ func (m *DefaultManager) GetSkill(name string) (*Skill, error) {
 
 // ListSkills 列出所有技能元数据（轻量级）
 func (m *DefaultManager) ListSkills() []SkillMetadata {
+	m.mu.RLock()
 	metadata := make([]SkillMetadata, 0, len(m.skills))
 	for _, skill := range m.skills {
 		metadata = append(metadata, skill.GetMetadata())
 	}
+	m.mu.RUnlock()
 	return metadata
 }
 
 // SelectSkill 根据任务选择最合适的技能（混合模式）
 func (m *DefaultManager) SelectSkill(task string) (*Skill, error) {
-	if len(m.skills) == 0 {
+	m.mu.RLock()
+	skillCount := len(m.skills)
+	m.mu.RUnlock()
+
+	if skillCount == 0 {
 		return nil, fmt.Errorf("no skills available")
 	}
 
@@ -343,6 +355,7 @@ func (m *DefaultManager) filterCandidatesByKeyword(task string, topN int) ([]*Sk
 		score float64
 	}
 
+	m.mu.RLock()
 	scored := make([]scoredSkill, 0, len(m.skills))
 
 	// 计算每个技能的关键词匹配分数
@@ -350,6 +363,7 @@ func (m *DefaultManager) filterCandidatesByKeyword(task string, topN int) ([]*Sk
 		score := m.calculateKeywordScore(task, skill)
 		scored = append(scored, scoredSkill{skill: skill, score: score})
 	}
+	m.mu.RUnlock()
 
 	// 按分数排序（冒泡排序，简单实现）
 	for i := 0; i < len(scored); i++ {
@@ -512,10 +526,12 @@ Your selection:`, task, skillList)
 
 // getAllSkills 获取所有技能列表
 func (m *DefaultManager) getAllSkills() []*Skill {
+	m.mu.RLock()
 	skills := make([]*Skill, 0, len(m.skills))
 	for _, skill := range m.skills {
 		skills = append(skills, skill)
 	}
+	m.mu.RUnlock()
 	return skills
 }
 
@@ -525,6 +541,9 @@ func (m *DefaultManager) RecordExecution(name string, success bool, executionTim
 	if err != nil {
 		return err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	stats := skill.Statistics
 	stats.LastUsed = time.Now()
@@ -578,6 +597,7 @@ func (m *DefaultManager) GetSkillStatistics(name string) (*SkillStatistics, erro
 
 // GetSkillRanking 获取技能排名
 func (m *DefaultManager) GetSkillRanking() []SkillRanking {
+	m.mu.RLock()
 	rankings := make([]SkillRanking, 0, len(m.skills))
 
 	for _, skill := range m.skills {
@@ -586,6 +606,7 @@ func (m *DefaultManager) GetSkillRanking() []SkillRanking {
 			OverallScore: skill.Statistics.OverallScore,
 		})
 	}
+	m.mu.RUnlock()
 
 	// 按评分排序
 	for i := 0; i < len(rankings); i++ {
@@ -608,6 +629,9 @@ func (m *DefaultManager) GetSkillRanking() []SkillRanking {
 func (m *DefaultManager) EvolveSkills() error {
 	now := time.Now()
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for name, skill := range m.skills {
 		stats := skill.Statistics
 		score := stats.OverallScore
@@ -626,9 +650,9 @@ func (m *DefaultManager) EvolveSkills() error {
 		}
 
 		if shouldArchive {
-			if err := m.ArchiveSkill(name); err != nil {
-				return fmt.Errorf("failed to archive skill %s: %w", name, err)
-			}
+			// 直接归档，不调用 ArchiveSkill 以避免死锁
+			m.archivedSkills[name] = skill
+			delete(m.skills, name)
 		}
 	}
 
@@ -637,6 +661,9 @@ func (m *DefaultManager) EvolveSkills() error {
 
 // ArchiveSkill 归档技能（软淘汰）
 func (m *DefaultManager) ArchiveSkill(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	skill, ok := m.skills[name]
 	if !ok {
 		return fmt.Errorf("skill not found: %s", name)
@@ -651,6 +678,9 @@ func (m *DefaultManager) ArchiveSkill(name string) error {
 
 // RestoreSkill 恢复归档的技能
 func (m *DefaultManager) RestoreSkill(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	skill, ok := m.archivedSkills[name]
 	if !ok {
 		return fmt.Errorf("archived skill not found: %s", name)

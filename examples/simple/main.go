@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ray/goreact/pkg/engine"
@@ -28,7 +29,7 @@ func main() {
 	eng.RegisterTool(builtin.NewEcho())
 
 	// 执行任务
-	result := eng.Execute("Echo the message: Hello, GoReAct!", nil)
+	result := eng.Execute(context.Background(), "Echo the message: Hello, GoReAct!", nil)
 
 	// 打印结果
 	fmt.Printf("Success: %v\n", result.Success)

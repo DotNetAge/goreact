@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"context"
 	"time"
 
 	"github.com/ray/goreact/pkg/cache"
@@ -44,7 +45,7 @@ func main() {
 	fmt.Println("First execution (no cache):")
 	fmt.Println("Task:", task)
 	start1 := time.Now()
-	result1 := eng.Execute(task, nil)
+	result1 := eng.Execute(context.Background(), task, nil)
 	duration1 := time.Since(start1)
 
 	fmt.Printf("Success: %v\n", result1.Success)
@@ -56,7 +57,7 @@ func main() {
 	fmt.Println("Second execution (should hit cache):")
 	fmt.Println("Task:", task)
 	start2 := time.Now()
-	result2 := eng.Execute(task, nil)
+	result2 := eng.Execute(context.Background(), task, nil)
 	duration2 := time.Since(start2)
 
 	fmt.Printf("Success: %v\n", result2.Success)

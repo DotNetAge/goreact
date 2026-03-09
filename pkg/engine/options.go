@@ -3,10 +3,15 @@ package engine
 import (
 	"time"
 
+	"github.com/ray/goreact/pkg/agent"
 	"github.com/ray/goreact/pkg/cache"
 	"github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/llm"
+	"github.com/ray/goreact/pkg/log"
 	"github.com/ray/goreact/pkg/metrics"
+	"github.com/ray/goreact/pkg/model"
+	"github.com/ray/goreact/pkg/skill"
+	"github.com/ray/goreact/pkg/tool/provider"
 )
 
 // Option 引擎配置选项
@@ -79,5 +84,64 @@ func WithRetryInterval(interval time.Duration) Option {
 func WithMetrics(m metrics.Metrics) Option {
 	return func(e *Engine) {
 		e.metrics = m
+	}
+}
+
+// WithSkillManager 设置技能管理器
+func WithSkillManager(sm skill.Manager) Option {
+	return func(e *Engine) {
+		e.skillManager = sm
+	}
+}
+
+// WithProviderRegistry 设置工具提供者注册表
+func WithProviderRegistry(registry *provider.Registry) Option {
+	return func(e *Engine) {
+		e.providerRegistry = registry
+	}
+}
+
+// WithProvider 注册单个工具提供者
+func WithProvider(p provider.Provider) Option {
+	return func(e *Engine) {
+		if e.providerRegistry == nil {
+			e.providerRegistry = provider.NewRegistry()
+		}
+		if err := e.providerRegistry.Register(p); err != nil {
+			// 记录错误但不中断初始化
+			if e.logger != nil {
+				e.logger.Warn("Failed to register provider", log.Err(err))
+			}
+		}
+	}
+}
+
+// WithAgentManager 设置 Agent 管理器
+func WithAgentManager(am *agent.Manager) Option {
+	return func(e *Engine) {
+		e.agentManager = am
+	}
+}
+
+// WithModelManager 设置 Model 管理器
+func WithModelManager(mm *model.Manager) Option {
+	return func(e *Engine) {
+		e.modelManager = mm
+	}
+}
+
+// WithLogger 设置日志记录器
+func WithLogger(logger log.Logger) Option {
+	return func(e *Engine) {
+		e.logger = logger
+	}
+}
+
+// WithMaxTraceSize 设置最大 Trace 大小
+func WithMaxTraceSize(size int) Option {
+	return func(e *Engine) {
+		if size > 0 {
+			e.maxTraceSize = size
+		}
 	}
 }

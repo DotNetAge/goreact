@@ -62,17 +62,26 @@ func WithHTTPClient(client *http.Client) Option {
 // NewAnthropicClient 创建新的Anthropic客户端
 func NewAnthropicClient(apiKey string, options ...Option) *Client {
 	client := &Client{
-		apiKey:     llm.NewSecureString(apiKey),
-		model:      DefaultModel,
-		baseURL:    DefaultBaseURL,
-		timeout:    DefaultTimeout,
-		httpClient: &http.Client{},
+		apiKey:  llm.NewSecureString(apiKey),
+		model:   DefaultModel,
+		baseURL: DefaultBaseURL,
+		timeout: DefaultTimeout,
+		httpClient: &http.Client{
+			Timeout: DefaultTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
+		},
 	}
 
 	for _, opt := range options {
 		opt(client)
 	}
 
+	// 如果用户通过 WithTimeout 修改了超时，同步到 httpClient
 	client.httpClient.Timeout = client.timeout
 
 	return client

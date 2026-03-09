@@ -58,6 +58,7 @@ type Engine struct {
 	maxTraceSize     int // 最大 Trace 条目数，0 表示无限制
 	metrics          metrics.Metrics
 	logger           log.Logger
+	thinkerCache     map[string]core.Thinker // Thinker 缓存，key: cacheKey
 }
 
 // New 创建新的引擎实例
@@ -79,6 +80,7 @@ func New(options ...Option) *Engine {
 		maxTraceSize:     DefaultMaxTraceSize,
 		metrics:          metrics.NewDefaultMetrics(),
 		logger:           defaultLogger,
+		thinkerCache:     make(map[string]core.Thinker),
 	}
 
 	// 应用选项
@@ -93,7 +95,7 @@ func New(options ...Option) *Engine {
 
 	// 如果没有设置核心模块，使用默认实现
 	if engine.thinker == nil {
-		engine.thinker = thinker.NewSimpleThinker(engine.llmClient, engine.toolManager.GetToolDescriptions())
+		engine.thinker = engine.getOrCreateThinker(engine.llmClient, "")
 	}
 	if engine.actor == nil {
 		engine.actor = core.NewDefaultActor(engine.toolManager)
@@ -108,8 +110,9 @@ func New(options ...Option) *Engine {
 			for _, t := range tools {
 				engine.toolManager.RegisterTool(t)
 			}
-			// 更新 Thinker 的工具描述
-			engine.thinker = thinker.NewSimpleThinker(engine.llmClient, engine.toolManager.GetToolDescriptions())
+			// 更新 Thinker（清空缓存以使用新的工具描述）
+			engine.thinkerCache = make(map[string]core.Thinker)
+			engine.thinker = engine.getOrCreateThinker(engine.llmClient, "")
 		}
 	}
 
@@ -119,8 +122,9 @@ func New(options ...Option) *Engine {
 // RegisterTool 注册单个工具
 func (e *Engine) RegisterTool(t tool.Tool) {
 	e.toolManager.RegisterTool(t)
-	// 更新 Thinker 的工具描述
-	e.thinker = thinker.NewSimpleThinker(e.llmClient, e.toolManager.GetToolDescriptions())
+	// 清空 Thinker 缓存以使用新的工具描述
+	e.thinkerCache = make(map[string]core.Thinker)
+	e.thinker = e.getOrCreateThinker(e.llmClient, "")
 }
 
 // RegisterTools 注册多个工具
@@ -128,8 +132,9 @@ func (e *Engine) RegisterTools(tools ...tool.Tool) {
 	for _, t := range tools {
 		e.toolManager.RegisterTool(t)
 	}
-	// 更新 Thinker 的工具描述
-	e.thinker = thinker.NewSimpleThinker(e.llmClient, e.toolManager.GetToolDescriptions())
+	// 清空 Thinker 缓存以使用新的工具描述
+	e.thinkerCache = make(map[string]core.Thinker)
+	e.thinker = e.getOrCreateThinker(e.llmClient, "")
 }
 
 // Execute 执行任务
@@ -222,12 +227,8 @@ func (e *Engine) Execute(ctx context.Context, task string, execCtx *core.Context
 	// 3. 重新创建 Thinker（使用选定的 LLM Client 和 System Prompt）
 	currentThinker := e.thinker
 	if llmClient != e.llmClient || systemPrompt != "" {
-		// 创建新的 Thinker，注入 System Prompt
-		currentThinker = thinker.NewSimpleThinkerWithSystemPrompt(
-			llmClient,
-			e.toolManager.GetToolDescriptions(),
-			systemPrompt,
-		)
+		// 使用缓存的 Thinker
+		currentThinker = e.getOrCreateThinker(llmClient, systemPrompt)
 	}
 
 	// 4. Skill 选择和注入
@@ -512,7 +513,12 @@ Now, complete the original task: %s`,
 				qualityScore := 1.0
 				// 计算 token 消耗（简化处理，实际应该从 LLM 响应中获取）
 				tokenConsumed := len(task) + len(thought.FinalAnswer)
-				e.skillManager.RecordExecution(selectedSkill.Name, true, executionTime, tokenConsumed, qualityScore)
+				if err := e.skillManager.RecordExecution(selectedSkill.Name, true, executionTime, tokenConsumed, qualityScore); err != nil {
+					e.logger.Warn("Failed to record skill execution",
+						log.String("skill_name", selectedSkill.Name),
+						log.Err(err),
+					)
+				}
 			}
 
 			return result
@@ -700,7 +706,12 @@ Now, complete the original task: %s`,
 					qualityScore = 0.7 // 部分成功
 				}
 				tokenConsumed := len(task) + len(action.Reason)
-				e.skillManager.RecordExecution(selectedSkill.Name, success, executionTime, tokenConsumed, qualityScore)
+				if err := e.skillManager.RecordExecution(selectedSkill.Name, success, executionTime, tokenConsumed, qualityScore); err != nil {
+					e.logger.Warn("Failed to record skill execution",
+						log.String("skill_name", selectedSkill.Name),
+						log.Err(err),
+					)
+				}
 			}
 
 			return result
@@ -711,9 +722,39 @@ Now, complete the original task: %s`,
 // generateCacheKey 生成缓存键
 func (e *Engine) generateCacheKey(task string) string {
 	// 使用任务和工具描述生成缓存键
-	data := task + e.toolManager.GetToolDescriptions()
+	// 注意：不包含 LLM Client 指针，以允许跨 Engine 实例共享缓存
+	// 这是一个权衡：提高缓存命中率 vs 避免配置差异导致的问题
+	data := fmt.Sprintf("task:%s|tools:%s",
+		task,
+		e.toolManager.GetToolDescriptions(),
+	)
 	hash := sha256.Sum256([]byte(data))
 	return fmt.Sprintf("%x", hash)
+}
+
+// getOrCreateThinker 获取或创建 Thinker（带缓存）
+func (e *Engine) getOrCreateThinker(llmClient llm.Client, systemPrompt string) core.Thinker {
+	// 生成缓存键：llmClient 指针 + systemPrompt
+	cacheKey := fmt.Sprintf("%p:%s", llmClient, systemPrompt)
+
+	// 检查缓存
+	if cached, ok := e.thinkerCache[cacheKey]; ok {
+		return cached
+	}
+
+	// 创建新的 Thinker
+	var newThinker core.Thinker
+	toolDesc := e.toolManager.GetToolDescriptions()
+
+	if systemPrompt != "" {
+		newThinker = thinker.NewSimpleThinkerWithSystemPrompt(llmClient, toolDesc, systemPrompt)
+	} else {
+		newThinker = thinker.NewSimpleThinker(llmClient, toolDesc)
+	}
+
+	// 存入缓存
+	e.thinkerCache[cacheKey] = newThinker
+	return newThinker
 }
 
 // addTrace 添加 Trace 条目，并在超过限制时截断旧条目

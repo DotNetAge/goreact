@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"context"
 
 	"github.com/ray/goreact/pkg/engine"
 	"github.com/ray/goreact/pkg/llm/mock"
@@ -27,7 +28,7 @@ func main() {
 	fmt.Println("Task: Calculate 15 * 23 + 7")
 	fmt.Println()
 
-	result := eng.Execute("Calculate 15 * 23 + 7", nil)
+	result := eng.Execute(context.Background(), "Calculate 15 * 23 + 7", nil)
 
 	// 打印结果
 	fmt.Printf("\nSuccess: %v\n", result.Success)

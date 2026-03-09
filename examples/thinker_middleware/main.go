@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"context"
 	"time"
 
 	"github.com/ray/goreact/pkg/core"
@@ -113,14 +114,14 @@ func main() {
 	ctx := core.NewContext()
 	ctx.Set("user_id", "user123") // 设置用户 ID
 
-	result := eng.Execute("Calculate 100 + 200", ctx)
+	result := eng.Execute(context.Background(), "Calculate 100 + 200", ctx)
 
 	fmt.Printf("\n结果: %s\n", result.Output)
 	fmt.Printf("成功: %v\n", result.Success)
 
 	// 6. 第二次执行相同任务（测试缓存）
 	fmt.Println("\n=== 第二次执行相同任务（应该命中缓存）===\n")
-	result2 := eng.Execute("Calculate 100 + 200", ctx)
+	result2 := eng.Execute(context.Background(), "Calculate 100 + 200", ctx)
 	fmt.Printf("结果: %s\n", result2.Output)
 
 	// 7. 展示如何自定义中间件
@@ -149,7 +150,7 @@ func main() {
 	eng2 := engine.New(engine.WithThinker(customThinker))
 	eng2.RegisterTool(builtin.NewCalculator())
 
-	result3 := eng2.Execute("Calculate 50 + 50", core.NewContext())
+	result3 := eng2.Execute(context.Background(), "Calculate 50 + 50", core.NewContext())
 	fmt.Printf("结果: %s\n", result3.Output)
 
 	fmt.Println("\n=== 示例完成 ===")

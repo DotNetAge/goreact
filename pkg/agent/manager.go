@@ -101,27 +101,32 @@ func (m *Manager) SelectAgent(task string) (*Agent, error) {
 // SelectAgentWithResult 根据任务选择最合适的 Agent，返回详细的选择结果
 func (m *Manager) SelectAgentWithResult(task string) (*SelectionResult, error) {
 	m.mutex.RLock()
-	defer m.mutex.RUnlock()
 
 	if len(m.agents) == 0 {
+		m.mutex.RUnlock()
 		return nil, fmt.Errorf("no agents available")
 	}
 
 	// 如果只有一个 Agent，直接返回
 	if len(m.agents) == 1 {
 		for _, agent := range m.agents {
+			m.mutex.RUnlock()
 			return &SelectionResult{Agent: agent, Method: SelectionSingle}, nil
 		}
 	}
 
 	// 1. 关键词匹配筛选候选
 	candidates := m.filterByKeywords(task)
+	m.mutex.RUnlock()
 
 	// 2. 如果没有候选，返回第一个 Agent（明确标记为 fallback）
 	if len(candidates) == 0 {
+		m.mutex.RLock()
 		for _, agent := range m.agents {
+			m.mutex.RUnlock()
 			return &SelectionResult{Agent: agent, Method: SelectionFallback}, nil
 		}
+		m.mutex.RUnlock()
 	}
 
 	// 3. 如果只有一个候选，直接返回
@@ -133,7 +138,7 @@ func (m *Manager) SelectAgentWithResult(task string) (*SelectionResult, error) {
 		}, nil
 	}
 
-	// 4. 如果有多个候选且有 LLM，使用语义匹配
+	// 4. 如果有多个候选且有 LLM，使用语义匹配（不持有锁）
 	if len(candidates) > 1 && m.llmClient != nil {
 		agents := make([]*Agent, len(candidates))
 		for i, c := range candidates {

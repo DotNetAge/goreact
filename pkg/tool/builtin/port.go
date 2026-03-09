@@ -40,9 +40,9 @@ func (p *Port) Execute(params map[string]interface{}) (interface{}, error) {
 	listener, err := net.Listen("tcp", addr)
 
 	result := map[string]interface{}{
-		"port":     int(port),
-		"address":  address,
-		"inUse":    err != nil,
+		"port":    int(port),
+		"address": address,
+		"inUse":   err != nil,
 	}
 
 	if err != nil {

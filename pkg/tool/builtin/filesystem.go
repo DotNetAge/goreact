@@ -103,14 +103,14 @@ func (f *FileSystem) listDir(params map[string]interface{}) (interface{}, error)
 	var result []map[string]interface{}
 	for _, entry := range entries {
 		result = append(result, map[string]interface{}{
-			"name":  entry.Name(),
-			"type":  func() string {
+			"name": entry.Name(),
+			"type": func() string {
 				if entry.IsDir() {
 					return "directory"
 				}
 				return "file"
 			}(),
-			"size":  entry.Size(),
+			"size":    entry.Size(),
 			"modTime": entry.ModTime(),
 		})
 	}

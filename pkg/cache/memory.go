@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -64,6 +65,11 @@ func NewMemoryCache(options ...MemoryOption) *MemoryCache {
 
 	// 启动清理协程
 	go cache.cleanupExpired()
+
+	// 设置 finalizer 确保 goroutine 被清理
+	runtime.SetFinalizer(cache, func(c *MemoryCache) {
+		_ = c.Close() // 忽略错误，因为在 finalizer 中无法处理
+	})
 
 	return cache
 }

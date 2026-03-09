@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ray/goreact/pkg/llm"
@@ -19,6 +20,7 @@ const (
 // Manager 模型管理器
 type Manager struct {
 	models map[string]*Model
+	mu     sync.RWMutex // 保护并发访问
 }
 
 // NewManager 创建模型管理器
@@ -33,7 +35,9 @@ func (m *Manager) RegisterModel(model *Model) error {
 	if err := validateModel(model); err != nil {
 		return fmt.Errorf("invalid model: %w", err)
 	}
+	m.mu.Lock()
 	m.models[model.Name] = model
+	m.mu.Unlock()
 	return nil
 }
 
@@ -99,7 +103,10 @@ func (m *Manager) GetModel(name string) (*Model, error) {
 		return nil, fmt.Errorf("model name cannot be empty")
 	}
 
+	m.mu.RLock()
 	model, exists := m.models[name]
+	m.mu.RUnlock()
+
 	if !exists {
 		return nil, fmt.Errorf("model not found: %s", name)
 	}
@@ -108,10 +115,12 @@ func (m *Manager) GetModel(name string) (*Model, error) {
 
 // ListModels 列出所有模型
 func (m *Manager) ListModels() []*Model {
+	m.mu.RLock()
 	models := make([]*Model, 0, len(m.models))
 	for _, model := range m.models {
 		models = append(models, model)
 	}
+	m.mu.RUnlock()
 	return models
 }
 

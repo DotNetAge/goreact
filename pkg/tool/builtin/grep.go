@@ -69,7 +69,7 @@ func (g *Grep) Execute(params map[string]interface{}) (interface{}, error) {
 				// 查找匹配
 				if re.Match(content) {
 					results = append(results, map[string]interface{}{
-						"file": filePath,
+						"file":    filePath,
 						"matched": true,
 					})
 				}
@@ -87,7 +87,7 @@ func (g *Grep) Execute(params map[string]interface{}) (interface{}, error) {
 		// 查找匹配
 		if re.Match(content) {
 			results = append(results, map[string]interface{}{
-				"file": path,
+				"file":    path,
 				"matched": true,
 			})
 		}

@@ -18,11 +18,11 @@ type RateLimiter interface {
 
 // TokenBucketLimiter 令牌桶限流器
 type TokenBucketLimiter struct {
-	capacity int           // 桶容量
-	tokens   int           // 当前令牌数
-	refillRate int         // 每秒补充的令牌数
-	lastRefill time.Time   // 上次补充时间
-	mu       sync.Mutex
+	capacity   int       // 桶容量
+	tokens     int       // 当前令牌数
+	refillRate int       // 每秒补充的令牌数
+	lastRefill time.Time // 上次补充时间
+	mu         sync.Mutex
 }
 
 // NewTokenBucketLimiter 创建令牌桶限流器

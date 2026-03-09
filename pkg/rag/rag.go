@@ -10,10 +10,10 @@ type Retriever interface {
 type Document interface {
 	// ID 返回文档ID
 	ID() string
-	
+
 	// Content 返回文档内容
 	Content() string
-	
+
 	// Metadata 返回文档元数据
 	Metadata() map[string]interface{}
 }
@@ -22,7 +22,7 @@ type Document interface {
 type RAG interface {
 	// Generate 生成增强响应
 	Generate(query string) (string, error)
-	
+
 	// AddDocument 添加文档到RAG系统
 	AddDocument(doc Document) error
 }

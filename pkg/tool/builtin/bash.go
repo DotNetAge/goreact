@@ -35,7 +35,7 @@ func (b *Bash) Execute(params map[string]interface{}) (interface{}, error) {
 	output, err := cmd.CombinedOutput()
 
 	result := map[string]interface{}{
-		"output": string(output),
+		"output":  string(output),
 		"success": err == nil,
 	}
 
