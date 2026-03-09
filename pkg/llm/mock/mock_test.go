@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"context"
 	"testing"
 )
 
@@ -11,9 +12,10 @@ func TestMockClient(t *testing.T) {
 		"Second response",
 	}
 	client := NewMockClient(responses)
+	ctx := context.Background()
 
 	// 测试生成
-	response1, err := client.Generate("Prompt 1")
+	response1, err := client.Generate(ctx, "Prompt 1")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -23,7 +25,7 @@ func TestMockClient(t *testing.T) {
 	}
 
 	// 测试第二次生成
-	response2, err := client.Generate("Prompt 2")
+	response2, err := client.Generate(ctx, "Prompt 2")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -33,7 +35,7 @@ func TestMockClient(t *testing.T) {
 	}
 
 	// 测试超出响应数量
-	response3, err := client.Generate("Prompt 3")
+	response3, err := client.Generate(ctx, "Prompt 3")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}

@@ -1,12 +1,14 @@
 package skill
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/ray/goreact/pkg/llm"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,20 +48,68 @@ type Manager interface {
 	RestoreSkill(name string) error
 }
 
+// SelectionMode 技能选择模式
+type SelectionMode int
+
+const (
+	// KeywordOnly 仅使用关键词匹配（快速但不够精确）
+	KeywordOnly SelectionMode = iota
+	// SemanticOnly 仅使用语义匹配（精确但较慢）
+	SemanticOnly
+	// Hybrid 混合模式：先关键词筛选，再语义选择（推荐）
+	Hybrid
+)
+
 // DefaultManager 默认技能管理器实现
 type DefaultManager struct {
 	skills         map[string]*Skill // 活跃技能库
 	archivedSkills map[string]*Skill // 归档技能库
 	totalTasks     int               // 总任务数（用于计算频率评分）
+	llmClient      llm.Client        // LLM 客户端（用于语义匹配）
+	selectionMode  SelectionMode     // 选择模式
+	topN           int               // 混合模式下筛选的候选数量
+}
+
+// ManagerOption 管理器配置选项
+type ManagerOption func(*DefaultManager)
+
+// WithLLMClient 设置 LLM 客户端（用于语义匹配）
+func WithLLMClient(client llm.Client) ManagerOption {
+	return func(m *DefaultManager) {
+		m.llmClient = client
+	}
+}
+
+// WithSelectionMode 设置选择模式
+func WithSelectionMode(mode SelectionMode) ManagerOption {
+	return func(m *DefaultManager) {
+		m.selectionMode = mode
+	}
+}
+
+// WithTopN 设置混合模式下的候选数量
+func WithTopN(n int) ManagerOption {
+	return func(m *DefaultManager) {
+		m.topN = n
+	}
 }
 
 // NewDefaultManager 创建新的默认技能管理器
-func NewDefaultManager() *DefaultManager {
-	return &DefaultManager{
+func NewDefaultManager(options ...ManagerOption) *DefaultManager {
+	m := &DefaultManager{
 		skills:         make(map[string]*Skill),
 		archivedSkills: make(map[string]*Skill),
 		totalTasks:     0,
+		selectionMode:  Hybrid, // 默认使用混合模式
+		topN:           3,      // 默认筛选前3个候选
 	}
+
+	// 应用选项
+	for _, opt := range options {
+		opt(m)
+	}
+
+	return m
 }
 
 // SkillFrontmatter SKILL.md 的 YAML frontmatter 结构
@@ -172,10 +222,51 @@ func (m *DefaultManager) loadOptionalDirectories(basePath string, skill *Skill) 
 
 // RegisterSkill 注册技能
 func (m *DefaultManager) RegisterSkill(skill *Skill) error {
+	// 验证技能数据
+	if err := validateSkill(skill); err != nil {
+		return fmt.Errorf("invalid skill: %w", err)
+	}
+	m.skills[skill.Name] = skill
+	return nil
+}
+
+// validateSkill 验证技能数据
+func validateSkill(skill *Skill) error {
+	if skill == nil {
+		return fmt.Errorf("skill cannot be nil")
+	}
+
+	// 验证名称（必需，1-64字符，小写字母、数字和连字符）
 	if skill.Name == "" {
 		return fmt.Errorf("skill name is required")
 	}
-	m.skills[skill.Name] = skill
+	if len(skill.Name) > 64 {
+		return fmt.Errorf("skill name too long (max 64 characters): %s", skill.Name)
+	}
+	for _, ch := range skill.Name {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+			return fmt.Errorf("skill name must contain only lowercase letters, numbers, and hyphens: %s", skill.Name)
+		}
+	}
+
+	// 验证描述（必需，1-1024字符）
+	if skill.Description == "" {
+		return fmt.Errorf("skill description is required")
+	}
+	if len(skill.Description) > 1024 {
+		return fmt.Errorf("skill description too long (max 1024 characters)")
+	}
+
+	// 验证兼容性字段（可选，最多500字符）
+	if len(skill.Compatibility) > 500 {
+		return fmt.Errorf("skill compatibility field too long (max 500 characters)")
+	}
+
+	// 验证指令内容（必需）
+	if strings.TrimSpace(skill.Instructions) == "" {
+		return fmt.Errorf("skill instructions are required")
+	}
+
 	return nil
 }
 
@@ -197,41 +288,235 @@ func (m *DefaultManager) ListSkills() []SkillMetadata {
 	return metadata
 }
 
-// SelectSkill 根据任务选择最合适的技能
+// SelectSkill 根据任务选择最合适的技能（混合模式）
 func (m *DefaultManager) SelectSkill(task string) (*Skill, error) {
-	taskLower := strings.ToLower(task)
-	var bestSkill *Skill
-	bestScore := 0.0
+	if len(m.skills) == 0 {
+		return nil, fmt.Errorf("no skills available")
+	}
 
+	switch m.selectionMode {
+	case KeywordOnly:
+		return m.selectByKeyword(task)
+	case SemanticOnly:
+		if m.llmClient == nil {
+			return nil, fmt.Errorf("LLM client is required for semantic selection")
+		}
+		return m.selectBySemantic(task, m.getAllSkills())
+	case Hybrid:
+		return m.selectHybrid(task)
+	default:
+		return m.selectByKeyword(task)
+	}
+}
+
+// selectHybrid 混合选择：先关键词筛选，再语义匹配
+func (m *DefaultManager) selectHybrid(task string) (*Skill, error) {
+	// 1. 使用关键词快速筛选候选（取前 topN 个）
+	candidates, err := m.filterCandidatesByKeyword(task, m.topN)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. 如果只有一个候选，直接返回
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+
+	// 3. 如果有多个候选且有 LLM，使用语义匹配精确选择
+	if len(candidates) > 1 && m.llmClient != nil {
+		selected, err := m.selectBySemantic(task, candidates)
+		if err == nil {
+			return selected, nil
+		}
+		// 如果语义匹配失败，降级到返回关键词评分最高的
+		return candidates[0], nil
+	}
+
+	// 4. 没有 LLM 或语义匹配失败，返回关键词评分最高的
+	return candidates[0], nil
+}
+
+// filterCandidatesByKeyword 使用关键词筛选候选技能
+func (m *DefaultManager) filterCandidatesByKeyword(task string, topN int) ([]*Skill, error) {
+	type scoredSkill struct {
+		skill *Skill
+		score float64
+	}
+
+	scored := make([]scoredSkill, 0, len(m.skills))
+
+	// 计算每个技能的关键词匹配分数
 	for _, skill := range m.skills {
-		// 简单的关键词匹配评分
-		score := 0.0
-		descLower := strings.ToLower(skill.Description)
+		score := m.calculateKeywordScore(task, skill)
+		scored = append(scored, scoredSkill{skill: skill, score: score})
+	}
 
-		// 检查描述中的关键词
-		words := strings.Fields(descLower)
-		for _, word := range words {
-			if strings.Contains(taskLower, word) {
-				score += 1.0
+	// 按分数排序（冒泡排序，简单实现）
+	for i := 0; i < len(scored); i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
 			}
-		}
-
-		// 考虑技能的综合评分
-		if skill.Statistics != nil {
-			score += skill.Statistics.OverallScore * 10
-		}
-
-		if score > bestScore {
-			bestScore = score
-			bestSkill = skill
 		}
 	}
 
-	if bestSkill == nil {
+	// 取前 topN 个候选
+	n := topN
+	if n > len(scored) {
+		n = len(scored)
+	}
+
+	// 过滤掉分数太低的（< 1.0）
+	candidates := make([]*Skill, 0, n)
+	for i := 0; i < n; i++ {
+		if scored[i].score >= 1.0 {
+			candidates = append(candidates, scored[i].skill)
+		}
+	}
+
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no suitable skill found for task: %s", task)
 	}
 
-	return bestSkill, nil
+	return candidates, nil
+}
+
+// selectByKeyword 仅使用关键词匹配选择技能
+func (m *DefaultManager) selectByKeyword(task string) (*Skill, error) {
+	candidates, err := m.filterCandidatesByKeyword(task, 1)
+	if err != nil {
+		return nil, err
+	}
+	return candidates[0], nil
+}
+
+// calculateKeywordScore 计算关键词匹配分数
+func (m *DefaultManager) calculateKeywordScore(task string, skill *Skill) float64 {
+	taskLower := strings.ToLower(task)
+	descLower := strings.ToLower(skill.Description)
+	nameLower := strings.ToLower(skill.Name)
+
+	score := 0.0
+
+	// 定义关键词映射
+	keywordMap := map[string][]string{
+		"calculate":  {"math", "calculation", "calculator", "mathematical", "compute"},
+		"math":       {"math", "calculation", "calculator", "mathematical", "compute"},
+		"add":        {"math", "calculation", "calculator", "mathematical"},
+		"subtract":   {"math", "calculation", "calculator", "mathematical"},
+		"multiply":   {"math", "calculation", "calculator", "mathematical"},
+		"divide":     {"math", "calculation", "calculator", "mathematical"},
+		"sum":        {"math", "calculation", "calculator", "mathematical"},
+		"compute":    {"math", "calculation", "calculator", "mathematical", "compute"},
+		"number":     {"math", "calculation", "calculator", "mathematical"},
+		"equation":   {"math", "calculation", "calculator", "mathematical"},
+		"expression": {"math", "calculation", "calculator", "mathematical"},
+	}
+
+	// 1. 检查任务中的关键词是否匹配技能描述
+	taskWords := strings.Fields(taskLower)
+	for _, taskWord := range taskWords {
+		// 直接匹配
+		if strings.Contains(descLower, taskWord) {
+			score += 2.0
+		}
+		if strings.Contains(nameLower, taskWord) {
+			score += 3.0
+		}
+
+		// 通过关键词映射匹配
+		if relatedWords, ok := keywordMap[taskWord]; ok {
+			for _, relatedWord := range relatedWords {
+				if strings.Contains(descLower, relatedWord) {
+					score += 1.5
+				}
+				if strings.Contains(nameLower, relatedWord) {
+					score += 2.0
+				}
+			}
+		}
+	}
+
+	// 2. 检查技能描述中的关键词是否出现在任务中
+	descWords := strings.Fields(descLower)
+	for _, descWord := range descWords {
+		if len(descWord) > 3 && strings.Contains(taskLower, descWord) {
+			score += 1.0
+		}
+	}
+
+	// 3. 考虑技能的综合评分（历史表现）
+	if skill.Statistics != nil {
+		score += skill.Statistics.OverallScore * 10
+	}
+
+	return score
+}
+
+// selectBySemantic 使用 LLM 进行语义匹配选择
+func (m *DefaultManager) selectBySemantic(task string, candidates []*Skill) (*Skill, error) {
+	if m.llmClient == nil {
+		return nil, fmt.Errorf("LLM client is not configured")
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no candidates provided")
+	}
+
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+
+	// 构建 prompt
+	skillList := ""
+	for i, skill := range candidates {
+		skillList += fmt.Sprintf("%d. %s: %s\n", i+1, skill.Name, skill.Description)
+	}
+
+	prompt := fmt.Sprintf(`You are a skill selection assistant. Given a task and a list of available skills, select the most suitable skill.
+
+Task: "%s"
+
+Available skills:
+%s
+
+Instructions:
+- Analyze the task requirements carefully
+- Compare each skill's description with the task
+- Select the skill that best matches the task's needs
+- Return ONLY the skill name (e.g., "math-wizard"), nothing else
+
+Your selection:`, task, skillList)
+
+	// 调用 LLM
+	response, err := m.llmClient.Generate(context.Background(), prompt)
+	if err != nil {
+		return nil, fmt.Errorf("LLM selection failed: %w", err)
+	}
+
+	// 解析响应，提取技能名称
+	selectedName := strings.TrimSpace(response)
+	selectedName = strings.Trim(selectedName, "\"'`")
+
+	// 在候选中查找匹配的技能
+	for _, candidate := range candidates {
+		if strings.Contains(strings.ToLower(selectedName), strings.ToLower(candidate.Name)) ||
+			strings.Contains(strings.ToLower(candidate.Name), strings.ToLower(selectedName)) {
+			return candidate, nil
+		}
+	}
+
+	// 如果 LLM 返回的名称无法匹配，返回第一个候选（关键词评分最高的）
+	return candidates[0], nil
+}
+
+// getAllSkills 获取所有技能列表
+func (m *DefaultManager) getAllSkills() []*Skill {
+	skills := make([]*Skill, 0, len(m.skills))
+	for _, skill := range m.skills {
+		skills = append(skills, skill)
+	}
+	return skills
 }
 
 // RecordExecution 记录技能执行结果

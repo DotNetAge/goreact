@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ type MockLLMWithError struct {
 	MaxErrors  int
 }
 
-func (m *MockLLMWithError) Generate(prompt string) (string, error) {
+func (m *MockLLMWithError) Generate(ctx context.Context, prompt string) (string, error) {
 	if m.ErrorCount < m.MaxErrors {
 		m.ErrorCount++
 		return "", errors.New("LLM unavailable")
@@ -43,7 +44,7 @@ func TestEngine_ErrorRetry(t *testing.T) {
 	)
 
 	// 执行任务
-	result := eng.Execute("Test task", nil)
+	result := eng.Execute(context.Background(), "Test task", nil)
 
 	// 验证任务成功
 	if !result.Success {
@@ -77,7 +78,7 @@ func TestEngine_GracefulDegradation(t *testing.T) {
 	)
 
 	// 执行计算任务
-	result := eng.Execute("Calculate 10 + 5", nil)
+	result := eng.Execute(context.Background(), "Calculate 10 + 5", nil)
 
 	// 验证任务成功
 	if !result.Success {
@@ -102,7 +103,7 @@ func TestEngine_CacheErrorRecovery(t *testing.T) {
 	)
 
 	// 第一次执行
-	result1 := eng1.Execute("Test cached task", nil)
+	result1 := eng1.Execute(context.Background(), "Test cached task", nil)
 	if !result1.Success {
 		t.Errorf("Expected success for first execution, got error: %v", result1.Error)
 	}
@@ -124,7 +125,7 @@ func TestEngine_CacheErrorRecovery(t *testing.T) {
 	)
 
 	// 第二次执行，应该从缓存获取结果
-	result2 := eng2.Execute("Test cached task", nil)
+	result2 := eng2.Execute(context.Background(), "Test cached task", nil)
 	if !result2.Success {
 		t.Errorf("Expected success from cache, got error: %v", result2.Error)
 	}

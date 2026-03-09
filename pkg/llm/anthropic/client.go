@@ -2,19 +2,30 @@ package anthropic
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/ray/goreact/pkg/llm"
+)
+
+const (
+	DefaultModel      = "claude-3-opus-20240229"
+	DefaultBaseURL    = "https://api.anthropic.com/v1"
+	DefaultTimeout    = 60 * time.Second
+	DefaultMaxTokens  = 1000
+	DefaultAPIVersion = "2023-06-01"
 )
 
 // Client Anthropic客户端
 type Client struct {
-	apiKey      string
-	model       string
-	baseURL     string
-	timeout     time.Duration
-	httpClient  *http.Client
+	apiKey     llm.SecureString
+	model      string
+	baseURL    string
+	timeout    time.Duration
+	httpClient *http.Client
 }
 
 // Option Anthropic客户端选项
@@ -51,10 +62,10 @@ func WithHTTPClient(client *http.Client) Option {
 // NewAnthropicClient 创建新的Anthropic客户端
 func NewAnthropicClient(apiKey string, options ...Option) *Client {
 	client := &Client{
-		apiKey:     apiKey,
-		model:      "claude-3-opus-20240229",
-		baseURL:    "https://api.anthropic.com/v1",
-		timeout:    60 * time.Second,
+		apiKey:     llm.NewSecureString(apiKey),
+		model:      DefaultModel,
+		baseURL:    DefaultBaseURL,
+		timeout:    DefaultTimeout,
 		httpClient: &http.Client{},
 	}
 
@@ -68,13 +79,17 @@ func NewAnthropicClient(apiKey string, options ...Option) *Client {
 }
 
 // Generate 生成文本
-func (c *Client) Generate(prompt string) (string, error) {
-	// 构建请求体
-	reqBody := map[string]interface{}{
-		"model":     c.model,
-		"prompt":    prompt,
-		"max_tokens": 1000,
-		"temperature": 0.7,
+func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
+	// 构建请求体 - 使用 Messages API 格式
+	reqBody := map[string]any{
+		"model": c.model,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"max_tokens": DefaultMaxTokens,
 	}
 
 	reqJSON, err := json.Marshal(reqBody)
@@ -82,16 +97,16 @@ func (c *Client) Generate(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// 构建请求
-	req, err := http.NewRequest("POST", c.baseURL+"/completions", bytes.NewBuffer(reqJSON))
+	// 构建请求 - 使用正确的 Messages API 端点
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/messages", bytes.NewBuffer(reqJSON))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", c.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", c.apiKey.Value())
+	req.Header.Set("anthropic-version", DefaultAPIVersion)
 
 	// 发送请求
 	resp, err := c.httpClient.Do(req)
@@ -105,14 +120,21 @@ func (c *Client) Generate(prompt string) (string, error) {
 		return "", fmt.Errorf("API returned non-200 status: %d", resp.StatusCode)
 	}
 
-	// 解析响应
+	// 解析响应 - Messages API 格式
 	var respBody struct {
-		Completion string `json:"completion"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return respBody.Completion, nil
+	// 提取文本内容
+	if len(respBody.Content) == 0 {
+		return "", fmt.Errorf("no content in response")
+	}
+
+	return respBody.Content[0].Text, nil
 }

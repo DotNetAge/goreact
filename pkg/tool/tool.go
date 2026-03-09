@@ -9,5 +9,5 @@ type Tool interface {
 	Description() string
 
 	// Execute 执行工具
-	Execute(params map[string]interface{}) (interface{}, error)
+	Execute(params map[string]any) (any, error)
 }

@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"context"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func NewMockClient(responses []string) *MockClient {
 }
 
 // Generate 生成预定义的响应
-func (m *MockClient) Generate(prompt string) (string, error) {
+func (m *MockClient) Generate(ctx context.Context, prompt string) (string, error) {
 	// 如果有预定义响应且还没用完，使用预定义响应
 	if m.callCount < len(m.responses) && len(m.responses) > 0 {
 		response := m.responses[m.callCount]

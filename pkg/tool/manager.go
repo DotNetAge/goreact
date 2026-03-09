@@ -2,19 +2,23 @@ package tool
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
 // Manager 工具管理器
 type Manager struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu        sync.RWMutex
+	tools     map[string]Tool
+	descCache string // 缓存的工具描述
+	dirty     bool   // 标记描述是否需要重新生成
 }
 
 // NewManager 创建工具管理器
 func NewManager() *Manager {
 	return &Manager{
 		tools: make(map[string]Tool),
+		dirty: true,
 	}
 }
 
@@ -23,13 +27,17 @@ func (m *Manager) RegisterTool(tool Tool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.tools[tool.Name()] = tool
+	m.dirty = true
 }
 
 // RegisterTools 注册多个工具
 func (m *Manager) RegisterTools(tools ...Tool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, tool := range tools {
-		m.RegisterTool(tool)
+		m.tools[tool.Name()] = tool
 	}
+	m.dirty = true
 }
 
 // GetTool 获取工具
@@ -44,7 +52,7 @@ func (m *Manager) GetTool(name string) (Tool, error) {
 }
 
 // ExecuteTool 执行工具
-func (m *Manager) ExecuteTool(name string, params map[string]interface{}) (interface{}, error) {
+func (m *Manager) ExecuteTool(name string, params map[string]any) (any, error) {
 	tool, err := m.GetTool(name)
 	if err != nil {
 		return nil, err
@@ -64,17 +72,37 @@ func (m *Manager) ListTools() []Tool {
 }
 
 // GetToolDescriptions 获取所有工具的描述（用于 LLM prompt）
+// 使用缓存避免重复生成
 func (m *Manager) GetToolDescriptions() string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if !m.dirty {
+		desc := m.descCache
+		m.mu.RUnlock()
+		return desc
+	}
+	m.mu.RUnlock()
+
+	// 需要写锁来更新缓存
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 双重检查
+	if !m.dirty {
+		return m.descCache
+	}
 
 	if len(m.tools) == 0 {
-		return "No tools available."
+		m.descCache = "No tools available."
+		m.dirty = false
+		return m.descCache
 	}
 
-	desc := "Available tools:\n"
+	var sb strings.Builder
+	sb.WriteString("Available tools:\n")
 	for _, tool := range m.tools {
-		desc += fmt.Sprintf("- %s: %s\n", tool.Name(), tool.Description())
+		fmt.Fprintf(&sb, "- %s: %s\n", tool.Name(), tool.Description())
 	}
-	return desc
+	m.descCache = sb.String()
+	m.dirty = false
+	return m.descCache
 }

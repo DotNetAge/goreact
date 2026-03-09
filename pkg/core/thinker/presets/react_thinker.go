@@ -47,7 +47,7 @@ func (t *ReActThinker) Think(task string, context *core.Context) (*types.Thought
 	prompt := t.promptBuilder.Build(task, context, t.tools)
 
 	// 2. 调用 LLM
-	response, err := t.llmClient.Generate(prompt.String())
+	response, err := t.llmClient.Generate(context.Context(), prompt.String())
 	if err != nil {
 		return nil, fmt.Errorf("LLM generation failed: %w", err)
 	}

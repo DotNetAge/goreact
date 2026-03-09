@@ -5,10 +5,10 @@ import "time"
 // Cache 缓存接口
 type Cache interface {
 	// Get 获取缓存值
-	Get(key string) (interface{}, bool)
+	Get(key string) (any, bool)
 
 	// Set 设置缓存值
-	Set(key string, value interface{}, ttl time.Duration)
+	Set(key string, value any, ttl time.Duration)
 
 	// Delete 删除缓存值
 	Delete(key string)
@@ -18,4 +18,7 @@ type Cache interface {
 
 	// Size 获取缓存大小
 	Size() int
+
+	// Close 关闭缓存，释放资源
+	Close() error
 }

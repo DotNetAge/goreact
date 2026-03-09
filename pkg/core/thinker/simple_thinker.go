@@ -1,6 +1,7 @@
 package thinker
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -13,8 +14,9 @@ import (
 // SimpleThinker 最简单的 Thinker 实现（原 DefaultThinker）
 // 适合快速开始和测试
 type SimpleThinker struct {
-	llmClient llm.Client
-	toolDesc  string
+	llmClient    llm.Client
+	toolDesc     string
+	systemPrompt string // System Prompt（可选）
 }
 
 // NewSimpleThinker 创建简单 Thinker
@@ -25,36 +27,22 @@ func NewSimpleThinker(llmClient llm.Client, toolDesc string) *SimpleThinker {
 	}
 }
 
+// NewSimpleThinkerWithSystemPrompt 创建带 System Prompt 的 Thinker
+func NewSimpleThinkerWithSystemPrompt(llmClient llm.Client, toolDesc, systemPrompt string) *SimpleThinker {
+	return &SimpleThinker{
+		llmClient:    llmClient,
+		toolDesc:     toolDesc,
+		systemPrompt: systemPrompt,
+	}
+}
+
 // Think 执行思考
 func (t *SimpleThinker) Think(task string, context *core.Context) (*types.Thought, error) {
-	// 从 Context 中获取历史信息
-	var history string
-	if lastAction, ok := context.Get("last_action"); ok {
-		if action, ok := lastAction.(*types.Action); ok {
-			history += fmt.Sprintf("Action: %s with params %v\n", action.ToolName, action.Parameters)
-		}
-	}
-	if lastResult, ok := context.Get("last_result"); ok {
-		if result, ok := lastResult.(*types.ExecutionResult); ok {
-			history += fmt.Sprintf("Result: %v (Success: %v)\n", result.Output, result.Success)
-		}
-	}
-	if lastFeedback, ok := context.Get("last_feedback"); ok {
-		if feedback, ok := lastFeedback.(*types.Feedback); ok {
-			history += fmt.Sprintf("Feedback: %s\n", feedback.Message)
-		}
-	}
-
-	// 如果有历史信息，添加到上下文
-	if history != "" {
-		context.Set("history", history)
-	}
-
-	// 构建 prompt
+	// 构建 prompt（直接从 context 中读取累积的历史记录）
 	prompt := t.buildPrompt(task, context)
 
 	// 调用 LLM
-	response, err := t.llmClient.Generate(prompt)
+	response, err := t.llmClient.Generate(context.Context(), prompt)
 	if err != nil {
 		return nil, fmt.Errorf("LLM generation failed: %w", err)
 	}
@@ -68,17 +56,29 @@ func (t *SimpleThinker) Think(task string, context *core.Context) (*types.Though
 func (t *SimpleThinker) buildPrompt(task string, context *core.Context) string {
 	var sb strings.Builder
 
-	sb.WriteString("You are a helpful AI assistant that uses tools to solve tasks.\n\n")
+	// 添加 System Prompt（如果有）
+	if t.systemPrompt != "" {
+		sb.WriteString(t.systemPrompt)
+		sb.WriteString("\n\n")
+	} else {
+		sb.WriteString("You are a helpful AI assistant that uses tools to solve tasks.\n\n")
+	}
+
 	sb.WriteString(t.toolDesc)
 	sb.WriteString("\n\n")
 	sb.WriteString("Task: " + task + "\n\n")
 
 	// 添加历史记录
-	if history, ok := context.Get("history"); ok {
-		if historyStr, ok := history.(string); ok && historyStr != "" {
+	if historySteps, ok := context.Get("history_steps"); ok {
+		if steps, ok := historySteps.([]map[string]string); ok && len(steps) > 0 {
 			sb.WriteString("Previous steps:\n")
-			sb.WriteString(historyStr)
-			sb.WriteString("\n\n")
+			for i, step := range steps {
+				sb.WriteString(fmt.Sprintf("Step %d:\n", i+1))
+				sb.WriteString(fmt.Sprintf("  Action: %s\n", step["action"]))
+				sb.WriteString(fmt.Sprintf("  Result: %s\n", step["result"]))
+				sb.WriteString(fmt.Sprintf("  Feedback: %s\n", step["feedback"]))
+			}
+			sb.WriteString("\n")
 		}
 	}
 
@@ -97,7 +97,7 @@ func (t *SimpleThinker) buildPrompt(task string, context *core.Context) string {
 // parseResponse 解析 LLM 响应
 func (t *SimpleThinker) parseResponse(response string) *types.Thought {
 	thought := &types.Thought{
-		Metadata: make(map[string]interface{}),
+		Metadata: make(map[string]any),
 	}
 
 	// 提取 Thought
@@ -144,49 +144,16 @@ func (t *SimpleThinker) parseResponse(response string) *types.Thought {
 	return thought
 }
 
-// parseSimpleJSON 简单的 JSON 解析（仅用于演示）
-func (t *SimpleThinker) parseSimpleJSON(jsonStr string) map[string]interface{} {
-	params := make(map[string]interface{})
+// parseSimpleJSON 解析 JSON 字符串为 map
+func (t *SimpleThinker) parseSimpleJSON(jsonStr string) map[string]any {
+	var params map[string]any
 
-	// 移除花括号
-	jsonStr = strings.Trim(jsonStr, "{}")
-
-	// 分割键值对
-	pairs := strings.Split(jsonStr, ",")
-	for _, pair := range pairs {
-		kv := strings.Split(pair, ":")
-		if len(kv) == 2 {
-			key := strings.Trim(strings.TrimSpace(kv[0]), "\"")
-			value := strings.TrimSpace(kv[1])
-
-			// 移除引号
-			value = strings.Trim(value, "\"")
-
-			// 尝试转换为数字
-			if num, err := parseNumber(value); err == nil {
-				params[key] = num
-			} else {
-				params[key] = value
-			}
-		}
+	// 使用标准 JSON 解析
+	if err := json.Unmarshal([]byte(jsonStr), &params); err != nil {
+		// 如果解析失败，返回空 map，避免中断执行
+		// 可以在这里记录日志，但不抛出错误
+		return make(map[string]any)
 	}
 
 	return params
-}
-
-// parseNumber 解析数字
-func parseNumber(s string) (interface{}, error) {
-	// 尝试解析为整数
-	var i int
-	if _, err := fmt.Sscanf(s, "%d", &i); err == nil {
-		return i, nil
-	}
-
-	// 尝试解析为浮点数
-	var f float64
-	if _, err := fmt.Sscanf(s, "%f", &f); err == nil {
-		return f, nil
-	}
-
-	return nil, fmt.Errorf("not a number")
 }

@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,42 +11,42 @@ import (
 
 // DefaultMemoryManager 默认内存管理器
 type DefaultMemoryManager struct {
-	memories map[string]map[string]interface{}
-	mutex    sync.RWMutex
+	memories    map[string]map[string]any
+	mutex       sync.RWMutex
 	persistPath string
 }
 
 // NewDefaultMemoryManager 创建默认内存管理器
-func NewDefaultMemoryManager(persistPath string) *DefaultMemoryManager {
+func NewDefaultMemoryManager(persistPath string) (*DefaultMemoryManager, error) {
 	if persistPath == "" {
 		persistPath = "./memory"
 	}
 
 	// 确保持久化目录存在
 	if err := os.MkdirAll(persistPath, 0755); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to create memory directory: %w", err)
 	}
 
 	return &DefaultMemoryManager{
-		memories:    make(map[string]map[string]interface{}),
+		memories:    make(map[string]map[string]any),
 		persistPath: persistPath,
-	}
+	}, nil
 }
 
 // Store 存储内存数据
-func (m *DefaultMemoryManager) Store(sessionId string, key string, value interface{}) {
+func (m *DefaultMemoryManager) Store(sessionId string, key string, value any) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	if _, ok := m.memories[sessionId]; !ok {
-		m.memories[sessionId] = make(map[string]interface{})
+		m.memories[sessionId] = make(map[string]any)
 	}
 
 	m.memories[sessionId][key] = value
 }
 
 // Retrieve 检索内存数据
-func (m *DefaultMemoryManager) Retrieve(sessionId string, key string) interface{} {
+func (m *DefaultMemoryManager) Retrieve(sessionId string, key string) any {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
@@ -107,7 +108,7 @@ func (m *DefaultMemoryManager) Load(sessionId string) error {
 	}
 
 	// 反序列化内存数据
-	session := make(map[string]interface{})
+	session := make(map[string]any)
 	if err := json.Unmarshal(data, &session); err != nil {
 		return err
 	}

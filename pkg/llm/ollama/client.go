@@ -2,19 +2,32 @@ package ollama
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/ray/goreact/pkg/llm"
+)
+
+const (
+	DefaultBaseURL     = "http://localhost:11434"
+	DefaultModel       = "qwen3:0.6b"
+	DefaultTemperature = 0.7
+	DefaultTimeout     = 60 * time.Second
 )
 
 // OllamaClient Ollama LLM 客户端
 type OllamaClient struct {
-	baseURL     string
-	model       string
-	temperature float64
-	httpClient  *http.Client
+	baseURL        string
+	model          string
+	temperature    float64
+	httpClient     *http.Client
+	lastTokenUsage *llm.TokenUsage
+	mu             sync.Mutex
 }
 
 // Option Ollama 客户端配置选项
@@ -51,11 +64,11 @@ func WithTimeout(timeout time.Duration) Option {
 // NewOllamaClient 创建 Ollama 客户端
 func NewOllamaClient(options ...Option) *OllamaClient {
 	client := &OllamaClient{
-		baseURL:     "http://localhost:11434",
-		model:       "qwen3:0.6b",
-		temperature: 0.7,
+		baseURL:     DefaultBaseURL,
+		model:       DefaultModel,
+		temperature: DefaultTemperature,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: DefaultTimeout,
 		},
 	}
 
@@ -67,7 +80,7 @@ func NewOllamaClient(options ...Option) *OllamaClient {
 }
 
 // Generate 生成文本
-func (c *OllamaClient) Generate(prompt string) (string, error) {
+func (c *OllamaClient) Generate(ctx context.Context, prompt string) (string, error) {
 	// 构建请求
 	reqBody := GenerateRequest{
 		Model:       c.model,
@@ -81,9 +94,15 @@ func (c *OllamaClient) Generate(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// 发送请求
+	// 发送请求（使用带超时的 context）
 	url := c.baseURL + "/api/generate"
-	resp, err := c.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request to Ollama: %w", err)
 	}
@@ -114,7 +133,30 @@ func (c *OllamaClient) Generate(prompt string) (string, error) {
 		return "", fmt.Errorf("generation not completed")
 	}
 
+	// 记录 Token 使用量
+	c.mu.Lock()
+	c.lastTokenUsage = &llm.TokenUsage{
+		PromptTokens:     genResp.PromptEvalCount,
+		CompletionTokens: genResp.EvalCount,
+		TotalTokens:      genResp.PromptEvalCount + genResp.EvalCount,
+	}
+	c.mu.Unlock()
+
 	return genResp.Response, nil
+}
+
+// LastTokenUsage 返回最近一次调用的 Token 使用量
+func (c *OllamaClient) LastTokenUsage() *llm.TokenUsage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.lastTokenUsage == nil {
+		return nil
+	}
+
+	// 返回副本，避免并发修改
+	copy := *c.lastTokenUsage
+	return &copy
 }
 
 // GetModel 获取当前使用的模型

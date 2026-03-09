@@ -1,14 +1,22 @@
 package cache
 
 import (
+	"context"
 	"sync"
 	"time"
 )
 
+const (
+	DefaultMaxSize         = 1000
+	DefaultTTL             = 1 * time.Hour
+	DefaultCleanupInterval = 5 * time.Minute
+)
+
 // cacheItem 缓存项
 type cacheItem struct {
-	value      interface{}
+	value      any
 	expiration time.Time
+	lastAccess time.Time // 最后访问时间，用于 LRU 驱逐
 }
 
 // MemoryCache 内存缓存实现
@@ -17,6 +25,8 @@ type MemoryCache struct {
 	items      map[string]*cacheItem
 	maxSize    int
 	defaultTTL time.Duration
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // MemoryOption 内存缓存配置选项
@@ -38,10 +48,14 @@ func WithDefaultTTL(ttl time.Duration) MemoryOption {
 
 // NewMemoryCache 创建内存缓存
 func NewMemoryCache(options ...MemoryOption) *MemoryCache {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	cache := &MemoryCache{
 		items:      make(map[string]*cacheItem),
-		maxSize:    1000,
-		defaultTTL: 1 * time.Hour,
+		maxSize:    DefaultMaxSize,
+		defaultTTL: DefaultTTL,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 
 	for _, opt := range options {
@@ -55,9 +69,9 @@ func NewMemoryCache(options ...MemoryOption) *MemoryCache {
 }
 
 // Get 获取缓存值
-func (c *MemoryCache) Get(key string) (interface{}, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (c *MemoryCache) Get(key string) (any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	item, exists := c.items[key]
 	if !exists {
@@ -66,14 +80,18 @@ func (c *MemoryCache) Get(key string) (interface{}, bool) {
 
 	// 检查是否过期
 	if time.Now().After(item.expiration) {
+		delete(c.items, key)
 		return nil, false
 	}
+
+	// 更新最后访问时间（LRU）
+	item.lastAccess = time.Now()
 
 	return item.value, true
 }
 
 // Set 设置缓存值
-func (c *MemoryCache) Set(key string, value interface{}, ttl time.Duration) {
+func (c *MemoryCache) Set(key string, value any, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -90,6 +108,7 @@ func (c *MemoryCache) Set(key string, value interface{}, ttl time.Duration) {
 	c.items[key] = &cacheItem{
 		value:      value,
 		expiration: time.Now().Add(ttl),
+		lastAccess: time.Now(),
 	}
 }
 
@@ -114,27 +133,49 @@ func (c *MemoryCache) Size() int {
 	return len(c.items)
 }
 
-// evictOldest 删除最旧的项（简单实现，删除第一个找到的）
+// Close 关闭缓存，停止清理协程
+func (c *MemoryCache) Close() error {
+	c.cancel()
+	return nil
+}
+
+// evictOldest 删除最旧的项（LRU 驱逐策略）
 func (c *MemoryCache) evictOldest() {
-	for key := range c.items {
-		delete(c.items, key)
-		return
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+
+	for key, item := range c.items {
+		if first || item.lastAccess.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = item.lastAccess
+			first = false
+		}
+	}
+
+	if oldestKey != "" {
+		delete(c.items, oldestKey)
 	}
 }
 
 // cleanupExpired 定期清理过期项
 func (c *MemoryCache) cleanupExpired() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(DefaultCleanupInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.mu.Lock()
-		now := time.Now()
-		for key, item := range c.items {
-			if now.After(item.expiration) {
-				delete(c.items, key)
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
+			for key, item := range c.items {
+				if now.After(item.expiration) {
+					delete(c.items, key)
+				}
 			}
+			c.mu.Unlock()
 		}
-		c.mu.Unlock()
 	}
 }

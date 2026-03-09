@@ -2,19 +2,30 @@ package openai
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/ray/goreact/pkg/llm"
+)
+
+const (
+	DefaultModel       = "gpt-4"
+	DefaultBaseURL     = "https://api.openai.com/v1"
+	DefaultTimeout     = 60 * time.Second
+	DefaultMaxTokens   = 1000
+	DefaultTemperature = 0.7
 )
 
 // Client OpenAI客户端
 type Client struct {
-	apiKey      string
-	model       string
-	baseURL     string
-	timeout     time.Duration
-	httpClient  *http.Client
+	apiKey     llm.SecureString
+	model      string
+	baseURL    string
+	timeout    time.Duration
+	httpClient *http.Client
 }
 
 // Option OpenAI客户端选项
@@ -51,10 +62,10 @@ func WithHTTPClient(client *http.Client) Option {
 // NewOpenAIClient 创建新的OpenAI客户端
 func NewOpenAIClient(apiKey string, options ...Option) *Client {
 	client := &Client{
-		apiKey:     apiKey,
-		model:      "gpt-4",
-		baseURL:    "https://api.openai.com/v1",
-		timeout:    60 * time.Second,
+		apiKey:     llm.NewSecureString(apiKey),
+		model:      DefaultModel,
+		baseURL:    DefaultBaseURL,
+		timeout:    DefaultTimeout,
 		httpClient: &http.Client{},
 	}
 
@@ -68,13 +79,13 @@ func NewOpenAIClient(apiKey string, options ...Option) *Client {
 }
 
 // Generate 生成文本
-func (c *Client) Generate(prompt string) (string, error) {
+func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 	// 构建请求体
-	reqBody := map[string]interface{}{
-		"model":     c.model,
-		"prompt":    prompt,
-		"max_tokens": 1000,
-		"temperature": 0.7,
+	reqBody := map[string]any{
+		"model":       c.model,
+		"prompt":      prompt,
+		"max_tokens":  DefaultMaxTokens,
+		"temperature": DefaultTemperature,
 	}
 
 	reqJSON, err := json.Marshal(reqBody)
@@ -82,15 +93,15 @@ func (c *Client) Generate(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// 构建请求
-	req, err := http.NewRequest("POST", c.baseURL+"/completions", bytes.NewBuffer(reqJSON))
+	// 构建请求（使用带超时的 context）
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/completions", bytes.NewBuffer(reqJSON))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey.Value())
 
 	// 发送请求
 	resp, err := c.httpClient.Do(req)

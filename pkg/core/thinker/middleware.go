@@ -29,10 +29,10 @@ func NewMiddlewareThinker(base Thinker) *MiddlewareThinker {
 	return mt
 }
 
-// Use 添加中间件
+// Use 添加中间件（支持可变参数）
 // 中间件按添加顺序执行（先添加的在外层）
-func (t *MiddlewareThinker) Use(middleware ThinkMiddleware) {
-	t.middlewares = append(t.middlewares, middleware)
+func (t *MiddlewareThinker) Use(middlewares ...ThinkMiddleware) {
+	t.middlewares = append(t.middlewares, middlewares...)
 	t.buildHandler()
 }
 
