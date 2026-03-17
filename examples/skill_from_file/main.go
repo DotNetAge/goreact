@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/skill"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
@@ -87,7 +87,7 @@ This follows the order of operations (PEMDAS), where multiplication is performed
 	llmClient := mock.NewMockClient(mockResponses)
 
 	// 6. 创建 Engine
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(llmClient),
 		engine.WithSkillManager(skillManager),
 		engine.WithMaxIterations(10),

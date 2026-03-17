@@ -223,10 +223,14 @@ func (d *AgenticRAGDecomposer) Decompose(task string, ctx interface{}) ([]SubTas
     prompt := buildPromptWithDocs(task, docs)
 
     // 3. 使用 LLM 拆解任务
-    response := d.llmClient.Generate(prompt)
+    messages := []llm.Message{llm.NewUserMessage(prompt)}
+    response, err := d.llmClient.Chat(ctx.Context(), messages)
+    if err != nil {
+        return nil, err
+    }
 
     // 4. 解析子任务
-    subTasks := parseSubTasks(response)
+    subTasks := parseSubTasks(response.Content)
 
     return subTasks, nil
 }

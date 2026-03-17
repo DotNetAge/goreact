@@ -8,7 +8,7 @@ import (
 	"github.com/ray/goreact/pkg/actor/schema"
 	"github.com/ray/goreact/pkg/core"
 	actorpresets "github.com/ray/goreact/pkg/core/actor/presets"
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 	"github.com/ray/goreact/pkg/types"
 )
 
@@ -43,7 +43,7 @@ func newCalculator() *schema.Tool {
 	)
 }
 
-func newSlowTool() tool.Tool {
+func newSlowTool() tools.Tool {
 	return schema.NewTool(
 		"slow_api",
 		"A slow API call",
@@ -61,7 +61,7 @@ func main() {
 	fmt.Println("=== Actor Presets 示例 ===")
 
 	// 准备工具
-	tm := tool.NewManager()
+	tm := tools.NewManager()
 	tm.RegisterTools(newCalculator(), newSlowTool())
 
 	ctx := core.NewContext()

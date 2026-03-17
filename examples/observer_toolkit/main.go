@@ -143,8 +143,8 @@ func main() {
 	// StrictObserver
 	strict := observerpresets.NewStrictObserver()
 	fb2, _ = strict.Observe(&types.ExecutionResult{
-		Success: true,
-		Output:  `{"error": "invalid key"}`,
+		Success:  true,
+		Output:   `{"error": "invalid key"}`,
 		Metadata: map[string]any{"tool_name": "http"},
 	}, ctx)
 	fmt.Printf("StrictObserver: continue=%v, msg=%s\n", fb2.ShouldContinue, fb2.Message)

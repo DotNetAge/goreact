@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	llm "github.com/DotNetAge/gochat/pkg/core"
+
 	"github.com/ray/goreact/pkg/cache"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
@@ -16,12 +18,15 @@ type MockLLMWithError struct {
 	MaxErrors  int
 }
 
-func (m *MockLLMWithError) Generate(ctx context.Context, prompt string) (string, error) {
+func (m *MockLLMWithError) Chat(ctx context.Context, messages []llm.Message, opts ...llm.Option) (*llm.Response, error) {
 	if m.ErrorCount < m.MaxErrors {
 		m.ErrorCount++
-		return "", errors.New("LLM unavailable")
+		return nil, errors.New("LLM unavailable")
 	}
-	return "Thought: This is a test\nFinal Answer: Test response", nil
+	return &llm.Response{
+		Content: "Thought: This is a test\nFinal Answer: Test response",
+		Usage:   &llm.Usage{TotalTokens: 10},
+	}, nil
 }
 
 func TestEngine_ErrorRetry(t *testing.T) {
@@ -30,21 +35,20 @@ func TestEngine_ErrorRetry(t *testing.T) {
 		MaxErrors: 3,
 	}
 
-	// 创建引擎，设置重试次数为3
-	eng := New(
-		WithLLMClient(llmClient),
-		WithMaxRetries(3),
-		WithRetryInterval(10*time.Millisecond),
+	// 创建引擎，设置重试次数为 3
+	eng := NewReactor(
+		WithReactorLLMClient(llmClient),
+		WithReactorMaxRetries(3),
+		WithReactorRetryInterval(10*time.Millisecond),
 	)
 
 	// 注册工具
 	eng.RegisterTools(
 		builtin.NewCalculator(),
-		builtin.NewEcho(),
 	)
 
 	// 执行任务
-	result := eng.Execute(context.Background(), "Test task", nil)
+	result := eng.Execute(context.Background(), "Test task")
 
 	// 验证任务成功
 	if !result.Success {
@@ -63,22 +67,21 @@ func TestEngine_GracefulDegradation(t *testing.T) {
 		MaxErrors: 10, // 超过最大重试次数
 	}
 
-	// 创建引擎，设置重试次数为2
-	eng := New(
-		WithLLMClient(llmClient),
-		WithMaxRetries(2),
-		WithRetryInterval(10*time.Millisecond),
+	// 创建引擎，设置重试次数为 2
+	eng := NewReactor(
+		WithReactorLLMClient(llmClient),
+		WithReactorMaxRetries(2),
+		WithReactorRetryInterval(10*time.Millisecond),
 	)
 
 	// 注册工具
 	eng.RegisterTools(
 		builtin.NewCalculator(),
-		builtin.NewEcho(),
 		builtin.NewDateTime(),
 	)
 
 	// 执行计算任务
-	result := eng.Execute(context.Background(), "Calculate 10 + 5", nil)
+	result := eng.Execute(context.Background(), "Calculate 10 + 5")
 
 	// 验证任务成功
 	if !result.Success {
@@ -94,16 +97,16 @@ func TestEngine_CacheErrorRecovery(t *testing.T) {
 	)
 
 	// 先执行一次任务，缓存结果
-	eng1 := New(
-		WithCache(memCache),
+	eng1 := NewReactor(
+		WithReactorCache(memCache),
 	)
 
 	eng1.RegisterTools(
-		builtin.NewEcho(),
+		builtin.NewCalculator(),
 	)
 
 	// 第一次执行
-	result1 := eng1.Execute(context.Background(), "Test cached task", nil)
+	result1 := eng1.Execute(context.Background(), "Test cached task")
 	if !result1.Success {
 		t.Errorf("Expected success for first execution, got error: %v", result1.Error)
 	}
@@ -113,19 +116,19 @@ func TestEngine_CacheErrorRecovery(t *testing.T) {
 		MaxErrors: 10,
 	}
 
-	// 创建新引擎，使用失败的LLM客户端但共享缓存
-	eng2 := New(
-		WithLLMClient(llmClient),
-		WithCache(memCache),
-		WithMaxRetries(2),
+	// 创建新引擎，使用失败的 LLM 客户端但共享缓存
+	eng2 := NewReactor(
+		WithReactorLLMClient(llmClient),
+		WithReactorCache(memCache),
+		WithReactorMaxRetries(2),
 	)
 
 	eng2.RegisterTools(
-		builtin.NewEcho(),
+		builtin.NewCalculator(),
 	)
 
 	// 第二次执行，应该从缓存获取结果
-	result2 := eng2.Execute(context.Background(), "Test cached task", nil)
+	result2 := eng2.Execute(context.Background(), "Test cached task")
 	if !result2.Success {
 		t.Errorf("Expected success from cache, got error: %v", result2.Error)
 	}
@@ -134,4 +137,8 @@ func TestEngine_CacheErrorRecovery(t *testing.T) {
 	if cached, ok := result2.Metadata["cached"]; !ok || cached != true {
 		t.Error("Expected result to be from cache")
 	}
+}
+
+func (m *MockLLMWithError) ChatStream(ctx context.Context, messages []llm.Message, opts ...llm.Option) (*llm.Stream, error) {
+	return nil, errors.New("ChatStream not implemented in mock")
 }

@@ -1,6 +1,7 @@
 package types
 
 import (
+	llm "github.com/DotNetAge/gochat/pkg/core"
 	"errors"
 	"time"
 )
@@ -35,6 +36,7 @@ type Thought struct {
 	Action       *Action        // 要执行的动作（可能为空）
 	ShouldFinish bool           // 是否应该结束
 	FinalAnswer  string         // 最终答案（如果应该结束）
+	Usage        *llm.Usage     // Token 使用情况
 	Metadata     map[string]any // 元数据
 }
 

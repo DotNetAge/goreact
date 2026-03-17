@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // Wrapper 包装器接口
 type Wrapper interface {
-	Wrap(tool tool.Tool) tool.Tool
+	Wrap(tool tools.Tool) tools.Tool
 }
 
 // TimeoutWrapper 超时包装器
@@ -23,7 +23,7 @@ func WithTimeout(timeout time.Duration) *TimeoutWrapper {
 	return &TimeoutWrapper{timeout: timeout}
 }
 
-func (w *TimeoutWrapper) Wrap(t tool.Tool) tool.Tool {
+func (w *TimeoutWrapper) Wrap(t tools.Tool) tools.Tool {
 	return &timeoutTool{
 		base:    t,
 		timeout: w.timeout,
@@ -31,7 +31,7 @@ func (w *TimeoutWrapper) Wrap(t tool.Tool) tool.Tool {
 }
 
 type timeoutTool struct {
-	base    tool.Tool
+	base    tools.Tool
 	timeout time.Duration
 }
 
@@ -88,7 +88,7 @@ func (w *RetryWrapper) WithRetryIf(fn func(error) bool) *RetryWrapper {
 	return w
 }
 
-func (w *RetryWrapper) Wrap(t tool.Tool) tool.Tool {
+func (w *RetryWrapper) Wrap(t tools.Tool) tools.Tool {
 	return &retryTool{
 		base:        t,
 		maxAttempts: w.maxAttempts,
@@ -98,7 +98,7 @@ func (w *RetryWrapper) Wrap(t tool.Tool) tool.Tool {
 }
 
 type retryTool struct {
-	base        tool.Tool
+	base        tools.Tool
 	maxAttempts int
 	interval    time.Duration
 	retryIf     func(error) bool
@@ -139,7 +139,7 @@ func (t *retryTool) Execute(params map[string]any) (any, error) {
 }
 
 // Wrap 组合多个包装器
-func Wrap(t tool.Tool, wrappers ...Wrapper) tool.Tool {
+func Wrap(t tools.Tool, wrappers ...Wrapper) tools.Tool {
 	result := t
 	for _, w := range wrappers {
 		result = w.Wrap(result)

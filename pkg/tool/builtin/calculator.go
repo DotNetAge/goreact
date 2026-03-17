@@ -2,14 +2,15 @@ package builtin
 
 import (
 	"fmt"
-	"github.com/ray/goreact/pkg/tool"
+
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // Calculator 计算器工具
 type Calculator struct{}
 
 // NewCalculator 创建计算器工具
-func NewCalculator() tool.Tool {
+func NewCalculator() tools.Tool {
 	return &Calculator{}
 }
 

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // MCPProvider Model Context Protocol 提供者
@@ -111,7 +111,7 @@ func (p *MCPProvider) ping() error {
 }
 
 // DiscoverTools 从 MCP 服务器发现工具
-func (p *MCPProvider) DiscoverTools() ([]tool.Tool, error) {
+func (p *MCPProvider) DiscoverTools() ([]tools.Tool, error) {
 	req, err := http.NewRequest("GET", p.serverURL+"/tools", nil)
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func (p *MCPProvider) DiscoverTools() ([]tool.Tool, error) {
 	}
 
 	// 创建工具包装器
-	tools := make([]tool.Tool, 0, len(toolsResponse.Tools))
+	toolsList := make([]tools.Tool, 0, len(toolsResponse.Tools))
 	for _, t := range toolsResponse.Tools {
 		mcpTool := &MCPTool{
 			name:        t.Name,
@@ -161,14 +161,14 @@ func (p *MCPProvider) DiscoverTools() ([]tool.Tool, error) {
 			provider:    p,
 		}
 		p.tools[t.Name] = mcpTool
-		tools = append(tools, mcpTool)
+		toolsList = append(toolsList, mcpTool)
 	}
 
-	return tools, nil
+	return toolsList, nil
 }
 
 // GetTool 获取指定的工具
-func (p *MCPProvider) GetTool(name string) (tool.Tool, error) {
+func (p *MCPProvider) GetTool(name string) (tools.Tool, error) {
 	t, exists := p.tools[name]
 	if !exists {
 		return nil, fmt.Errorf("tool %s not found", name)

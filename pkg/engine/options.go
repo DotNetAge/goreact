@@ -3,145 +3,173 @@ package engine
 import (
 	"time"
 
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
+	"github.com/ray/goreact/pkg/actor"
 	"github.com/ray/goreact/pkg/agent"
 	"github.com/ray/goreact/pkg/cache"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/llm"
+	"github.com/ray/goreact/pkg/core/thinker"
 	"github.com/ray/goreact/pkg/log"
 	"github.com/ray/goreact/pkg/metrics"
 	"github.com/ray/goreact/pkg/model"
+	"github.com/ray/goreact/pkg/observer"
 	"github.com/ray/goreact/pkg/skill"
-	"github.com/ray/goreact/pkg/tool/provider"
+	"github.com/ray/goreact/pkg/terminator"
+	"github.com/ray/goreact/pkg/tools"
 )
 
-// Option 引擎配置选项
-type Option func(*Engine)
+const (
+	DefaultMaxIterations = 10
+	DefaultMaxRetries    = 3
+	DefaultRetryInterval = 1 * time.Second
+	DefaultMaxTraceSize  = 1000
+)
 
-// WithMaxIterations 设置最大迭代次数
-func WithMaxIterations(max int) Option {
-	return func(e *Engine) {
-		e.loopController = core.NewDefaultLoopController(max)
+// ReactorOption Reactator 配置选项
+type ReactorOption func(*ReactorOptions)
+
+// ReactorOptions Reactor 配置选项集合
+type ReactorOptions struct {
+	Logger         log.Logger
+	Metrics        metrics.Metrics
+	LLMClient      gochatcore.Client
+	ModelManager   *model.Manager
+	ToolManager    *tools.Manager
+	AgentManager   *agent.Manager
+	SkillManager   skill.Manager
+	Cache          cache.Cache
+	Thinker        thinker.Thinker
+	Actor          actor.Actor
+	Observer       observer.Observer
+	LoopController terminator.Terminator
+	MaxRetries     int
+	RetryInterval  time.Duration
+	MaxTraceSize   int
+}
+
+// DefaultReactorOptions 创建默认配置
+func DefaultReactorOptions() *ReactorOptions {
+	return &ReactorOptions{
+		Logger:         nil,
+		Metrics:        metrics.NewDefaultMetrics(),
+		LLMClient:      nil,
+		ModelManager:   nil,
+		ToolManager:    tools.NewManager(),
+		AgentManager:   nil,
+		SkillManager:   nil,
+		Cache:          nil,
+		Thinker:        nil,
+		Actor:          nil,
+		Observer:       nil,
+		LoopController: terminator.NewDefaultTerminator(DefaultMaxIterations),
+		MaxRetries:     DefaultMaxRetries,
+		RetryInterval:  DefaultRetryInterval,
+		MaxTraceSize:   DefaultMaxTraceSize,
 	}
 }
 
-// WithThinker 设置思考模块
-func WithThinker(thinker core.Thinker) Option {
-	return func(e *Engine) {
-		e.thinker = thinker
+// WithReactorLogger 设置日志记录器
+func WithReactorLogger(logger log.Logger) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Logger = logger
 	}
 }
 
-// WithActor 设置行动模块
-func WithActor(actor core.Actor) Option {
-	return func(e *Engine) {
-		e.actor = actor
+// WithReactorMetrics 设置指标收集器
+func WithReactorMetrics(m metrics.Metrics) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Metrics = m
 	}
 }
 
-// WithObserver 设置观察模块
-func WithObserver(observer core.Observer) Option {
-	return func(e *Engine) {
-		e.observer = observer
+// WithReactorLLMClient 设置 LLM 客户端
+func WithReactorLLMClient(client gochatcore.Client) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.LLMClient = client
 	}
 }
 
-// WithLoopController 设置循环控制器
-func WithLoopController(controller core.LoopController) Option {
-	return func(e *Engine) {
-		e.loopController = controller
+// WithReactorModelManager 设置 Model 管理器
+func WithReactorModelManager(mm *model.Manager) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.ModelManager = mm
 	}
 }
 
-// WithLLMClient 设置 LLM 客户端
-func WithLLMClient(client llm.Client) Option {
-	return func(e *Engine) {
-		e.llmClient = client
+// WithReactorToolManager 设置工具管理器
+func WithReactorToolManager(tm *tools.Manager) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.ToolManager = tm
 	}
 }
 
-// WithCache 设置缓存
-func WithCache(c cache.Cache) Option {
-	return func(e *Engine) {
-		e.cache = c
+// WithReactorAgentManager 设置 Agent 管理器
+func WithReactorAgentManager(am *agent.Manager) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.AgentManager = am
 	}
 }
 
-// WithMaxRetries 设置最大重试次数
-func WithMaxRetries(max int) Option {
-	return func(e *Engine) {
-		e.maxRetries = max
+// WithReactorSkillManager 设置技能管理器
+func WithReactorSkillManager(sm skill.Manager) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.SkillManager = sm
 	}
 }
 
-// WithRetryInterval 设置重试间隔
-func WithRetryInterval(interval time.Duration) Option {
-	return func(e *Engine) {
-		e.retryInterval = interval
+// WithReactorCache 设置缓存
+func WithReactorCache(c cache.Cache) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Cache = c
 	}
 }
 
-// WithMetrics 设置指标收集器
-func WithMetrics(m metrics.Metrics) Option {
-	return func(e *Engine) {
-		e.metrics = m
+// WithReactorThinker 设置思考模块
+func WithReactorThinker(thinker thinker.Thinker) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Thinker = thinker
 	}
 }
 
-// WithSkillManager 设置技能管理器
-func WithSkillManager(sm skill.Manager) Option {
-	return func(e *Engine) {
-		e.skillManager = sm
+// WithReactorActor 设置行动模块
+func WithReactorActor(actor actor.Actor) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Actor = actor
 	}
 }
 
-// WithProviderRegistry 设置工具提供者注册表
-func WithProviderRegistry(registry *provider.Registry) Option {
-	return func(e *Engine) {
-		e.providerRegistry = registry
+// WithReactorObserver 设置观察模块
+func WithReactorObserver(observer observer.Observer) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.Observer = observer
 	}
 }
 
-// WithProvider 注册单个工具提供者
-func WithProvider(p provider.Provider) Option {
-	return func(e *Engine) {
-		if e.providerRegistry == nil {
-			e.providerRegistry = provider.NewRegistry()
-		}
-		if err := e.providerRegistry.Register(p); err != nil {
-			// 记录错误但不中断初始化
-			if e.logger != nil {
-				e.logger.Warn("Failed to register provider", log.Err(err))
-			}
-		}
+// WithReactorLoopController 设置循环控制器
+func WithReactorLoopController(controller terminator.Terminator) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.LoopController = controller
 	}
 }
 
-// WithAgentManager 设置 Agent 管理器
-func WithAgentManager(am *agent.Manager) Option {
-	return func(e *Engine) {
-		e.agentManager = am
+// WithReactorMaxRetries 设置最大重试次数
+func WithReactorMaxRetries(max int) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.MaxRetries = max
 	}
 }
 
-// WithModelManager 设置 Model 管理器
-func WithModelManager(mm *model.Manager) Option {
-	return func(e *Engine) {
-		e.modelManager = mm
+// WithReactorRetryInterval 设置重试间隔
+func WithReactorRetryInterval(interval time.Duration) ReactorOption {
+	return func(opts *ReactorOptions) {
+		opts.RetryInterval = interval
 	}
 }
 
-// WithLogger 设置日志记录器
-func WithLogger(logger log.Logger) Option {
-	return func(e *Engine) {
-		e.logger = logger
-	}
-}
-
-// WithMaxTraceSize 设置最大 Trace 大小
-func WithMaxTraceSize(size int) Option {
-	return func(e *Engine) {
+// WithReactorMaxTraceSize 设置最大 Trace 大小
+func WithReactorMaxTraceSize(size int) ReactorOption {
+	return func(opts *ReactorOptions) {
 		if size > 0 {
-			e.maxTraceSize = size
+			opts.MaxTraceSize = size
 		}
 	}
 }

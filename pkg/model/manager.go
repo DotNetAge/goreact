@@ -5,12 +5,12 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/ray/goreact/pkg/llm"
-	"github.com/ray/goreact/pkg/llm/anthropic"
-	"github.com/ray/goreact/pkg/llm/ollama"
-	"github.com/ray/goreact/pkg/llm/openai"
+	"github.com/DotNetAge/gochat/pkg/client/anthropic"
+	"github.com/DotNetAge/gochat/pkg/client/base"
+	"github.com/DotNetAge/gochat/pkg/client/ollama"
+	"github.com/DotNetAge/gochat/pkg/client/openai"
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
 )
 
 const (
@@ -125,7 +125,7 @@ func (m *Manager) ListModels() []*Model {
 }
 
 // CreateLLMClient 根据模型配置创建 LLM 客户端
-func (m *Manager) CreateLLMClient(modelName string) (llm.Client, error) {
+func (m *Manager) CreateLLMClient(modelName string) (gochatcore.Client, error) {
 	model, err := m.GetModel(modelName)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (m *Manager) CreateLLMClient(modelName string) (llm.Client, error) {
 }
 
 // createClientFromModel 根据模型配置创建客户端
-func (m *Manager) createClientFromModel(model *Model) (llm.Client, error) {
+func (m *Manager) createClientFromModel(model *Model) (gochatcore.Client, error) {
 	switch model.Provider {
 	case "openai":
 		return m.createOpenAIClient(model)
@@ -149,66 +149,67 @@ func (m *Manager) createClientFromModel(model *Model) (llm.Client, error) {
 }
 
 // createOpenAIClient 创建 OpenAI 客户端
-func (m *Manager) createOpenAIClient(model *Model) (llm.Client, error) {
+func (m *Manager) createOpenAIClient(model *Model) (gochatcore.Client, error) {
 	if model.APIKey == "" {
 		return nil, fmt.Errorf("OpenAI API key is required")
 	}
 
-	opts := []openai.Option{
-		openai.WithModel(model.ModelID),
+	cfg := openai.Config{
+		Config: base.Config{
+			APIKey:      model.APIKey,
+			Model:       model.ModelID,
+			BaseURL:     model.BaseURL,
+			Temperature: float64(model.Temperature),
+		},
 	}
 
-	if model.BaseURL != "" {
-		opts = append(opts, openai.WithBaseURL(model.BaseURL))
+	c, err := openai.New(cfg)
+	if err != nil {
+		return nil, err
 	}
-
-	if model.Timeout > 0 {
-		opts = append(opts, openai.WithTimeout(time.Duration(model.Timeout)*time.Second))
-	}
-
-	return openai.NewOpenAIClient(model.APIKey, opts...), nil
+	return c, nil
 }
 
 // createAnthropicClient 创建 Anthropic 客户端
-func (m *Manager) createAnthropicClient(model *Model) (llm.Client, error) {
+func (m *Manager) createAnthropicClient(model *Model) (gochatcore.Client, error) {
 	if model.APIKey == "" {
 		return nil, fmt.Errorf("Anthropic API key is required")
 	}
 
-	opts := []anthropic.Option{
-		anthropic.WithModel(model.ModelID),
+	cfg := anthropic.Config{
+		Config: base.Config{
+			APIKey:      model.APIKey,
+			Model:       model.ModelID,
+			BaseURL:     model.BaseURL,
+			Temperature: float64(model.Temperature),
+		},
 	}
 
-	if model.BaseURL != "" {
-		opts = append(opts, anthropic.WithBaseURL(model.BaseURL))
+	c, err := anthropic.New(cfg)
+	if err != nil {
+		return nil, err
 	}
-
-	if model.Timeout > 0 {
-		opts = append(opts, anthropic.WithTimeout(time.Duration(model.Timeout)*time.Second))
-	}
-
-	return anthropic.NewAnthropicClient(model.APIKey, opts...), nil
+	return c, nil
 }
 
 // createOllamaClient 创建 Ollama 客户端
-func (m *Manager) createOllamaClient(model *Model) (llm.Client, error) {
+func (m *Manager) createOllamaClient(model *Model) (gochatcore.Client, error) {
 	baseURL := model.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultOllamaBaseURL
 	}
 
-	opts := []ollama.Option{
-		ollama.WithModel(model.ModelID),
-		ollama.WithBaseURL(baseURL),
+	cfg := ollama.Config{
+		Config: base.Config{
+			Model:       model.ModelID,
+			BaseURL:     baseURL,
+			Temperature: float64(model.Temperature),
+		},
 	}
 
-	if model.Temperature > 0 {
-		opts = append(opts, ollama.WithTemperature(model.Temperature))
+	c, err := ollama.New(cfg)
+	if err != nil {
+		return nil, err
 	}
-
-	if model.Timeout > 0 {
-		opts = append(opts, ollama.WithTimeout(time.Duration(model.Timeout)*time.Second))
-	}
-
-	return ollama.NewOllamaClient(opts...), nil
+	return c, nil
 }

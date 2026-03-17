@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ray/goreact/pkg/llm"
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
 )
 
 // SelectionMethod 表示 Agent 选择的方式
@@ -37,7 +37,7 @@ type SelectionResult struct {
 type Manager struct {
 	agents    map[string]*Agent
 	mutex     sync.RWMutex
-	llmClient llm.Client // 用于语义匹配（可选）
+	llmClient gochatcore.Client // 用于语义匹配（可选）
 }
 
 // NewManager 创建智能体管理器
@@ -48,7 +48,7 @@ func NewManager() *Manager {
 }
 
 // WithLLMClient 设置 LLM 客户端（用于语义匹配）
-func (m *Manager) WithLLMClient(client llm.Client) *Manager {
+func (m *Manager) WithLLMClient(client gochatcore.Client) *Manager {
 	m.llmClient = client
 	return m
 }
@@ -245,14 +245,17 @@ Instructions:
 Your selection:`, task, sb.String())
 
 	// 调用 LLM
-	response, err := m.llmClient.Generate(context.Background(), prompt)
+	messages := []gochatcore.Message{
+		gochatcore.NewUserMessage(prompt),
+	}
+	response, err := m.llmClient.Chat(context.Background(), messages)
 	if err != nil {
 		// 如果 LLM 调用失败，返回第一个候选
 		return candidates[0], nil
 	}
 
 	// 解析响应，提取 Agent 名称
-	selectedName := strings.TrimSpace(response)
+	selectedName := strings.TrimSpace(response.Content)
 	selectedName = strings.Trim(selectedName, "\"'`")
 
 	// 在候选中查找匹配的 Agent

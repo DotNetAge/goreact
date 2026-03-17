@@ -1,3 +1,7 @@
+github.com/DotNetAge/gochat v0.1.0 h1:AkLeT3kfNyKooBo/yg2xwdmdTEymMFc1MjJVeSv2P+A=
+github.com/DotNetAge/gochat v0.1.0/go.mod h1:degs3ewx9YDZveHkJBLIiU+Jk3XtpTg9rRry9NkCV+Q=
+github.com/DotNetAge/gochat v0.1.5 h1:Vgi869yksRp49TAcmHnsBqzL43Fq3+2/T/9JU4yHWDA=
+github.com/DotNetAge/gochat v0.1.5/go.mod h1:w7m36rMZoDwmReJNTLUGHhok6DSqnIidg9wFKwYM1dM=
 github.com/emersion/go-imap v1.2.1 h1:+s9ZjMEjOB8NzZMVTM3cCenz2JrQIGGo5j1df19WjTA=
 github.com/emersion/go-imap v1.2.1/go.mod h1:Qlx1FSx2FTxjnjWpIlVNEuX+ylerZQNFE5NsmKFSejY=
 github.com/emersion/go-message v0.15.0/go.mod h1:wQUEfE+38+7EW8p8aZ96ptg6bAb1iwdgej19uXASlE4=

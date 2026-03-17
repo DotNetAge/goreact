@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/tool/builtin"
 	"github.com/ray/goreact/pkg/tool/provider"
 	"github.com/ray/goreact/pkg/tool/provider/mcp"
@@ -68,7 +68,7 @@ Final Answer: The weather in Tokyo is 22°C and Sunny with 65% humidity.`,
 
 	// 6. 创建 Engine 并注册工具
 	fmt.Println("Creating Engine and registering tools...")
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(llmClient),
 		engine.WithMaxIterations(10),
 	)

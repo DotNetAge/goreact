@@ -125,12 +125,6 @@ pkg/
 │       ├── grep.go        # 文本搜索
 │       └── ...            # 其他工具
 │
-├── llm/                # LLM 集成
-│   ├── client.go          # LLM 客户端接口
-│   ├── mock/              # Mock 客户端（测试用）
-│   ├── ollama/            # Ollama 集成
-│   ├── openai/            # OpenAI 集成
-│   └── anthropic/         # Anthropic 集成
 │
 ├── cache/              # 缓存系统
 │   ├── cache.go           # 缓存接口
@@ -146,8 +140,7 @@ pkg/
 │
 ├── model/              # 模型管理
 │   ├── model.go           # 模型接口
-│   ├── manager.go         # 模型管理器
-│   └── llm_adapter.go     # LLM 适配器
+│   └──manager.go         # 模型管理器
 │
 ├── metrics/            # 指标收集
 │   └── metrics.go         # 指标接口和实现

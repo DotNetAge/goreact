@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // ExecutionRecord 执行记录
@@ -102,7 +102,7 @@ func WithTracing(tracer *ExecutionTracer) *TracingWrapper {
 	return &TracingWrapper{tracer: tracer}
 }
 
-func (w *TracingWrapper) Wrap(t tool.Tool) tool.Tool {
+func (w *TracingWrapper) Wrap(t tools.Tool) tools.Tool {
 	return &tracingTool{
 		base:   t,
 		tracer: w.tracer,
@@ -110,7 +110,7 @@ func (w *TracingWrapper) Wrap(t tool.Tool) tool.Tool {
 }
 
 type tracingTool struct {
-	base   tool.Tool
+	base   tools.Tool
 	tracer *ExecutionTracer
 }
 
@@ -233,7 +233,7 @@ func WithProfiling(profiler *PerformanceProfiler) *ProfilingWrapper {
 	return &ProfilingWrapper{profiler: profiler}
 }
 
-func (w *ProfilingWrapper) Wrap(t tool.Tool) tool.Tool {
+func (w *ProfilingWrapper) Wrap(t tools.Tool) tools.Tool {
 	return &profilingTool{
 		base:     t,
 		profiler: w.profiler,
@@ -241,7 +241,7 @@ func (w *ProfilingWrapper) Wrap(t tool.Tool) tool.Tool {
 }
 
 type profilingTool struct {
-	base     tool.Tool
+	base     tools.Tool
 	profiler *PerformanceProfiler
 }
 

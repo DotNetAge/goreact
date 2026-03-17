@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/ray/goreact/pkg/core"
-	looppresets "github.com/ray/goreact/pkg/core/loopctrl/presets"
-	"github.com/ray/goreact/pkg/loopctrl/condition"
-	"github.com/ray/goreact/pkg/loopctrl/cost"
-	"github.com/ray/goreact/pkg/loopctrl/stagnation"
+	"github.com/ray/goreact/pkg/terminator/condition"
+	"github.com/ray/goreact/pkg/terminator/cost"
+	looppresets "github.com/ray/goreact/pkg/terminator/presets"
+	"github.com/ray/goreact/pkg/terminator/stagnation"
 	"github.com/ray/goreact/pkg/types"
 )
 
@@ -94,8 +94,8 @@ func main() {
 	fmt.Println("\n--- 3. Cost Tracker ---")
 
 	tracker := cost.NewTracker(cost.Pricing{
-		InputTokenPrice:  0.01,  // $0.01 / 1K tokens
-		OutputTokenPrice: 0.03,  // $0.03 / 1K tokens
+		InputTokenPrice:  0.01, // $0.01 / 1K tokens
+		OutputTokenPrice: 0.03, // $0.03 / 1K tokens
 	})
 
 	tracker.RecordTokens(500, 200)

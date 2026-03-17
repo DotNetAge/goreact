@@ -1,24 +1,28 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ray/goreact/pkg/cache"
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/ollama"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
 
 func main() {
 	fmt.Println("=== GoReAct with Cache Example ===")
 
-	// 创建 Ollama 客户端
-	ollamaClient := ollama.NewOllamaClient(
-		ollama.WithModel("qwen3:0.6b"),
-		ollama.WithTemperature(0.7),
-	)
+	// 创建 Mock LLM 客户端（用于演示）
+	mockResponses := []string{
+		`Thought: I need to calculate 10 + 5.
+Action: calculator
+Parameters: {"operation": "add", "a": 10, "b": 5}`,
+		`Thought: The result is 15.
+Final Answer: 10 + 5 = 15`,
+	}
+	ollamaClient := mock.NewMockClient(mockResponses)
 
 	// 创建缓存
 	memCache := cache.NewMemoryCache(
@@ -27,7 +31,7 @@ func main() {
 	)
 
 	// 创建引擎
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(ollamaClient),
 		engine.WithCache(memCache),
 		engine.WithMaxIterations(10),

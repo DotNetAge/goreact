@@ -3,7 +3,7 @@ package provider
 import (
 	"fmt"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // Provider 工具提供者接口
@@ -16,10 +16,10 @@ type Provider interface {
 	Initialize(config map[string]interface{}) error
 
 	// DiscoverTools 发现可用的工具
-	DiscoverTools() ([]tool.Tool, error)
+	DiscoverTools() ([]tools.Tool, error)
 
 	// GetTool 获取指定的工具
-	GetTool(name string) (tool.Tool, error)
+	GetTool(name string) (tools.Tool, error)
 
 	// Close 关闭提供者连接
 	Close() error
@@ -78,8 +78,8 @@ func (r *Registry) List() []string {
 }
 
 // DiscoverAllTools 从所有提供者发现工具
-func (r *Registry) DiscoverAllTools() ([]tool.Tool, error) {
-	allTools := make([]tool.Tool, 0)
+func (r *Registry) DiscoverAllTools() ([]tools.Tool, error) {
+	allTools := make([]tools.Tool, 0)
 
 	for _, provider := range r.providers {
 		if !provider.IsHealthy() {

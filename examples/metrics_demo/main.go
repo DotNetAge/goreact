@@ -1,14 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"context"
 	"time"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
 	"github.com/ray/goreact/pkg/metrics"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
 
@@ -32,7 +32,7 @@ Final Answer: The sum of 10 and 20 is 30.`,
 	mockLLM := mock.NewMockClient(mockResponses)
 
 	// 3. 创建 Engine（注入 Metrics）
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(mockLLM),
 		engine.WithMetrics(metricsCollector), // 注入 Metrics 收集器
 		engine.WithMaxIterations(10),

@@ -1,11 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
 
@@ -16,7 +16,7 @@ func main() {
 	mockLLM := mock.NewMockClient([]string{})
 
 	// 创建引擎
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithMaxIterations(10),
 		engine.WithLLMClient(mockLLM),
 	)

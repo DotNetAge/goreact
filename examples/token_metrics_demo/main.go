@@ -1,14 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"context"
 	"time"
 
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm"
-	"github.com/ray/goreact/pkg/llm/ollama"
 	"github.com/ray/goreact/pkg/log"
 	"github.com/ray/goreact/pkg/metrics"
 	"github.com/ray/goreact/pkg/tool/builtin"
@@ -18,7 +17,7 @@ import (
 type MockLLMWithTokens struct {
 	responses      []string
 	callCount      int
-	lastTokenUsage *llm.TokenUsage
+	lastTokenUsage *gochatcore.Usage
 }
 
 func NewMockLLMWithTokens(responses []string) *MockLLMWithTokens {
@@ -28,27 +27,39 @@ func NewMockLLMWithTokens(responses []string) *MockLLMWithTokens {
 	}
 }
 
-func (m *MockLLMWithTokens) Generate(ctx context.Context, prompt string) (string, error) {
+// Chat 实现 gochatcore.Client 接口
+func (m *MockLLMWithTokens) Chat(ctx context.Context, messages []gochatcore.Message, opts ...gochatcore.Option) (*gochatcore.Response, error) {
 	if m.callCount < len(m.responses) {
 		response := m.responses[m.callCount]
 		m.callCount++
 
 		// 模拟 Token 消耗（根据 prompt 和 response 长度估算）
-		promptTokens := len(prompt) / 4     // 粗略估算：4 字符 ≈ 1 token
+		promptTokens := len(messages[0].TextContent()) / 4 // 粗略估算：4 字符 ≈ 1 token
 		completionTokens := len(response) / 4
-		m.lastTokenUsage = &llm.TokenUsage{
+		m.lastTokenUsage = &gochatcore.Usage{
 			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
 			TotalTokens:      promptTokens + completionTokens,
 		}
 
-		return response, nil
+		return &gochatcore.Response{
+			Content: response,
+			Usage:   m.lastTokenUsage,
+		}, nil
 	}
 
-	return "Final Answer: Task completed.", nil
+	return &gochatcore.Response{
+		Content: "Final Answer: Task completed.",
+	}, nil
 }
 
-func (m *MockLLMWithTokens) LastTokenUsage() *llm.TokenUsage {
+// ChatStream 实现 gochatcore.Client 接口
+func (m *MockLLMWithTokens) ChatStream(ctx context.Context, messages []gochatcore.Message, opts ...gochatcore.Option) (*gochatcore.Stream, error) {
+	return nil, fmt.Errorf("ChatStream not implemented in mock")
+}
+
+// LastTokenUsage 返回最近一次的 Token 使用情况
+func (m *MockLLMWithTokens) LastTokenUsage() *gochatcore.Usage {
 	return m.lastTokenUsage
 }
 
@@ -83,7 +94,7 @@ Final Answer: The sum of 100 and 200 is 300.`,
 
 	// 4. 创建 Engine
 	fmt.Println("Step 4: 创建 Engine")
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(mockLLM),
 		engine.WithMetrics(metricsCollector),
 		engine.WithLogger(logger),
@@ -159,14 +170,10 @@ Final Answer: The sum of 100 and 200 is 300.`,
 	fmt.Println("  - Engine 自动检测并记录到 Metrics")
 
 	// 创建 Ollama Client 示例（不实际调用）
-	ollamaClient := ollama.NewOllamaClient(
-		ollama.WithModel("qwen3:8b"),
-		ollama.WithBaseURL("http://localhost:11434"),
-	)
-	fmt.Printf("\n示例 Ollama Client 配置:\n")
-	fmt.Printf("  Model: %s\n", ollamaClient.GetModel())
-	fmt.Printf("  Base URL: %s\n", ollamaClient.GetBaseURL())
-	fmt.Println("  支持 Token 统计: ✓")
+	fmt.Println("\nOllama Client 已实现 TokenReporter 接口：")
+	fmt.Println("  - 自动从 API 响应中提取 prompt_eval_count 和 eval_count")
+	fmt.Println("  - 通过 Response.Usage 获取 Token 使用量")
+	fmt.Println("  - Engine 自动检测并记录到 Metrics")
 
 	fmt.Println("\n✅ Token Metrics 演示完成！")
 	fmt.Println("\n总结：")

@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/skill"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
@@ -119,7 +119,7 @@ Final Answer: The result of 18 * 5 + 12 is 102.`,
 	}
 
 	// 创建 Engine
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(llmClient2),
 		engine.WithSkillManager(skillManager),
 		engine.WithMaxIterations(10),

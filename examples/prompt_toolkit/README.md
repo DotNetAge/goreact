@@ -172,7 +172,8 @@ func (t *EnhancedThinker) Think(task string, ctx *core.Context) (*types.Thought,
     t.debugger.LogPrompt(prompt, metadata)
 
     // 调用 LLM
-    response, err := t.llmClient.Generate(prompt.String())
+    messages := []llm.Message{llm.NewUserMessage(prompt.String())}
+    response, err := t.llmClient.Chat(ctx.Context(), messages)
     ...
 }
 ```

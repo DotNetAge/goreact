@@ -1,14 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ray/goreact/pkg/agent"
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
 	"github.com/ray/goreact/pkg/log"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/model"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
@@ -89,7 +89,7 @@ func main() {
 - Verifying results for correctness
 
 Always show your work step by step.`,
-		"qwen3-local",  // 使用本地 Ollama 模型
+		"qwen3-local", // 使用本地 Ollama 模型
 	)
 
 	// 代码审查 Agent（使用 GPT-4）
@@ -103,7 +103,7 @@ Always show your work step by step.`,
 - Maintainability and readability
 
 Provide constructive feedback with specific examples.`,
-		"gpt4-turbo",  // 使用 GPT-4
+		"gpt4-turbo", // 使用 GPT-4
 	)
 
 	// 通用助手 Agent（使用 Claude）
@@ -117,7 +117,7 @@ Provide constructive feedback with specific examples.`,
 - Use tools when necessary
 
 Be friendly, clear, and concise.`,
-		"claude-opus",  // 使用 Claude
+		"claude-opus", // 使用 Claude
 	)
 
 	agentManager.Register(mathAgent)
@@ -161,8 +161,8 @@ Calculation steps:
 	// 5. 创建 Engine（集成 Agent + Model + Logger）
 	// 注意：由于我们使用 Mock LLM，实际不会调用真实的 Model
 	// 但架构上已经完整：Agent → Model → LLM Client
-	eng := engine.New(
-		engine.WithLLMClient(mockLLM),        // 使用 Mock LLM（实际场景会被 Model 动态创建的 Client 替换）
+	eng := engine.Reactor(
+		engine.WithLLMClient(mockLLM),         // 使用 Mock LLM（实际场景会被 Model 动态创建的 Client 替换）
 		engine.WithAgentManager(agentManager), // Agent 管理器
 		engine.WithModelManager(modelManager), // Model 管理器（暂时不会真正调用，因为 Mock LLM 优先）
 		engine.WithLogger(logger),             // 日志记录器

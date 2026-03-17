@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ray/goreact/pkg/llm"
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,44 +61,44 @@ const (
 	Hybrid
 )
 
-// DefaultManager 默认技能管理器实现
-type DefaultManager struct {
+// defaultMgr 默认技能管理器实现
+type defaultMgr struct {
 	skills         map[string]*Skill // 活跃技能库
 	archivedSkills map[string]*Skill // 归档技能库
 	totalTasks     int               // 总任务数（用于计算频率评分）
-	llmClient      llm.Client        // LLM 客户端（用于语义匹配）
+	llmClient      gochatcore.Client // LLM 客户端（用于语义匹配）
 	selectionMode  SelectionMode     // 选择模式
 	topN           int               // 混合模式下筛选的候选数量
 	mu             sync.RWMutex      // 保护并发访问
 }
 
 // ManagerOption 管理器配置选项
-type ManagerOption func(*DefaultManager)
+type ManagerOption func(*defaultMgr)
 
 // WithLLMClient 设置 LLM 客户端（用于语义匹配）
-func WithLLMClient(client llm.Client) ManagerOption {
-	return func(m *DefaultManager) {
+func WithLLMClient(client gochatcore.Client) ManagerOption {
+	return func(m *defaultMgr) {
 		m.llmClient = client
 	}
 }
 
 // WithSelectionMode 设置选择模式
 func WithSelectionMode(mode SelectionMode) ManagerOption {
-	return func(m *DefaultManager) {
+	return func(m *defaultMgr) {
 		m.selectionMode = mode
 	}
 }
 
 // WithTopN 设置混合模式下的候选数量
 func WithTopN(n int) ManagerOption {
-	return func(m *DefaultManager) {
+	return func(m *defaultMgr) {
 		m.topN = n
 	}
 }
 
-// NewDefaultManager 创建新的默认技能管理器
-func NewDefaultManager(options ...ManagerOption) *DefaultManager {
-	m := &DefaultManager{
+// DefaultManager 创建新的默认技能管理器
+func DefaultManager(options ...ManagerOption) *defaultMgr {
+	m := &defaultMgr{
 		skills:         make(map[string]*Skill),
 		archivedSkills: make(map[string]*Skill),
 		totalTasks:     0,
@@ -125,7 +125,7 @@ type SkillFrontmatter struct {
 }
 
 // LoadSkill 从目录加载技能
-func (m *DefaultManager) LoadSkill(path string) (*Skill, error) {
+func (m *defaultMgr) LoadSkill(path string) (*Skill, error) {
 	// 读取 SKILL.md 文件
 	skillMdPath := filepath.Join(path, "SKILL.md")
 	content, err := os.ReadFile(skillMdPath)
@@ -181,7 +181,7 @@ func (m *DefaultManager) LoadSkill(path string) (*Skill, error) {
 }
 
 // loadOptionalDirectories 加载可选目录（scripts, references, assets）
-func (m *DefaultManager) loadOptionalDirectories(basePath string, skill *Skill) {
+func (m *defaultMgr) loadOptionalDirectories(basePath string, skill *Skill) {
 	// 加载 scripts/
 	scriptsPath := filepath.Join(basePath, "scripts")
 	if entries, err := os.ReadDir(scriptsPath); err == nil {
@@ -223,7 +223,7 @@ func (m *DefaultManager) loadOptionalDirectories(basePath string, skill *Skill) 
 }
 
 // RegisterSkill 注册技能
-func (m *DefaultManager) RegisterSkill(skill *Skill) error {
+func (m *defaultMgr) RegisterSkill(skill *Skill) error {
 	// 验证技能数据
 	if err := validateSkill(skill); err != nil {
 		return fmt.Errorf("invalid skill: %w", err)
@@ -275,7 +275,7 @@ func validateSkill(skill *Skill) error {
 }
 
 // GetSkill 获取技能
-func (m *DefaultManager) GetSkill(name string) (*Skill, error) {
+func (m *defaultMgr) GetSkill(name string) (*Skill, error) {
 	m.mu.RLock()
 	skill, ok := m.skills[name]
 	m.mu.RUnlock()
@@ -286,7 +286,7 @@ func (m *DefaultManager) GetSkill(name string) (*Skill, error) {
 }
 
 // ListSkills 列出所有技能元数据（轻量级）
-func (m *DefaultManager) ListSkills() []SkillMetadata {
+func (m *defaultMgr) ListSkills() []SkillMetadata {
 	m.mu.RLock()
 	metadata := make([]SkillMetadata, 0, len(m.skills))
 	for _, skill := range m.skills {
@@ -297,7 +297,7 @@ func (m *DefaultManager) ListSkills() []SkillMetadata {
 }
 
 // SelectSkill 根据任务选择最合适的技能（混合模式）
-func (m *DefaultManager) SelectSkill(task string) (*Skill, error) {
+func (m *defaultMgr) SelectSkill(task string) (*Skill, error) {
 	m.mu.RLock()
 	skillCount := len(m.skills)
 	m.mu.RUnlock()
@@ -322,7 +322,7 @@ func (m *DefaultManager) SelectSkill(task string) (*Skill, error) {
 }
 
 // selectHybrid 混合选择：先关键词筛选，再语义匹配
-func (m *DefaultManager) selectHybrid(task string) (*Skill, error) {
+func (m *defaultMgr) selectHybrid(task string) (*Skill, error) {
 	// 1. 使用关键词快速筛选候选（取前 topN 个）
 	candidates, err := m.filterCandidatesByKeyword(task, m.topN)
 	if err != nil {
@@ -349,7 +349,7 @@ func (m *DefaultManager) selectHybrid(task string) (*Skill, error) {
 }
 
 // filterCandidatesByKeyword 使用关键词筛选候选技能
-func (m *DefaultManager) filterCandidatesByKeyword(task string, topN int) ([]*Skill, error) {
+func (m *defaultMgr) filterCandidatesByKeyword(task string, topN int) ([]*Skill, error) {
 	type scoredSkill struct {
 		skill *Skill
 		score float64
@@ -396,7 +396,7 @@ func (m *DefaultManager) filterCandidatesByKeyword(task string, topN int) ([]*Sk
 }
 
 // selectByKeyword 仅使用关键词匹配选择技能
-func (m *DefaultManager) selectByKeyword(task string) (*Skill, error) {
+func (m *defaultMgr) selectByKeyword(task string) (*Skill, error) {
 	candidates, err := m.filterCandidatesByKeyword(task, 1)
 	if err != nil {
 		return nil, err
@@ -405,7 +405,7 @@ func (m *DefaultManager) selectByKeyword(task string) (*Skill, error) {
 }
 
 // calculateKeywordScore 计算关键词匹配分数
-func (m *DefaultManager) calculateKeywordScore(task string, skill *Skill) float64 {
+func (m *defaultMgr) calculateKeywordScore(task string, skill *Skill) float64 {
 	taskLower := strings.ToLower(task)
 	descLower := strings.ToLower(skill.Description)
 	nameLower := strings.ToLower(skill.Name)
@@ -468,7 +468,7 @@ func (m *DefaultManager) calculateKeywordScore(task string, skill *Skill) float6
 }
 
 // selectBySemantic 使用 LLM 进行语义匹配选择
-func (m *DefaultManager) selectBySemantic(task string, candidates []*Skill) (*Skill, error) {
+func (m *defaultMgr) selectBySemantic(task string, candidates []*Skill) (*Skill, error) {
 	if m.llmClient == nil {
 		return nil, fmt.Errorf("LLM client is not configured")
 	}
@@ -503,13 +503,16 @@ Instructions:
 Your selection:`, task, skillList)
 
 	// 调用 LLM
-	response, err := m.llmClient.Generate(context.Background(), prompt)
+	messages := []gochatcore.Message{
+		gochatcore.NewUserMessage(prompt),
+	}
+	response, err := m.llmClient.Chat(context.Background(), messages)
 	if err != nil {
 		return nil, fmt.Errorf("LLM selection failed: %w", err)
 	}
 
 	// 解析响应，提取技能名称
-	selectedName := strings.TrimSpace(response)
+	selectedName := strings.TrimSpace(response.Content)
 	selectedName = strings.Trim(selectedName, "\"'`")
 
 	// 在候选中查找匹配的技能
@@ -525,7 +528,7 @@ Your selection:`, task, skillList)
 }
 
 // getAllSkills 获取所有技能列表
-func (m *DefaultManager) getAllSkills() []*Skill {
+func (m *defaultMgr) getAllSkills() []*Skill {
 	m.mu.RLock()
 	skills := make([]*Skill, 0, len(m.skills))
 	for _, skill := range m.skills {
@@ -536,7 +539,7 @@ func (m *DefaultManager) getAllSkills() []*Skill {
 }
 
 // RecordExecution 记录技能执行结果
-func (m *DefaultManager) RecordExecution(name string, success bool, executionTime time.Duration, tokenConsumed int, qualityScore float64) error {
+func (m *defaultMgr) RecordExecution(name string, success bool, executionTime time.Duration, tokenConsumed int, qualityScore float64) error {
 	skill, err := m.GetSkill(name)
 	if err != nil {
 		return err
@@ -587,7 +590,7 @@ func (m *DefaultManager) RecordExecution(name string, success bool, executionTim
 }
 
 // GetSkillStatistics 获取技能统计数据
-func (m *DefaultManager) GetSkillStatistics(name string) (*SkillStatistics, error) {
+func (m *defaultMgr) GetSkillStatistics(name string) (*SkillStatistics, error) {
 	skill, err := m.GetSkill(name)
 	if err != nil {
 		return nil, err
@@ -596,7 +599,7 @@ func (m *DefaultManager) GetSkillStatistics(name string) (*SkillStatistics, erro
 }
 
 // GetSkillRanking 获取技能排名
-func (m *DefaultManager) GetSkillRanking() []SkillRanking {
+func (m *defaultMgr) GetSkillRanking() []SkillRanking {
 	m.mu.RLock()
 	rankings := make([]SkillRanking, 0, len(m.skills))
 
@@ -626,7 +629,7 @@ func (m *DefaultManager) GetSkillRanking() []SkillRanking {
 }
 
 // EvolveSkills 执行技能进化（优胜劣汰）
-func (m *DefaultManager) EvolveSkills() error {
+func (m *defaultMgr) EvolveSkills() error {
 	now := time.Now()
 
 	m.mu.Lock()
@@ -660,7 +663,7 @@ func (m *DefaultManager) EvolveSkills() error {
 }
 
 // ArchiveSkill 归档技能（软淘汰）
-func (m *DefaultManager) ArchiveSkill(name string) error {
+func (m *defaultMgr) ArchiveSkill(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -677,7 +680,7 @@ func (m *DefaultManager) ArchiveSkill(name string) error {
 }
 
 // RestoreSkill 恢复归档的技能
-func (m *DefaultManager) RestoreSkill(name string) error {
+func (m *defaultMgr) RestoreSkill(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

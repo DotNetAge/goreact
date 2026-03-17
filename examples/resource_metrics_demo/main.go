@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"context"
 	"time"
 
+	gochatcore "github.com/DotNetAge/gochat/pkg/core"
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm"
 	"github.com/ray/goreact/pkg/log"
 	"github.com/ray/goreact/pkg/metrics"
 	"github.com/ray/goreact/pkg/tool/builtin"
@@ -17,7 +17,7 @@ import (
 type MockLLMWithResources struct {
 	responses      []string
 	callCount      int
-	lastTokenUsage *llm.TokenUsage
+	lastTokenUsage *gochatcore.Usage
 }
 
 func NewMockLLMWithResources(responses []string) *MockLLMWithResources {
@@ -27,7 +27,8 @@ func NewMockLLMWithResources(responses []string) *MockLLMWithResources {
 	}
 }
 
-func (m *MockLLMWithResources) Generate(ctx context.Context, prompt string) (string, error) {
+// Chat 实现 gochatcore.Client 接口
+func (m *MockLLMWithResources) Chat(ctx context.Context, messages []gochatcore.Message, opts ...gochatcore.Option) (*gochatcore.Response, error) {
 	if m.callCount < len(m.responses) {
 		response := m.responses[m.callCount]
 		m.callCount++
@@ -37,21 +38,32 @@ func (m *MockLLMWithResources) Generate(ctx context.Context, prompt string) (str
 		time.Sleep(10 * time.Millisecond) // 模拟计算时间
 
 		// 模拟 Token 消耗
-		promptTokens := len(prompt) / 4
+		promptTokens := len(messages[0].TextContent()) / 4
 		completionTokens := len(response) / 4
-		m.lastTokenUsage = &llm.TokenUsage{
+		m.lastTokenUsage = &gochatcore.Usage{
 			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
 			TotalTokens:      promptTokens + completionTokens,
 		}
 
-		return response, nil
+		return &gochatcore.Response{
+			Content: response,
+			Usage:   m.lastTokenUsage,
+		}, nil
 	}
 
-	return "Final Answer: Task completed.", nil
+	return &gochatcore.Response{
+		Content: "Final Answer: Task completed.",
+	}, nil
 }
 
-func (m *MockLLMWithResources) LastTokenUsage() *llm.TokenUsage {
+// ChatStream 实现 gochatcore.Client 接口
+func (m *MockLLMWithResources) ChatStream(ctx context.Context, messages []gochatcore.Message, opts ...gochatcore.Option) (*gochatcore.Stream, error) {
+	return nil, fmt.Errorf("ChatStream not implemented in mock")
+}
+
+// LastTokenUsage 返回最近一次的 Token 使用情况
+func (m *MockLLMWithResources) LastTokenUsage() *gochatcore.Usage {
 	return m.lastTokenUsage
 }
 
@@ -86,7 +98,7 @@ Final Answer: The result of 500 * 600 is 300000.`,
 
 	// 4. 创建 Engine
 	fmt.Println("Step 4: 创建 Engine")
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(mockLLM),
 		engine.WithMetrics(metricsCollector),
 		engine.WithLogger(logger),

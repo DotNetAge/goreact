@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/llm/mock"
+	"github.com/ray/goreact/pkg/mock"
 	"github.com/ray/goreact/pkg/skill"
 	"github.com/ray/goreact/pkg/tool/builtin"
 )
@@ -58,7 +58,7 @@ Step 2: 345 + 7 = 352`,
 	llmClient := mock.NewMockClient(mockResponses)
 
 	// 4. 创建 Engine 并注入 SkillManager
-	eng := engine.New(
+	eng := engine.Reactor(
 		engine.WithLLMClient(llmClient),
 		engine.WithSkillManager(skillManager),
 		engine.WithMaxIterations(10),

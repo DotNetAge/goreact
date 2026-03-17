@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // PropertyType 参数类型
@@ -380,8 +380,8 @@ func (t *Tool) buildRequired() []string {
 	return required
 }
 
-// 确保 Tool 实现了 tool.Tool 接口
-var _ tool.Tool = (*Tool)(nil)
+// 确保 Tool 实现了 tools.Tool 接口
+var _ tools.Tool = (*Tool)(nil)
 
 // UserError 用户错误（不应该重试）
 type UserError struct {

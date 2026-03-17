@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ray/goreact/pkg/tool"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // DateTime 日期时间工具
 type DateTime struct{}
 
 // NewDateTime 创建日期时间工具
-func NewDateTime() tool.Tool {
+func NewDateTime() tools.Tool {
 	return &DateTime{}
 }
 
