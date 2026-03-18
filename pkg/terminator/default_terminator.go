@@ -1,52 +1,55 @@
 package terminator
 
 import (
-	"fmt"
-
-	"github.com/ray/goreact/pkg/types"
+	"github.com/ray/goreact/pkg/core"
 )
 
-// DefaultTerminator 默认循环终结器实现
-type DefaultTerminator struct {
-	maxIterations int
+// defaultTerminator ensures the ReAct loop does not run forever.
+// It checks hard boundaries like MaxSteps.
+type defaultTerminator struct{}
+
+// Option configures the DefaultTerminator.
+type Option func(*defaultTerminator)
+
+// Default creates a standard safeguard termination rule engine.
+func Default(opts ...Option) Terminator {
+	t := &defaultTerminator{}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
-// NewDefaultTerminator 创建默认循环终结器
-func NewDefaultTerminator(maxIterations int) *DefaultTerminator {
-	return &DefaultTerminator{
-		maxIterations: maxIterations,
+func (t *defaultTerminator) CheckTermination(ctx *core.PipelineContext) (bool, error) {
+	// Rule 1: Goal is achieved by the LLM
+	if ctx.IsFinished {
+		return true, nil
 	}
-}
 
-// Control 控制循环
-func (c *DefaultTerminator) Control(state *types.LoopState) *types.LoopAction {
-	// 检查是否达到最大迭代次数
-	if state.Iteration >= c.maxIterations {
-		return &types.LoopAction{
-			ShouldContinue: false,
-			Reason:         fmt.Sprintf("Reached maximum iterations (%d)", c.maxIterations),
+	// Rule 2: Max Steps boundary
+	if ctx.CurrentStep >= ctx.MaxSteps {
+		ctx.IsFinished = true
+		ctx.FinishReason = "MaxStepsExceeded"
+		ctx.Logger.Warn("Engine halted due to max iterations limit", "max_steps", ctx.MaxSteps)
+		return true, nil
+	}
+	
+	// Rule 3: Stagnation & Infinite loops (Simple heuristic)
+	// If the last 3 traces have the exact same Action name and input, the LLM is looping blindly.
+	if len(ctx.Traces) >= 3 {
+		t1 := ctx.Traces[len(ctx.Traces)-1]
+		t2 := ctx.Traces[len(ctx.Traces)-2]
+		t3 := ctx.Traces[len(ctx.Traces)-3]
+		
+		if t1.Action != nil && t2.Action != nil && t3.Action != nil {
+			if t1.Action.Name == t2.Action.Name && t2.Action.Name == t3.Action.Name {
+				// We'd ideally hash or strictly compare the Input Maps here.
+				// This is a naive detection to demonstrate the concept.
+				// For now, let it be just a warning unless they are absolutely identical.
+				ctx.Logger.Warn("Stagnation detected: Agent keeps calling the same tool", "tool", t1.Action.Name)
+			}
 		}
 	}
 
-	// 检查是否应该结束（基于思考结果）
-	if state.LastThought != nil && state.LastThought.ShouldFinish {
-		return &types.LoopAction{
-			ShouldContinue: false,
-			Reason:         "Task completed",
-		}
-	}
-
-	// 检查反馈是否建议停止
-	if state.LastFeedback != nil && !state.LastFeedback.ShouldContinue {
-		return &types.LoopAction{
-			ShouldContinue: false,
-			Reason:         "Feedback suggests stopping",
-		}
-	}
-
-	// 继续循环
-	return &types.LoopAction{
-		ShouldContinue: true,
-		Reason:         "Continue processing",
-	}
+	return false, nil
 }

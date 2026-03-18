@@ -67,6 +67,9 @@
 
 - **接口隔离：** `Thinker` 应该是一个顶层 Interface。内部的 Planner, OutputParser, QueryTransformer 应当拆分为独立的可插拔组件。
 - **Pipeline模式：** Thinker 的预处理阶段（如 RAG 检索、Token 压缩）是一种独立的管线或者是处理步骤，gochat/pkg/pipeline 的管线模式可以将每个部分进行进理步骤的包装分片独立处理，以达到既能直接调用包内的接口又能通过步骤组合灵活组成不同的管线。
+- **实时思考流同步 (Thought Streaming)：** 在进行“慢思考”时，大模型可能需要数秒甚至十几秒来生成 `Thought` 或 `Action` 的 JSON 文本。Thinker 必须支持流式（Streaming）回调通道，让外界（如前端 UI）能像打字机一样，实时看到 Agent “正在思考的过程” 和 “准备调用的工具名称”，极大优化用户体验。
+- **精准的 Token 审计与归因 (Token Accounting)：** 为了控制 Agent 的高昂使用成本，每一次 ReAct 循环都必须将消耗的 `PromptTokens` 和 `CompletionTokens` 精准累加至 PipelineContext 的生命周期中，以便 Terminator 基于财务预算做出硬性熔断裁决。
+
 - **可观测性 (Observability)：** 思考过程的每一个子阶段（检索了什么、压缩了多少 Token、生成的原始 Prompt 是什么）都必须对外暴露 Hook 或 Trace，以便于调试和性能监控。
 - **依赖注入(Dependence Injection)**
 Thinker 通过DI的方式，采用Go特有的Option Pattern注入不同接口实例，与不同的外部功能进行交互。

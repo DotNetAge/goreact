@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,110 +10,119 @@ import (
 	"sync"
 )
 
-// DefaultMemoryManager 默认内存管理器
+// DefaultMemoryManager is a basic in-memory KV store for session states.
+// It is NOT a semantic RAG memory, but satisfies the Manager interface.
 type DefaultMemoryManager struct {
-	memories    map[string]map[string]any
+	memories    map[string]map[string]interface{}
 	mutex       sync.RWMutex
 	persistPath string
 }
 
-// NewDefaultMemoryManager 创建默认内存管理器
+// NewDefaultMemoryManager creates a default memory manager
 func NewDefaultMemoryManager(persistPath string) (*DefaultMemoryManager, error) {
 	if persistPath == "" {
 		persistPath = "./memory"
 	}
 
-	// 确保持久化目录存在
 	if err := os.MkdirAll(persistPath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create memory directory: %w", err)
 	}
 
 	return &DefaultMemoryManager{
-		memories:    make(map[string]map[string]any),
+		memories:    make(map[string]map[string]interface{}),
 		persistPath: persistPath,
 	}, nil
 }
 
-// Store 存储内存数据
-func (m *DefaultMemoryManager) Store(sessionId string, key string, value any) {
+func (m *DefaultMemoryManager) Store(ctx context.Context, sessionID string, key string, value interface{}) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if _, ok := m.memories[sessionId]; !ok {
-		m.memories[sessionId] = make(map[string]any)
+	if _, ok := m.memories[sessionID]; !ok {
+		m.memories[sessionID] = make(map[string]interface{})
 	}
-
-	m.memories[sessionId][key] = value
-}
-
-// Retrieve 检索内存数据
-func (m *DefaultMemoryManager) Retrieve(sessionId string, key string) any {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	if session, ok := m.memories[sessionId]; ok {
-		return session[key]
-	}
-
+	m.memories[sessionID][key] = value
 	return nil
 }
 
-// Compress 压缩内存数据
-func (m *DefaultMemoryManager) Compress(sessionId string) error {
+func (m *DefaultMemoryManager) Retrieve(ctx context.Context, sessionID string, key string) (interface{}, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if session, ok := m.memories[sessionID]; ok {
+		if val, exists := session[key]; exists {
+			return val, nil
+		}
+	}
+	return nil, nil // Or an explicit ErrNotFound
+}
+
+// Recall in the default manager just returns a basic JSON dump of all keys 
+// (which is a naive replacement for proper RAG semantic recall).
+func (m *DefaultMemoryManager) Recall(ctx context.Context, sessionID string, intent string) (string, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	session, ok := m.memories[sessionID]
+	if !ok || len(session) == 0 {
+		return "", nil // No memory found
+	}
+	
+	// Just dump the entire state
+	data, _ := json.Marshal(session)
+	return fmt.Sprintf("Known state/preferences: %s", string(data)), nil
+}
+
+func (m *DefaultMemoryManager) Compress(ctx context.Context, sessionID string) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	// 简单的压缩逻辑：移除空值
-	if session, ok := m.memories[sessionId]; ok {
+	if session, ok := m.memories[sessionID]; ok {
 		for key, value := range session {
 			if value == nil {
 				delete(session, key)
 			}
 		}
 	}
-
 	return nil
 }
 
-// Persist 持久化内存数据
-func (m *DefaultMemoryManager) Persist(sessionId string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+func (m *DefaultMemoryManager) Persist(ctx context.Context, sessionID string) error {
+	m.mutex.RLock() // RLock is fine since json.Marshal only reads
+	defer m.mutex.RUnlock()
 
-	session, ok := m.memories[sessionId]
+	session, ok := m.memories[sessionID]
 	if !ok {
 		return errors.New("session not found")
 	}
 
-	// 序列化内存数据
-	data, err := json.Marshal(session)
+	data, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	// 写入文件
-	filePath := filepath.Join(m.persistPath, sessionId+"_memory.json")
+	filePath := filepath.Join(m.persistPath, sessionID+"_memory.json")
 	return os.WriteFile(filePath, data, 0644)
 }
 
-// Load 加载内存数据
-func (m *DefaultMemoryManager) Load(sessionId string) error {
+func (m *DefaultMemoryManager) Load(ctx context.Context, sessionID string) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	// 读取文件
-	filePath := filepath.Join(m.persistPath, sessionId+"_memory.json")
+	filePath := filepath.Join(m.persistPath, sessionID+"_memory.json")
 	data, err := os.ReadFile(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // OK if doesn't exist yet
+		}
 		return err
 	}
 
-	// 反序列化内存数据
-	session := make(map[string]any)
+	session := make(map[string]interface{})
 	if err := json.Unmarshal(data, &session); err != nil {
 		return err
 	}
 
-	m.memories[sessionId] = session
+	m.memories[sessionID] = session
 	return nil
 }

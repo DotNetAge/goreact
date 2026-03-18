@@ -1,0 +1,226 @@
+package thinker
+
+import (
+	"bytes"
+	"fmt"
+	"strings"
+	"text/template"
+	"time"
+
+	"github.com/DotNetAge/gochat/pkg/core"
+	reactCore "github.com/ray/goreact/pkg/core"
+	"github.com/ray/goreact/pkg/memory"
+	"github.com/ray/goreact/pkg/thinker/parser"
+	"github.com/ray/goreact/pkg/thinker/prompt"
+	"github.com/ray/goreact/pkg/tools"
+)
+
+// Default Thinker Implementation.
+type defaultThinker struct {
+	llmClient     core.Client
+	modelName     string
+	toolManager   tools.Manager
+	memoryManager memory.Manager
+	sysTemplate   *template.Template
+}
+
+// Option configures a defaultThinker
+type Option func(*defaultThinker)
+
+func WithModel(model string) Option {
+	return func(t *defaultThinker) {
+		t.modelName = model
+	}
+}
+
+func WithToolManager(mgr tools.Manager) Option {
+	return func(t *defaultThinker) {
+		t.toolManager = mgr
+	}
+}
+
+func WithMemoryManager(mgr memory.Manager) Option {
+	return func(t *defaultThinker) {
+		t.memoryManager = mgr
+	}
+}
+
+func Default(client core.Client, opts ...Option) Thinker {
+	t := &defaultThinker{
+		llmClient:   client,
+		modelName:   "gpt-4",
+		sysTemplate: template.Must(template.New("react_sys").Parse(prompt.ReActSystemPrompt)),
+		toolManager: tools.NewSimpleManager(),
+	}
+
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
+}
+
+func (t *defaultThinker) Think(ctx *reactCore.PipelineContext) error {
+	ctx.Logger.Info("Thinker is reasoning...", "step", ctx.CurrentStep)
+	start := time.Now()
+
+	// 1. Fetch dynamically relevant tools from the Tool RAG Manager.
+	availableTools, err := t.toolManager.ListAvailableTools(ctx, ctx.Input)
+	if err != nil {
+		return fmt.Errorf("failed to list available tools: %w", err)
+	}
+
+	messages := t.buildMessages(ctx, availableTools)
+
+	// 2. Prepare Tool Options with Usage Callback AND Multimodal Attachments
+	llmOpts := []core.Option{
+		core.WithModel(t.modelName),
+		core.WithUsageCallback(func(usage core.Usage) {
+			ctx.TotalTokens.Add(usage.PromptTokens, usage.CompletionTokens)
+			ctx.Logger.Debug("Token usage updated via callback", 
+				"prompt", usage.PromptTokens, 
+				"completion", usage.CompletionTokens, 
+				"total", ctx.TotalTokens.TotalTokens)
+		}),
+		core.WithAttachments(ctx.Attachments...),
+	}
+
+	// 3. Call the LLM in STREAMING mode
+	stream, err := t.llmClient.ChatStream(ctx, messages, llmOpts...)
+	if err != nil {
+		ctx.Metrics.IncCounter("thinker_api_errors", 1, nil)
+		return fmt.Errorf("LLM API failed to start stream during thinking phase: %w", err)
+	}
+	defer stream.Close()
+
+	var fullResponseBuilder strings.Builder
+
+	for stream.Next() {
+		ev := stream.Event()
+		if ev.Err != nil {
+			ctx.Logger.Error(ev.Err, "Stream broken unexpectedly")
+			return ev.Err
+		}
+
+		if ev.Type == core.EventContent || ev.Type == core.EventThinking {
+			fullResponseBuilder.WriteString(ev.Content)
+		}
+
+		if ctx.OnThoughtStream != nil && ev.Content != "" {
+			ctx.OnThoughtStream(ev.Content)
+		}
+	}
+
+	rawResponseText := fullResponseBuilder.String()
+	ctx.Metrics.RecordTimer("thinker_latency", time.Since(start), nil)
+
+	// 5. Intent Clarification vs Action Parsing
+	trace, finalAnswer, isFinished, parseErr := parser.ParseLLMOutput(rawResponseText)
+	if parseErr != nil {
+		ctx.Logger.Warn("Thinker output parse failed", "err", parseErr.Error())
+		
+		errorTrace := &reactCore.Trace{
+			Step:    ctx.CurrentStep,
+			Thought: "(Format Error Reflection)",
+			Action:  nil,
+			Observation: &reactCore.Observation{
+				Data:      fmt.Sprintf("SYSTEM ERROR: Your previous output failed to parse. Err: %v. Please STRICTLY follow the Thought/Action/ActionInput format.", parseErr),
+				IsSuccess: false,
+				Error:     parseErr,
+			},
+		}
+		ctx.AppendTrace(errorTrace)
+		return nil
+	}
+
+	// 6. Update Pipeline State
+	if isFinished {
+		ctx.IsFinished = true
+		ctx.FinalResult = finalAnswer
+		ctx.FinishReason = "TargetAccomplishedOrClarifying"
+		ctx.Logger.Info("Thinker accomplished the task", "final_answer", finalAnswer)
+
+		if trace != nil && trace.Thought != "" {
+			trace.Step = ctx.CurrentStep
+			ctx.AppendTrace(trace)
+		}
+	} else {
+		trace.Step = ctx.CurrentStep
+		ctx.AppendTrace(trace)
+		ctx.Logger.Info("Thinker decided on an action", "action", trace.Action.Name)
+	}
+
+	return nil
+}
+
+// buildMessages serializes the entire context and history into LLM Prompt messages.
+func (t *defaultThinker) buildMessages(ctx *reactCore.PipelineContext, currentTools []tools.Tool) []core.Message {
+	var sysBuf bytes.Buffer
+
+	var toolStrings []string
+	var toolNames []string
+	for _, tool := range currentTools {
+		toolStrings = append(toolStrings, fmt.Sprintf("- %s: %s", tool.Name(), tool.Description()))
+		toolNames = append(toolNames, tool.Name())
+	}
+
+	t.sysTemplate.Execute(&sysBuf, map[string]interface{}{
+		"Tools":     strings.Join(toolStrings, "\n"),
+		"ToolNames": strings.Join(toolNames, ", "),
+	})
+	
+	messages := []core.Message{
+		{
+			Role:    core.RoleSystem,
+			Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: sysBuf.String()}},
+		},
+	}
+
+	// 1. Recall long-term memory if available
+	if t.memoryManager != nil {
+		recallContext, err := t.memoryManager.Recall(ctx, ctx.SessionID, ctx.Input)
+		if err == nil && recallContext != "" {
+			messages = append(messages, core.Message{
+				Role:    core.RoleSystem,
+				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: fmt.Sprintf("System Note - Memory Recall:\n%s", recallContext)}},
+			})
+		}
+	}
+
+	// 2. Build User Input (Attachments will be injected via gochat's ProcessAttachments)
+	messages = append(messages, core.Message{
+		Role:    core.RoleUser,
+		Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: ctx.Input}},
+	})
+
+	// 3. Append ReAct Trace History
+	for _, trace := range ctx.Traces {
+		assistantContent := ""
+		if trace.Thought != "" {
+			assistantContent += fmt.Sprintf("Thought: %s\n", trace.Thought)
+		}
+		if trace.Action != nil {
+			assistantContent += fmt.Sprintf("Action: %s\nActionInput: %v\n", trace.Action.Name, trace.Action.Input)
+		}
+		
+		if assistantContent != "" {
+			messages = append(messages, core.Message{
+				Role:    core.RoleAssistant,
+				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: assistantContent}},
+			})
+		}
+
+		if trace.Observation != nil {
+			status := "SUCCESS"
+			if !trace.Observation.IsSuccess {
+				status = "FAILED"
+			}
+			obsText := fmt.Sprintf("Observation (Status: %s):\n%s", status, trace.Observation.Data)
+			messages = append(messages, core.Message{
+				Role:    core.RoleUser,
+				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: obsText}},
+			})
+		}
+	}
+
+	return messages
+}

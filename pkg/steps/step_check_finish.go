@@ -2,40 +2,39 @@ package steps
 
 import (
 	"context"
-	"time"
 
-	"github.com/ray/goreact/pkg/log"
+	"github.com/ray/goreact/pkg/core"
+	"github.com/ray/goreact/pkg/terminator"
 )
 
-// CheckFinishStep 检查是否应该结束
-type CheckFinishStep struct {
-	logger log.Logger
+// checkFinishStep wraps the Terminator interface into a pipeline.Step.
+// Unlike the others, its purpose is to validate state boundaries and decide
+// whether to continue the loop.
+type checkFinishStep struct {
+	t terminator.Terminator
 }
 
-// NewCheckFinishStep 创建结束检查步骤
-func NewCheckFinishStep(logger log.Logger) *CheckFinishStep {
-	return &CheckFinishStep{logger: logger}
+// CheckFinish creates a step that asserts boundaries, limits, and success criteria.
+// If it decides the loop should end, it mutates state.IsFinished to true.
+func CheckFinish(t terminator.Terminator) *checkFinishStep {
+	return &checkFinishStep{t: t}
 }
 
-// Name 返回步骤名称
-func (s *CheckFinishStep) Name() string { return "CheckFinish" }
+func (s *checkFinishStep) Name() string {
+	return "check_finish"
+}
 
-// Execute 检查是否应该结束
-func (s *CheckFinishStep) Execute(ctx context.Context, state *ReActState) error {
-	if state.LastThought == nil {
-		return nil
+func (s *checkFinishStep) Execute(ctx context.Context, state *core.PipelineContext) error {
+	// Let the rules/strategies inside Terminator decide.
+	stop, err := s.t.CheckTermination(state)
+	if err != nil {
+		return err // A critical failure in the rule engine itself.
 	}
 
-	if state.LastThought.ShouldFinish {
-		state.ShouldStop = true
-		state.Result.Success = true
-		state.Result.Output = state.LastThought.FinalAnswer
-		state.Result.EndTime = time.Now()
-
-		s.logger.Debug("Task completed",
-			log.String("output", state.LastThought.FinalAnswer),
-		)
+	if stop {
+		// Stop was returned: lock state and mark as finished.
+		// Note that the FinishReason is usually set by the Terminator internally.
+		state.IsFinished = true
 	}
-
 	return nil
 }

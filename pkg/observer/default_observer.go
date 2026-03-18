@@ -1,71 +1,90 @@
 package observer
 
 import (
+	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/types"
 )
 
-const (
-	DefaultMaxHistorySize = 10000 // 最大历史字符数
-)
+// defaultObserver represents the senses of the system.
+// It translates raw binary/structural execution data from the Actor into plain text 
+// that the LLM (Thinker) can comprehend.
+type defaultObserver struct{}
 
-// DefaultObserver 默认观察模块实现
-type DefaultObserver struct{}
+// Option configures the DefaultObserver.
+type Option func(*defaultObserver)
 
-// NewDefaultObserver 创建默认观察模块
-func NewDefaultObserver() *DefaultObserver {
-	return &DefaultObserver{}
+// Default creates a basic text-parsing Observer implementation.
+func Default(opts ...Option) Observer {
+	o := &defaultObserver{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
 }
 
-// Observe 观察执行结果
-func (o *DefaultObserver) Observe(result *types.ExecutionResult, context *core.Context) (*types.Feedback, error) {
-	if result == nil {
-		return nil, fmt.Errorf("execution result cannot be nil")
-	}
-	if context == nil {
-		return nil, fmt.Errorf("context cannot be nil")
-	}
-
-	feedback := &types.Feedback{
-		Metadata: make(map[string]interface{}),
+func (o *defaultObserver) Observe(ctx *core.PipelineContext) error {
+	lastTrace := ctx.LastTrace()
+	
+	// Observation is only needed if there was a Tool execution attempted in this step.
+	if lastTrace == nil || lastTrace.Action == nil {
+		return nil
 	}
 
-	if result.Success {
-		feedback.ShouldContinue = true
-		feedback.Message = fmt.Sprintf("Tool executed successfully. Result: %v", result.Output)
+	// 1. Fetch raw data deposited by the Actor in the Context Bus.
+	rawErrVal, hasErr := ctx.Get("raw_error")
+	rawOutVal, hasOut := ctx.Get("raw_output")
+
+	if !hasErr && !hasOut {
+		// Nothing was executed (e.g., actor skipped it for some reason)
+		return nil
+	}
+
+	obs := &core.Observation{
+		IsSuccess: true,
+	}
+
+	// 2. Semanticize Errors (Self-Correction/Reflexion feedback)
+	if hasErr && rawErrVal != nil {
+		if err, ok := rawErrVal.(error); ok {
+			obs.IsSuccess = false
+			obs.Error = err
+			// Convert the raw Go panic or HTTP timeout into a polite text observation 
+			// so the Thinker knows to retry or pivot.
+			obs.Data = fmt.Sprintf("Action failed to execute. Error details: %v", err)
+			obs.Raw = err
+		}
+	} else if hasOut && rawOutVal != nil {
+		// 3. Serialize and truncate Output
+		obs.Raw = rawOutVal
+		
+		// Attempt to format the output into a readable string for the LLM.
+		switch v := rawOutVal.(type) {
+		case string:
+			obs.Data = v
+		case []byte:
+			obs.Data = string(v)
+		default:
+			// For complex struct returns, marshal to JSON string.
+			// Advanced Observers would summarize large JSONs using an LLM here to save context space.
+			b, err := json.Marshal(v)
+			if err != nil {
+				obs.Data = fmt.Sprintf("Action succeeded but returned unparseable binary data: %v", v)
+			} else {
+				obs.Data = string(b)
+			}
+		}
 	} else {
-		feedback.ShouldContinue = true
-		feedback.Message = fmt.Sprintf("Tool execution failed: %v. Please try a different approach.", result.Error)
+		obs.Data = "Action executed successfully, but returned no output."
 	}
 
-	// 更新历史记录
-	o.updateHistory(context, feedback.Message)
+	// 4. Clean up the Context Bus & Attach to Trace
+	ctx.Set("raw_output", nil)
+	ctx.Set("raw_error", nil)
 
-	return feedback, nil
-}
+	lastTrace.Observation = obs
+	ctx.Logger.Debug("Observer processed actor results", "status_success", obs.IsSuccess)
 
-// updateHistory 更新历史记录（限制大小防止无界增长）
-func (o *DefaultObserver) updateHistory(context *core.Context, message string) {
-	history := ""
-	if h, ok := context.Get("history"); ok {
-		if historyStr, ok := h.(string); ok {
-			history = historyStr
-		}
-	}
-
-	history += message + "\n"
-
-	// 如果历史超过限制，保留最新的部分
-	if len(history) > DefaultMaxHistorySize {
-		history = history[len(history)-DefaultMaxHistorySize:]
-		// 找到第一个换行符，从完整行开始
-		if idx := strings.Index(history, "\n"); idx != -1 {
-			history = history[idx+1:]
-		}
-	}
-
-	context.Set("history", history)
+	return nil
 }
