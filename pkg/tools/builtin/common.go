@@ -24,7 +24,7 @@ import (
 )
 
 // validateRequired 验证必需参数
-func validateRequired(params map[string]interface{}, key string) error {
+func validateRequired(params map[string]any, key string) error {
 	if _, ok := params[key]; !ok {
 		return fmt.Errorf("missing required parameter: %s", key)
 	}
@@ -32,7 +32,7 @@ func validateRequired(params map[string]interface{}, key string) error {
 }
 
 // validateRequiredString 验证必需的字符串参数
-func validateRequiredString(params map[string]interface{}, key string) (string, error) {
+func validateRequiredString(params map[string]any, key string) (string, error) {
 	if err := validateRequired(params, key); err != nil {
 		return "", err
 	}

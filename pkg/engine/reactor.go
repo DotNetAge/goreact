@@ -17,8 +17,8 @@ import (
 // Reactor represents the core ReAct loop engine.
 // It assembles the four fundamental cognitive components into a robust pipeline.
 type Reactor struct {
-	logger     core.Logger
-	metrics    core.Metrics
+	logger  core.Logger
+	metrics core.Metrics
 
 	thinker    thinker.Thinker
 	actor      actor.Actor
@@ -91,7 +91,7 @@ func (r *Reactor) Run(ctx context.Context, sessionID, input string, customOpts .
 		core.WithMetrics(r.metrics),
 	}
 	opts = append(opts, customOpts...)
-	
+
 	// 1. Build the shared PipelineContext.
 	reactCtx := core.NewPipelineContext(ctx, sessionID, input, opts...)
 
@@ -108,7 +108,7 @@ func (r *Reactor) Run(ctx context.Context, sessionID, input string, customOpts .
 
 	// 3. Assemble the core ReAct cognitive pipeline
 	p := pipeline.New[*core.PipelineContext]()
-	
+
 	p.AddSteps(
 		steps.Thinker(r.thinker),
 		steps.Actor(r.actor),
@@ -118,20 +118,20 @@ func (r *Reactor) Run(ctx context.Context, sessionID, input string, customOpts .
 
 	// 4. The main loop
 	for {
-		reactCtx.CurrentStep++
+		// reactCtx.CurrentStep++
 
 		// Execute one full cycle
 		err := p.Execute(ctx, reactCtx)
 		if err != nil {
 			reactCtx.FinishReason = "PipelineFatalError"
-			reactCtx.Error = err 
+			reactCtx.Error = err
 			return reactCtx, err
 		}
 
 		if reactCtx.IsFinished {
 			break
 		}
-		
+
 		time.Sleep(10 * time.Millisecond)
 	}
 

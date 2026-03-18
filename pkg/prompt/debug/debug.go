@@ -10,8 +10,8 @@ import (
 
 // Logger 日志接口
 type Logger interface {
-	Info(msg string, args ...interface{})
-	Debug(msg string, args ...interface{})
+	Info(msg string, args ...any)
+	Debug(msg string, args ...any)
 	IsDebug() bool
 }
 
@@ -32,7 +32,7 @@ func NewPromptDebugger(enabled bool, logger Logger) *PromptDebugger {
 }
 
 // LogPrompt 记录 Prompt 信息
-func (d *PromptDebugger) LogPrompt(p *prompt.Prompt, metadata map[string]interface{}) {
+func (d *PromptDebugger) LogPrompt(p *prompt.Prompt, metadata map[string]any) {
 	if !d.enabled || d.logger == nil {
 		return
 	}
@@ -86,7 +86,7 @@ func (d *PromptDebugger) GetTracker() *TokenTracker {
 	return d.tracker
 }
 
-func (d *PromptDebugger) getCounter(metadata map[string]interface{}) prompt.TokenCounter {
+func (d *PromptDebugger) getCounter(metadata map[string]any) prompt.TokenCounter {
 	if counter, ok := metadata["token_counter"].(prompt.TokenCounter); ok {
 		return counter
 	}
@@ -94,7 +94,7 @@ func (d *PromptDebugger) getCounter(metadata map[string]interface{}) prompt.Toke
 	return &simpleCounter{}
 }
 
-func (d *PromptDebugger) getInt(metadata map[string]interface{}, key string) int {
+func (d *PromptDebugger) getInt(metadata map[string]any, key string) int {
 	if val, ok := metadata[key].(int); ok {
 		return val
 	}
@@ -158,7 +158,7 @@ func NewSimpleLogger(debug bool) *SimpleLogger {
 	return &SimpleLogger{debug: debug}
 }
 
-func (l *SimpleLogger) Info(msg string, args ...interface{}) {
+func (l *SimpleLogger) Info(msg string, args ...any) {
 	fmt.Printf("[INFO] %s", msg)
 	for i := 0; i < len(args); i += 2 {
 		if i+1 < len(args) {
@@ -168,7 +168,7 @@ func (l *SimpleLogger) Info(msg string, args ...interface{}) {
 	fmt.Println()
 }
 
-func (l *SimpleLogger) Debug(msg string, args ...interface{}) {
+func (l *SimpleLogger) Debug(msg string, args ...any) {
 	if !l.debug {
 		return
 	}

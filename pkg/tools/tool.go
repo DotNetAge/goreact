@@ -6,6 +6,15 @@ import (
 	"fmt"
 )
 
+// SecurityLevel defines the risk level of a tool
+type SecurityLevel int
+
+const (
+	LevelSafe      SecurityLevel = 0 // Pure query, no side effects (e.g., Read, Calculator)
+	LevelSensitive SecurityLevel = 1 // Scoped writes (e.g., Write to specific dir)
+	LevelHighRisk  SecurityLevel = 2 // High risk, arbitrary execution (e.g., Bash, SQL Drop)
+)
+
 // Tool represents a single functional capability that the Agent can execute.
 type Tool interface {
 	// Name must return the exact unique string that the Thinker uses to invoke this tool.
@@ -15,9 +24,12 @@ type Tool interface {
 	// and what its inputs/outputs are. (Useful for the Thinker's System Prompt).
 	Description() string
 
+	// SecurityLevel declares the danger level of this tool for Actor authorization.
+	SecurityLevel() SecurityLevel
+
 	// Execute performs the actual work. It takes a raw map of inputs
 	// (unmarshaled from the LLM's JSON ActionInput) and returns a raw result or error.
-	Execute(ctx context.Context, input map[string]interface{}) (interface{}, error)
+	Execute(ctx context.Context, input map[string]any) (any, error)
 }
 
 // Manager defines the interface for tool discovery and retrieval.
@@ -36,12 +48,14 @@ type Manager interface {
 type MapTool struct {
 	ToolName        string
 	ToolDescription string
-	ExecuteFunc     func(ctx context.Context, input map[string]interface{}) (interface{}, error)
+	Level           SecurityLevel
+	ExecuteFunc     func(ctx context.Context, input map[string]any) (any, error)
 }
 
-func (t *MapTool) Name() string        { return t.ToolName }
-func (t *MapTool) Description() string { return t.ToolDescription }
-func (t *MapTool) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+func (t *MapTool) Name() string               { return t.ToolName }
+func (t *MapTool) Description() string        { return t.ToolDescription }
+func (t *MapTool) SecurityLevel() SecurityLevel { return t.Level }
+func (t *MapTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	if t.ExecuteFunc == nil {
 		return nil, fmt.Errorf("tool %q has no execution logic", t.ToolName)
 	}
@@ -49,7 +63,7 @@ func (t *MapTool) Execute(ctx context.Context, input map[string]interface{}) (in
 }
 
 // ExtractInput is a generic utility to help Tools parse their incoming map into a strict struct.
-func ExtractInput(input map[string]interface{}, target interface{}) error {
+func ExtractInput(input map[string]any, target any) error {
 	b, err := json.Marshal(input)
 	if err != nil {
 		return fmt.Errorf("failed to marshal map: %w", err)

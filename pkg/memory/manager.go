@@ -13,7 +13,7 @@ import (
 // DefaultMemoryManager is a basic in-memory KV store for session states.
 // It is NOT a semantic RAG memory, but satisfies the Manager interface.
 type DefaultMemoryManager struct {
-	memories    map[string]map[string]interface{}
+	memories    map[string]map[string]any
 	mutex       sync.RWMutex
 	persistPath string
 }
@@ -29,23 +29,23 @@ func NewDefaultMemoryManager(persistPath string) (*DefaultMemoryManager, error) 
 	}
 
 	return &DefaultMemoryManager{
-		memories:    make(map[string]map[string]interface{}),
+		memories:    make(map[string]map[string]any),
 		persistPath: persistPath,
 	}, nil
 }
 
-func (m *DefaultMemoryManager) Store(ctx context.Context, sessionID string, key string, value interface{}) error {
+func (m *DefaultMemoryManager) Store(ctx context.Context, sessionID string, key string, value any) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
 	if _, ok := m.memories[sessionID]; !ok {
-		m.memories[sessionID] = make(map[string]interface{})
+		m.memories[sessionID] = make(map[string]any)
 	}
 	m.memories[sessionID][key] = value
 	return nil
 }
 
-func (m *DefaultMemoryManager) Retrieve(ctx context.Context, sessionID string, key string) (interface{}, error) {
+func (m *DefaultMemoryManager) Retrieve(ctx context.Context, sessionID string, key string) (any, error) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
@@ -57,7 +57,7 @@ func (m *DefaultMemoryManager) Retrieve(ctx context.Context, sessionID string, k
 	return nil, nil // Or an explicit ErrNotFound
 }
 
-// Recall in the default manager just returns a basic JSON dump of all keys 
+// Recall in the default manager just returns a basic JSON dump of all keys
 // (which is a naive replacement for proper RAG semantic recall).
 func (m *DefaultMemoryManager) Recall(ctx context.Context, sessionID string, intent string) (string, error) {
 	m.mutex.RLock()
@@ -67,10 +67,27 @@ func (m *DefaultMemoryManager) Recall(ctx context.Context, sessionID string, int
 	if !ok || len(session) == 0 {
 		return "", nil // No memory found
 	}
-	
+
 	// Just dump the entire state
 	data, _ := json.Marshal(session)
 	return fmt.Sprintf("Known state/preferences: %s", string(data)), nil
+}
+
+// Update modifies a memory's abstract weight/status.
+// In this simplistic implementation, we just log or ignore the delta.
+func (m *DefaultMemoryManager) Update(ctx context.Context, sessionID string, key string, deltaWeight float64) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	// 实际的高级记忆模块（如 RAG 向量记忆）应该根据 deltaWeight 更新条目的权重。
+	// 这里仅保留方法签名，提供最基础的伪实现。
+	if session, ok := m.memories[sessionID]; ok {
+		if _, exists := session[key]; exists {
+			// 在此处理时间衰减或权重增减逻辑
+			return nil
+		}
+	}
+	return nil
 }
 
 func (m *DefaultMemoryManager) Compress(ctx context.Context, sessionID string) error {
@@ -118,7 +135,7 @@ func (m *DefaultMemoryManager) Load(ctx context.Context, sessionID string) error
 		return err
 	}
 
-	session := make(map[string]interface{})
+	session := make(map[string]any)
 	if err := json.Unmarshal(data, &session); err != nil {
 		return err
 	}

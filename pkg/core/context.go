@@ -23,14 +23,17 @@ type PipelineContext struct {
 	MaxSteps int
 
 	// Observability & Telemetry
-	Logger          Logger
-	Metrics         Metrics
-	TotalTokens     *TokenUsage
-	StartTime       time.Time
-	Error           error
+	Logger      Logger
+	Metrics     Metrics
+	TotalTokens *TokenUsage
+	StartTime   time.Time
+	Error       error
 
 	FinishReason    string
 	OnThoughtStream func(string) // Optional hook for UI streaming updates
+
+	// State storage for intermediate data (e.g., raw_output)
+	state map[string]any
 }
 
 // ContextOption is a functional option for configuring a PipelineContext.
@@ -86,6 +89,7 @@ func NewPipelineContext(ctx context.Context, sessionID, input string, opts ...Co
 		StartTime:   time.Now(),
 		Traces:      make([]*Trace, 0),
 		Attachments: make([]chatcore.Attachment, 0),
+		state:       make(map[string]any),
 	}
 
 	for _, opt := range opts {
@@ -105,6 +109,7 @@ func (c *PipelineContext) AppendTrace(t *Trace) {
 func (c *PipelineContext) ToLLMMessages() []chatcore.Message {
 	return nil
 }
+
 // LastTrace returns the most recently appended Trace or nil if empty.
 func (c *PipelineContext) LastTrace() *Trace {
 	if len(c.Traces) == 0 {
@@ -113,11 +118,23 @@ func (c *PipelineContext) LastTrace() *Trace {
 	return c.Traces[len(c.Traces)-1]
 }
 
-// Get is a helper (currently stubbed) to fetch scoped execution variables.
-func (c *PipelineContext) Get(key string) (interface{}, bool) {
-	return nil, false
+// Get is a helper to fetch scoped execution variables.
+func (c *PipelineContext) Get(key string) (any, bool) {
+	if c.state == nil {
+		return nil, false
+	}
+	val, ok := c.state[key]
+	return val, ok
 }
 
-// Set is a helper (currently stubbed) to store scoped execution variables.
-func (c *PipelineContext) Set(key string, value interface{}) {
+// Set is a helper to store scoped execution variables.
+func (c *PipelineContext) Set(key string, value any) {
+	if c.state == nil {
+		c.state = make(map[string]any)
+	}
+	if value == nil {
+		delete(c.state, key)
+	} else {
+		c.state[key] = value
+	}
 }

@@ -29,7 +29,12 @@ func (g *Glob) Description() string {
 }
 
 // Execute 执行文件名匹配
-func (g *Glob) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Glob) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (g *Glob) Execute(ctx context.Context, params map[string]any) (any, error) {
 	pattern, err := validateRequiredString(params, "pattern")
 	if err != nil {
 		return nil, err
@@ -90,7 +95,7 @@ func (g *Glob) Execute(ctx context.Context, params map[string]interface{}) (inte
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":       true,
 		"pattern":       pattern,
 		"search_path":   searchPath,

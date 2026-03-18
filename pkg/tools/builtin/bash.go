@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"github.com/ray/goreact/pkg/tools"
 	"context"
 	"fmt"
 	"os/exec"
@@ -25,7 +26,12 @@ func (b *Bash) Description() string {
 }
 
 // Execute 执行bash命令
-func (b *Bash) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Bash) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelHighRisk // Default, needs manual update for risky tools
+}
+
+func (b *Bash) Execute(ctx context.Context, params map[string]any) (any, error) {
 	command, ok := params["command"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid 'command' parameter")
@@ -35,7 +41,7 @@ func (b *Bash) Execute(ctx context.Context, params map[string]interface{}) (inte
 	cmd := exec.Command("bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"output":  string(output),
 		"success": err == nil,
 	}

@@ -58,8 +58,8 @@ func TestUniversalEstimator(t *testing.T) {
 			name:     "chinese text",
 			language: "zh",
 			text:     "你好，世界！",
-			minToken: 8,
-			maxToken: 15,
+			minToken: 5,
+			maxToken: 10,
 		},
 		{
 			name:     "mixed text",

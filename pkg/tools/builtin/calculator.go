@@ -26,7 +26,12 @@ func (c *Calculator) Description() string {
 }
 
 // Execute 执行计算
-func (c *Calculator) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Calculator) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (c *Calculator) Execute(ctx context.Context, params map[string]any) (any, error) {
 	operation, ok := params["operation"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid 'operation' parameter")
@@ -62,8 +67,8 @@ func (c *Calculator) Execute(ctx context.Context, params map[string]interface{})
 	return result, nil
 }
 
-// toFloat64 将 interface{} 转换为 float64
-func toFloat64(v interface{}) (float64, bool) {
+// toFloat64 将 any 转换为 float64
+func toFloat64(v any) (float64, bool) {
 	switch val := v.(type) {
 	case float64:
 		return val, true

@@ -28,7 +28,7 @@ func (m *DefaultPromptManager) GetTemplate(name string) string {
 }
 
 // RenderTemplate 渲染提示模板
-func (m *DefaultPromptManager) RenderTemplate(name string, variables map[string]interface{}) string {
+func (m *DefaultPromptManager) RenderTemplate(name string, variables map[string]any) string {
 	template := m.templates[name]
 	if template == "" {
 		return ""

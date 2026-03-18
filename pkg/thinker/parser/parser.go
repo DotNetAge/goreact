@@ -23,13 +23,13 @@ func ParseLLMOutput(raw string) (trace *core.Trace, finalResult string, isFinish
 	// First check if LLM believes the task is complete
 	if match := finalAnswerRegex.FindStringSubmatch(raw); len(match) > 1 {
 		finalResult = strings.TrimSpace(match[1])
-		
+
 		// Optional: also extract final thought if it exists before FinalAnswer
 		thought := ""
 		if tMatch := thoughtRegex.FindStringSubmatch(raw); len(tMatch) > 1 {
 			thought = strings.TrimSpace(tMatch[1])
 		}
-		
+
 		return &core.Trace{Thought: thought}, finalResult, true, nil
 	}
 
@@ -46,7 +46,7 @@ func ParseLLMOutput(raw string) (trace *core.Trace, finalResult string, isFinish
 	if len(thoughtMatch) > 1 {
 		thought = strings.TrimSpace(thoughtMatch[1])
 	}
-	
+
 	actionName := strings.TrimSpace(actionMatch[1])
 	rawInput := strings.TrimSpace(inputMatch[1])
 
@@ -56,13 +56,13 @@ func ParseLLMOutput(raw string) (trace *core.Trace, finalResult string, isFinish
 	rawInput = strings.TrimSuffix(rawInput, "```")
 	rawInput = strings.TrimSpace(rawInput)
 
-	var parsedInput map[string]interface{}
+	var parsedInput map[string]any
 	if rawInput != "" {
 		if err := json.Unmarshal([]byte(rawInput), &parsedInput); err != nil {
 			return nil, "", false, fmt.Errorf("failed to parse ActionInput as JSON: %w", err)
 		}
 	} else {
-		parsedInput = make(map[string]interface{})
+		parsedInput = make(map[string]any)
 	}
 
 	trace = &core.Trace{

@@ -5,7 +5,7 @@ type Action struct {
 	// Name is the registered tool or skill name (e.g., "Calculator", "SearchEngine").
 	Name string
 	// Input holds the structured parameters for the action, often unmarshaled from JSON.
-	Input map[string]interface{}
+	Input map[string]any
 }
 
 // Observation represents the standardized, noise-reduced result after Observer processing.
@@ -13,7 +13,7 @@ type Observation struct {
 	// Data is the cleaned, truncated, and summarized text ready to be fed back to the LLM.
 	Data string
 	// Raw holds the original, unprocessed output from the Actor (for potential debugging or multimodal uses).
-	Raw interface{}
+	Raw any
 	// Error stores any system or tool-level error that occurred during execution.
 	// If present, the Observer usually translates this into a semantic string within Data.
 	Error error

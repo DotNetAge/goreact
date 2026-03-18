@@ -1,33 +1,87 @@
-# Agent & Multi-Agent 架构设计
+# Agent & Model 设计与应用层抽象
 
-本目录 (`pkg/agent`) 负责管理智能体（Agent）的定义、协调与多智能体协作网络。
+本文档详细阐述了 `pkg/agent` 与 `pkg/model` 两个功能包的设计哲学与架构定位。
 
-在 GoReAct 的设计哲学中，我们摒弃了复杂、难以调试的分布式 P2P 消息总线模型，转而拥抱第一性原理：**Agent-as-a-Tool (AAAT)**。
+## 1. 核心理念：技术引擎与应用业务的分层
 
-## 1. 核心理念：Skill 才是一切的抓手
+在 GoReAct 架构中，为了支持系统化的扩展和降低最终用户的接入成本，我们将框架划分为**技术引擎层 (Engine Layer)** 和 **应用业务层 (Application Layer)**。
 
-在处理复杂系统时，大模型（LLM）的 Zero-Shot 推理能力往往不足以支撑长链路的精确执行。解决复杂问题的唯一抓手是 **Skill（技能）**。
+*   **技术引擎层 (`engine.Reactor`)**：面向框架开发者。它是一个纯粹的 State Machine（状态机），关注于 `Think -> Act -> Observe -> Terminate` 的微观流转。它需要被精细地注入各种组件（Thinker、Actor、Client、Memory 等）。
+*   **应用业务层 (`agent.Agent` & `model.Model`)**：面向终端应用开发者。应用开发者不需要了解底层的 Pipeline 如何运转，他们只需要定义“角色（Agent）”和“大脑（Model）”。
 
-- **Skill = SOP（标准作业程序） + Tools（特定工具集） + Sub-Agent（子智能体）**。
-- 当高层 Agent 面临一个巨大任务时（如“帮我 Review 这段代码并提交 PR”），它不需要自己去一步步执行 git clone、查代码、写评论。
-- 它只需要调用一个名为 `CodeReviewerSkill` 的工具。
+### 1.1 从数据到运行时的蜕变
+`Agent` 和 `Model` 在其最原始的形态下是**数据（配置）实体**，它们非常适合被序列化为 YAML 或存储在数据库中：
+*   **Model (配置)**：定义了 `Provider`, `ModelID`, `APIKey` 等。
+*   **Agent (配置)**：定义了 `Name`, `System Prompt`, 引用的 `ModelName` 以及绑定的 `Tools`。
 
-## 2. Agent-as-a-Tool (AAAT) 多智能体协作
+**最优雅的闭环设计在于：**
+应用层通过统一的 `Manager` 获取一个 Agent 时，获取的不再是一个死的数据结构，而是一个**已经被工厂自动装配好的、内部封装了 `engine.Reactor` 的高阶可执行实例**。
 
-在 GoReAct 中，**一个 Agent 本身也可以被包装成一个实现 `tools.Tool` 接口的特殊对象**。
+---
 
-### 协作流程图：
-1. **[Supervisor Agent (Manager)]** 收到用户指令：“帮我分析这个数据，并写一份视觉报告”。
-2. **[Supervisor Thinker]** 查阅 ToolManager，发现有两个牛逼的工具：`DataAnalysisAgent` 和 `ReportWritingAgent`。
-3. **[Supervisor Actor]** 执行 `DataAnalysisAgent.Execute(input)`。
-4. **[Child Reactor]** 此时，底层的 `DataAnalysisAgent` 启动了属于自己的 `Thinker -> Actor -> Observer` 闭环，进行 SQL 查询、计算。
-5. **[Supervisor Observer]** 拿到子 Agent 的最终结果（作为 Observation）。
-6. **[Supervisor Thinker]** 再将数据传给 `ReportWritingAgent`。
+## 2. Model 模块 (`pkg/model`)
 
-### 优势
-- **极度优雅的良性闭环**：顶层框架的 `Reactor` 接口与底层的 `Tool` 接口完美嵌套（类似分形结构）。
-- **职责隔离**：父 Agent 只负责规划调度，子 Agent 拥有自己独立的 System Prompt、小模型（更便宜）和独立的专属小工具集。
-- **降级与熔断安全**：子 Agent 的死循环会被自身的 `Terminator` 掐断，只返回一个 Error 给父 Agent，父 Agent 可以选择重试或更换方案，不会导致整个系统崩溃。
+Model 模块负责统一管理系统内所有可用的大语言模型（LLM）配置。
 
-## 3. Coordinator (协调器)
-对于预定义好的线性或 DAG 任务，`Coordinator` 可以通过 `TaskDecomposer` 预先将大任务拆解为子任务（SubTask），并硬性指派给对应的子 Agent 执行，从而节省让大模型实时规划的 Token 成本。
+### 2.1 Model 实体
+`Model` 结构体是具体 LLM 的配置定义，包含：
+- **基础路由**：`Provider` (如 openai, anthropic, ollama)、`ModelID`、`BaseURL`。
+- **认证与参数**：`APIKey`、`Temperature`、`MaxTokens`、`Timeout`。
+- **能力标识 (Features)**：通过 `ModelFeatures` 明确标识该模型是否支持视觉、工具调用、流式输出等。
+
+### 2.2 Model Manager 与工厂模式
+`model.Manager` 是一个全局注册中心，充当**工厂 (Factory)** 角色：
+应用层调用 `Manager.CreateLLMClient(modelName)`，Manager 会根据对应的 `Model` 配置，动态初始化并返回一个实现了 `gochatcore.Client` 接口的真实网络客户端实体。
+
+---
+
+## 3. Agent 模块 (`pkg/agent`)：应用层的真正入口
+
+Agent 是对 `Reactor` 的业务级封装，是最终用户与框架交互的**唯一高级入口**。
+
+### 3.1 Agent 实例的完整形态
+在应用层看来，一个 Agent 实例内部已经包含了：
+1. **System Prompt (SOP)**：角色与行为规程。
+2. **LLM Client**：通过 `ModelName` 从 `model.Manager` 处兑换来的真实大脑。
+3. **Reactor Engine**：内部私有的执行引擎。
+
+**用户交互心智的转变：**
+用户不再需要手动组装 Thinker、Actor，也不用直接调用 `Reactor.Run()`。用户只需要：
+```go
+// 1. 从 Manager 获取一个组装好的 Agent
+myAgent := agentManager.Select("DataAnalyst")
+
+// 2. 直接与 Agent 对话 (支持纯文本或多模态)
+response, err := myAgent.Chat(context.Background(), "帮我分析这组数据...")
+
+// 或者带有文件附件的多模态对话
+response, err := myAgent.ChatWithFiles(context.Background(), "分析这个报表", []string{"./report.pdf"})
+```
+
+### 3.2 Agent Manager (RAG Agent Manager) 与发现机制
+`agent.Manager` 绝不仅仅是一个简单的 Map 缓存，它在宏大架构中扮演着 **RAG Agent Manager** 的关键角色。
+当系统面临一个未知或复杂任务，且注册了海量的 Agent 技能库时，Manager 可以利用基于大模型的语义匹配（Semantic Search）甚至向量检索，像 RAG（检索增强生成）一样，根据任务描述的上下文，从庞大的 Agent 库中动态“检索”出最适合处理该任务的 Agent 实例进行注入和调用。
+
+---
+
+## 4. 万物皆工具 (Agent-as-a-Tool) 的最终实现
+
+由于 Agent 暴露了极其简洁的 `Chat(task string) string` 接口，它天生就可以直接实现 `tools.Tool` 接口！
+
+这就完美闭合了 GoReAct 的终极愿景：
+1. **Supervisor Agent** 接到宏大任务。
+2. Supervisor 发现自己拥有一个名为 `CodeReviewer` 的 Tool。
+3. 实际上，这个 Tool 就是另一个被装配好的 **Sub-Agent**（自带其独立的 Reactor 闭环和小模型）。
+4. Supervisor 像调用计算器一样调用了子 Agent，而子 Agent 在底层启动自己的思考与执行循环。
+
+这种设计不仅实现了极度的解耦，也将多智能体协作的复杂性隐藏在了统一的 Tool 抽象之下。
+
+---
+
+## 5. 当前代码库落实状态预警
+
+**请注意：当前的源码库正在向此设计范式重构，但尚未完全闭环。**
+
+1. 遗留的 `Coordinator` 已被证实是错误的设计并已从代码库中删除。
+2. **核心缺失环节（Phase 4 待办）**：目前的 `agent.Manager` 仍然只返回 `*agent.Agent` 的纯数据结构，尚未实现**“自动向 Agent 内部注入 Reactor 并暴露 `.Chat()`/`.Execute()` 方法”**的装配工厂逻辑。
+3. 接下来需要实现 `AgentBuilder` 或改造 `Agent` 结构体，让其真正持有 `engine.Reactor`，彻底取代目前裸露在 `examples` 中的手动装配代码。

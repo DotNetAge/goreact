@@ -28,7 +28,12 @@ func (e *Edit) Description() string {
 }
 
 // Execute 执行文件编辑
-func (e *Edit) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Edit) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSensitive // Default, needs manual update for risky tools
+}
+
+func (e *Edit) Execute(ctx context.Context, params map[string]any) (any, error) {
 	path, err := validateRequiredString(params, "path")
 	if err != nil {
 		return nil, err
@@ -52,15 +57,15 @@ func (e *Edit) Execute(ctx context.Context, params map[string]interface{}) (inte
 		return nil, fmt.Errorf("missing required parameter: edits")
 	}
 
-	edits, ok := editsRaw.([]interface{})
+	edits, ok := editsRaw.([]any)
 	if !ok || len(edits) == 0 {
 		return nil, fmt.Errorf("edits must be a non-empty array")
 	}
 
 	// 应用所有编辑
-	editedRegions := make([]map[string]interface{}, 0)
+	editedRegions := make([]map[string]any, 0)
 	for i, editRaw := range edits {
-		edit, ok := editRaw.(map[string]interface{})
+		edit, ok := editRaw.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("edit[%d] must be an object with old_text and new_text", i)
 		}
@@ -80,7 +85,7 @@ func (e *Edit) Execute(ctx context.Context, params map[string]interface{}) (inte
 		currentContent = strings.Replace(currentContent, oldText, newText, 1)
 
 		// 记录编辑区域
-		editedRegions = append(editedRegions, map[string]interface{}{
+		editedRegions = append(editedRegions, map[string]any{
 			"index":      i,
 			"old_length": len(oldText),
 			"new_length": len(newText),
@@ -101,7 +106,7 @@ func (e *Edit) Execute(ctx context.Context, params map[string]interface{}) (inte
 		totalNewLength += int(region["new_length"].(int))
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":        true,
 		"path":           path,
 		"edits_applied":  len(editedRegions),

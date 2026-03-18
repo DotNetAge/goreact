@@ -21,7 +21,7 @@ type FewShotExample struct {
 	Task       string
 	Thought    string
 	Action     string
-	Parameters map[string]interface{}
+	Parameters map[string]any
 	Result     string
 }
 
@@ -33,7 +33,7 @@ type FluentPromptBuilder struct {
 	tools            []formatter.ToolDesc
 	history          []Turn
 	fewShots         []FewShotExample
-	variables        map[string]interface{}
+	variables        map[string]any
 	toolFormatter    formatter.ToolFormatter
 	historyFormatter HistoryFormatter
 	maxTokens        int
@@ -45,7 +45,7 @@ type FluentPromptBuilder struct {
 // New 创建新的 FluentPromptBuilder
 func New() *FluentPromptBuilder {
 	return &FluentPromptBuilder{
-		variables:        make(map[string]interface{}),
+		variables:        make(map[string]any),
 		toolFormatter:    formatter.NewSimpleTextFormatter(),
 		historyFormatter: NewSimpleHistoryFormatter(),
 		maxTokens:        4096,
@@ -97,7 +97,7 @@ func (b *FluentPromptBuilder) WithFewShots(examples []FewShotExample) *FluentPro
 }
 
 // WithVariable 添加自定义变量
-func (b *FluentPromptBuilder) WithVariable(key string, value interface{}) *FluentPromptBuilder {
+func (b *FluentPromptBuilder) WithVariable(key string, value any) *FluentPromptBuilder {
 	b.variables[key] = value
 	return b
 }
@@ -147,8 +147,8 @@ func (b *FluentPromptBuilder) Build() *prompt.Prompt {
 }
 
 // prepareVariables 准备模板变量
-func (b *FluentPromptBuilder) prepareVariables() map[string]interface{} {
-	vars := make(map[string]interface{})
+func (b *FluentPromptBuilder) prepareVariables() map[string]any {
+	vars := make(map[string]any)
 
 	// 复制自定义变量
 	for k, v := range b.variables {
@@ -207,7 +207,7 @@ func (b *FluentPromptBuilder) formatFewShots() string {
 }
 
 // renderTemplate 渲染模板
-func (b *FluentPromptBuilder) renderTemplate(tmpl string, vars map[string]interface{}) string {
+func (b *FluentPromptBuilder) renderTemplate(tmpl string, vars map[string]any) string {
 	t, err := template.New("prompt").Parse(tmpl)
 	if err != nil {
 		return tmpl

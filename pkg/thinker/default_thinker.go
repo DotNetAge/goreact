@@ -76,9 +76,9 @@ func (t *defaultThinker) Think(ctx *reactCore.PipelineContext) error {
 		core.WithModel(t.modelName),
 		core.WithUsageCallback(func(usage core.Usage) {
 			ctx.TotalTokens.Add(usage.PromptTokens, usage.CompletionTokens)
-			ctx.Logger.Debug("Token usage updated via callback", 
-				"prompt", usage.PromptTokens, 
-				"completion", usage.CompletionTokens, 
+			ctx.Logger.Debug("Token usage updated via callback",
+				"prompt", usage.PromptTokens,
+				"completion", usage.CompletionTokens,
 				"total", ctx.TotalTokens.TotalTokens)
 		}),
 		core.WithAttachments(ctx.Attachments...),
@@ -117,7 +117,7 @@ func (t *defaultThinker) Think(ctx *reactCore.PipelineContext) error {
 	trace, finalAnswer, isFinished, parseErr := parser.ParseLLMOutput(rawResponseText)
 	if parseErr != nil {
 		ctx.Logger.Warn("Thinker output parse failed", "err", parseErr.Error())
-		
+
 		errorTrace := &reactCore.Trace{
 			Step:    ctx.CurrentStep,
 			Thought: "(Format Error Reflection)",
@@ -163,11 +163,11 @@ func (t *defaultThinker) buildMessages(ctx *reactCore.PipelineContext, currentTo
 		toolNames = append(toolNames, tool.Name())
 	}
 
-	t.sysTemplate.Execute(&sysBuf, map[string]interface{}{
+	t.sysTemplate.Execute(&sysBuf, map[string]any{
 		"Tools":     strings.Join(toolStrings, "\n"),
 		"ToolNames": strings.Join(toolNames, ", "),
 	})
-	
+
 	messages := []core.Message{
 		{
 			Role:    core.RoleSystem,
@@ -201,7 +201,7 @@ func (t *defaultThinker) buildMessages(ctx *reactCore.PipelineContext, currentTo
 		if trace.Action != nil {
 			assistantContent += fmt.Sprintf("Action: %s\nActionInput: %v\n", trace.Action.Name, trace.Action.Input)
 		}
-		
+
 		if assistantContent != "" {
 			messages = append(messages, core.Message{
 				Role:    core.RoleAssistant,

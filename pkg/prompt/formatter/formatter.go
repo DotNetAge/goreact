@@ -15,20 +15,20 @@ type ToolDesc struct {
 
 // ParameterSchema 参数 Schema
 type ParameterSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]*Property   `json:"properties,omitempty"`
-	Required   []string               `json:"required,omitempty"`
-	Items      *Property              `json:"items,omitempty"`
-	Additional map[string]interface{} `json:"-"` // 额外字段
+	Type       string               `json:"type"`
+	Properties map[string]*Property `json:"properties,omitempty"`
+	Required   []string             `json:"required,omitempty"`
+	Items      *Property            `json:"items,omitempty"`
+	Additional map[string]any       `json:"-"` // 额外字段
 }
 
 // Property 参数属性
 type Property struct {
-	Type        string        `json:"type"`
-	Description string        `json:"description,omitempty"`
-	Enum        []interface{} `json:"enum,omitempty"`
-	Default     interface{}   `json:"default,omitempty"`
-	Items       *Property     `json:"items,omitempty"`
+	Type        string    `json:"type"`
+	Description string    `json:"description,omitempty"`
+	Enum        []any     `json:"enum,omitempty"`
+	Default     any       `json:"default,omitempty"`
+	Items       *Property `json:"items,omitempty"`
 }
 
 // ToolFormatter 工具格式化器接口
@@ -69,9 +69,9 @@ func (f *JSONSchemaFormatter) Format(tools []ToolDesc) string {
 		return "[]"
 	}
 
-	var toolSchemas []map[string]interface{}
+	var toolSchemas []map[string]any
 	for _, tool := range tools {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"name":        tool.Name,
 			"description": tool.Description,
 		}
@@ -98,13 +98,13 @@ func (f *JSONSchemaFormatter) Format(tools []ToolDesc) string {
 	return string(data)
 }
 
-func (f *JSONSchemaFormatter) formatParameters(params *ParameterSchema) map[string]interface{} {
-	result := map[string]interface{}{
+func (f *JSONSchemaFormatter) formatParameters(params *ParameterSchema) map[string]any {
+	result := map[string]any{
 		"type": params.Type,
 	}
 
 	if len(params.Properties) > 0 {
-		props := make(map[string]interface{})
+		props := make(map[string]any)
 		for name, prop := range params.Properties {
 			props[name] = f.formatProperty(prop)
 		}
@@ -127,8 +127,8 @@ func (f *JSONSchemaFormatter) formatParameters(params *ParameterSchema) map[stri
 	return result
 }
 
-func (f *JSONSchemaFormatter) formatProperty(prop *Property) map[string]interface{} {
-	result := map[string]interface{}{
+func (f *JSONSchemaFormatter) formatProperty(prop *Property) map[string]any {
+	result := map[string]any{
 		"type": prop.Type,
 	}
 

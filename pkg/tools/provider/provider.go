@@ -13,7 +13,7 @@ type Provider interface {
 	Name() string
 
 	// Initialize 初始化提供者（连接、认证等）
-	Initialize(config map[string]interface{}) error
+	Initialize(config map[string]any) error
 
 	// DiscoverTools 发现可用的工具
 	DiscoverTools() ([]tools.Tool, error)

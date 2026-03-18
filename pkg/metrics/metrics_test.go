@@ -25,8 +25,8 @@ func TestMetrics_Collection(t *testing.T) {
 	allMetrics := metrics.GetMetrics()
 
 	// 验证延迟指标
-	if latencies, ok := allMetrics["latencies"].(map[string]interface{}); ok {
-		if testMetrics, ok := latencies["test.operation"].(map[string]interface{}); ok {
+	if latencies, ok := allMetrics["latencies"].(map[string]any); ok {
+		if testMetrics, ok := latencies["test.operation"].(map[string]any); ok {
 			if count, ok := testMetrics["count"].(int64); !ok || count != 3 {
 				t.Errorf("Expected latency count 3, got %v", testMetrics["count"])
 			}
@@ -51,8 +51,8 @@ func TestMetrics_Collection(t *testing.T) {
 	metrics.Reset()
 	resetMetrics := metrics.GetMetrics()
 
-	if latencies, ok := resetMetrics["latencies"].(map[string]interface{}); ok {
-		if testMetrics, ok := latencies["test.operation"].(map[string]interface{}); ok {
+	if latencies, ok := resetMetrics["latencies"].(map[string]any); ok {
+		if testMetrics, ok := latencies["test.operation"].(map[string]any); ok {
 			if count, ok := testMetrics["count"].(int64); !ok || count != 0 {
 				t.Errorf("Expected latency count 0 after reset, got %v", testMetrics["count"])
 			}

@@ -27,7 +27,12 @@ func (d *DateTime) Description() string {
 }
 
 // Execute 执行日期时间操作
-func (d *DateTime) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *DateTime) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (d *DateTime) Execute(ctx context.Context, params map[string]any) (any, error) {
 	operation, ok := params["operation"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid 'operation' parameter")

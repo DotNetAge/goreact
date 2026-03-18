@@ -18,29 +18,22 @@ type mockThinker struct{}
 
 func (m *mockThinker) Think(ctx *core.PipelineContext) error {
 	// Let's pretend the Thinker needs 3 iterations to solve the problem.
-	if ctx.CurrentStep < 3 {
+	if ctx.CurrentStep <= 3 {
 		// Needs more info
 		trace := &core.Trace{
 			Step:    ctx.CurrentStep,
 			Thought: fmt.Sprintf("Step %d: I don't know the answer yet. I should search.", ctx.CurrentStep),
 			Action: &core.Action{
 				Name:  "SearchTool",
-				Input: map[string]interface{}{"query": "weather today"},
+				Input: map[string]any{"query": "weather today"},
 			},
 		}
 		ctx.AppendTrace(trace)
 	} else {
-		// Target achieved
+		// Target achieved - don't append trace when finishing
 		ctx.IsFinished = true
 		ctx.FinalResult = "The weather today is sunny."
 		ctx.FinishReason = "TaskCompleted"
-		
-		trace := &core.Trace{
-			Step:    ctx.CurrentStep,
-			Thought: "I have enough information to answer the user.",
-			Action:  nil, // No more actions needed
-		}
-		ctx.AppendTrace(trace)
 	}
 	return nil
 }
@@ -150,11 +143,11 @@ func TestReactor_Run(t *testing.T) {
 		t.Fatalf("Expected FinalResult to be sunny, got %s", reactCtx.FinalResult)
 	}
 
-	// Ensure the loop ran exactly 3 times
-	if reactCtx.CurrentStep != 3 {
-		t.Fatalf("Expected CurrentStep to be 3, got %d", reactCtx.CurrentStep)
+	// Ensure the loop ran exactly 3 times (3 traces appended)
+	if reactCtx.CurrentStep != 4 {
+		t.Fatalf("Expected CurrentStep to be 4 (next step after 3 completed), got %d", reactCtx.CurrentStep)
 	}
-	
+
 	// Check the Scratchpad (Memory Traces)
 	if len(reactCtx.Traces) != 3 {
 		t.Fatalf("Expected 3 traces, got %d", len(reactCtx.Traces))

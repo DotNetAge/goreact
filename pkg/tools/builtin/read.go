@@ -29,7 +29,12 @@ func (r *Read) Description() string {
 }
 
 // Execute 执行文件读取
-func (r *Read) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Read) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) {
 	path, err := validateRequiredString(params, "path")
 	if err != nil {
 		return nil, err
@@ -106,7 +111,7 @@ func (r *Read) Execute(ctx context.Context, params map[string]interface{}) (inte
 	}
 
 	// 构建响应
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":     true,
 		"path":        path,
 		"size_bytes":  info.Size(),

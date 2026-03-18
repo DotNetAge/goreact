@@ -7,5 +7,5 @@ type PromptManager interface {
 	// GetTemplate 获取提示模板
 	GetTemplate(name string) string
 	// RenderTemplate 渲染提示模板
-	RenderTemplate(name string, variables map[string]interface{}) string
+	RenderTemplate(name string, variables map[string]any) string
 }

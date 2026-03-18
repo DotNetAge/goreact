@@ -31,7 +31,12 @@ func (gr *Grep) Description() string {
 }
 
 // Execute 执行文本搜索
-func (gr *Grep) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Grep) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (gr *Grep) Execute(ctx context.Context, params map[string]any) (any, error) {
 	pattern, err := validateRequiredString(params, "pattern")
 	if err != nil {
 		return nil, err
@@ -56,7 +61,7 @@ func (gr *Grep) Execute(ctx context.Context, params map[string]interface{}) (int
 	}
 
 	// 搜索结果
-	matches := make([]map[string]interface{}, 0)
+	matches := make([]map[string]any, 0)
 	filesSearched := 0
 	totalMatches := 0
 
@@ -109,7 +114,7 @@ func (gr *Grep) Execute(ctx context.Context, params map[string]interface{}) (int
 			loc := re.FindStringIndex(line)
 			if loc != nil {
 				// 记录匹配
-				match := map[string]interface{}{
+				match := map[string]any{
 					"file":      path,
 					"line":      lineNum,
 					"content":   strings.TrimSpace(line),
@@ -134,7 +139,7 @@ func (gr *Grep) Execute(ctx context.Context, params map[string]interface{}) (int
 		return nil, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":        true,
 		"pattern":        pattern,
 		"search_path":    searchPath,

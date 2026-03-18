@@ -28,7 +28,12 @@ func (w *Write) Description() string {
 }
 
 // Execute 执行文件写入
-func (w *Write) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Write) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSensitive // Default, needs manual update for risky tools
+}
+
+func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error) {
 	path, err := validateRequiredString(params, "path")
 	if err != nil {
 		return nil, err
@@ -84,7 +89,7 @@ func (w *Write) Execute(ctx context.Context, params map[string]interface{}) (int
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success": true,
 		"path":    path,
 		"mode": func() string {

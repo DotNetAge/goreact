@@ -20,11 +20,24 @@ Thinker 输出的往往是文本或 JSON，Actor 需要将其转化为对实际 
 - **并行执行：** 当 Thinker 决定同时调用多个独立工具（例如：同时查询北京、上海、广州的天气）时，Actor 负责利用 Go 的 goroutine 发起高并发请求，并使用 `errgroup` 或 `WaitGroup` 聚合执行结果。
 - **依赖执行：** 如果存在局部依赖的动作组合，Actor 需要按照依赖图顺序执行（不过通常复杂的依赖会交给 Thinker 去做规划拆解，Actor 尽量保持纯粹）。
 
-### 3. 安全沙箱与人工介入 (Security & Human-in-the-Loop)
-Actor 是整个系统中最危险的组件，它能真实地改变世界状态（如写库、发邮件、执行命令）：
-- **人工审查拦截 (Human-in-the-Loop, HITL)：** 针对高危操作（如 `DeleteDatabase` 或 `SendEmail`），Actor 提供中断机制，暂停管线执行，向终端用户发送确认请求（Approve/Reject），待人工授权后再继续执行。
-- **代码沙箱隔离 (Sandboxing)：** 如果工具是执行 Python 代码或 Shell 脚本，Actor 负责通过 Docker、WASM 或 gVisor 建立安全隔离的执行环境，防止恶意代码破坏宿主系统。
-- **权限边界与审计：** 严格控制 Agent 的 API Token 和权限域，记录所有越界尝试。
+### 3. 安全防线与最后拦截 (Security & The Last Line of Defense)
+在 Agent-as-a-Tool 的架构中，Actor 是整个系统中最危险、也是最接近物理机器的组件。由于删除、修改等高危指令可能并非出自顶层 Agent 的直接意图，而是来自于某个被挂载的 `Skill` (Markdown 文本)，因此试图在 Thinker 层面做语义拦截既复杂又不可靠。**Actor 必须作为“原子级”的最后一道防线。**
+
+我们抛弃了复杂且难以模拟真实外部环境（如发邮件、删库）的 Docker/Wasm 沙箱，转而采用一种更务实、类似 OS 权限提升（Sudo）的安全授权模型：
+
+- **工具安全级别定级 (Security Tiers)：**
+  系统必须要求所有被注册的 Tool 显式声明其安全级别。
+  - `Level 0 (Safe)`: 纯查询类，无副作用（如 `Calculator`, `Read`, `Grep`, `LS`）。Actor 直接放行。
+  - `Level 1 (Sensitive)`: 有明确上下文边界的写操作（如在授权的 Workdir 下执行 `Write` 或 `Edit`）。Actor 结合白名单机制放行。
+  - `Level 2 (High Risk)`: 一切未知的破坏性操作或强副作用操作（如 `Bash` 任意执行, 包含 DROP/DELETE 的 `DatabaseTool`, `EmailSend` 等）。**必须进行人工干预。**
+
+- **基于 Pipeline Hook 的优雅实现 (Elegant Security via Hooks)：**
+  我们在设计上遵循“框架提供机制而非策略”。Actor 本身不应该写死复杂的交互拦截代码，而是得益于 `gochat` 的 Pipeline 机制，通过在 `Actor Step` 前面注册 **Security Hook (安全拦截钩子)** 来实现。
+  - 如果应用层在组装 Engine 时没有挂载这个 Security Hook，相当于授予 Agent `root` 权限（适用于全自动的受信任任务或本地实验）。
+  - 如果挂载了该 Hook，在执行任意 Tool 之前，Hook 会读取该工具的 `SecurityLevel()`。遇到 Level 2 的工具，Hook 就会进入挂起状态，向宿主触发授权事件。人类有三种选择：
+    1. **Reject (拒绝)**：彻底拒绝，Actor 不执行，向大模型返回“操作被人类拒绝”的观察结果。
+    2. **Approve Once (单次执行)**：允许执行这一次，下次遇到同样的动作仍需再次询问。
+    3. **Approve & Whitelist (授权并加白)**：将此工具+参数签名加入会话的白名单上下文，后续免密执行。
 
 ### 4. 局部容错与鲁棒性 (Fault Tolerance & Local Retry)
 并非所有的错误都需要退回给 Thinker 去“反思”，有些错误在 Actor 层面就可以被消化：

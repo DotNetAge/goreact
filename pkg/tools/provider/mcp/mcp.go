@@ -28,7 +28,7 @@ type MCPProvider struct {
 type MCPTool struct {
 	name        string
 	description string
-	schema      map[string]interface{}
+	schema      map[string]any
 	provider    *MCPProvider
 }
 
@@ -56,7 +56,7 @@ func (p *MCPProvider) Name() string {
 }
 
 // Initialize 初始化 MCP 提供者
-func (p *MCPProvider) Initialize(config map[string]interface{}) error {
+func (p *MCPProvider) Initialize(config map[string]any) error {
 	// 解析配置
 	configJSON, err := json.Marshal(config)
 	if err != nil {
@@ -143,9 +143,9 @@ func (p *MCPProvider) DiscoverTools() ([]tools.Tool, error) {
 	// 解析工具列表
 	var toolsResponse struct {
 		Tools []struct {
-			Name        string                 `json:"name"`
-			Description string                 `json:"description"`
-			Schema      map[string]interface{} `json:"schema"`
+			Name        string         `json:"name"`
+			Description string         `json:"description"`
+			Schema      map[string]any `json:"schema"`
 		} `json:"tools"`
 	}
 
@@ -196,14 +196,19 @@ func (t *MCPTool) Name() string {
 }
 
 // Description 返回工具描述
+// SecurityLevel returns the tool's security risk level
+func (t *MCPTool) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelHighRisk // MCP tools are external, treat as high risk by default
+}
+
 func (t *MCPTool) Description() string {
 	return t.description
 }
 
 // Execute 执行 MCP 工具
-func (t *MCPTool) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+func (t *MCPTool) Execute(ctx context.Context, params map[string]any) (any, error) {
 	// 构建请求
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"tool":   t.name,
 		"params": params,
 	}
@@ -240,9 +245,9 @@ func (t *MCPTool) Execute(ctx context.Context, params map[string]interface{}) (i
 
 	// 解析响应
 	var result struct {
-		Success bool        `json:"success"`
-		Result  interface{} `json:"result"`
-		Error   string      `json:"error"`
+		Success bool   `json:"success"`
+		Result  any    `json:"result"`
+		Error   string `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {

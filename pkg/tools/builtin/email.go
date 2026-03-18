@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"github.com/ray/goreact/pkg/tools"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -60,7 +61,12 @@ func (e *Email) Description() string {
 }
 
 // Execute 执行邮件操作
-func (e *Email) Execute(ctx context.Context, params map[string]interface{}) (any, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *Email) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelHighRisk // Default, needs manual update for risky tools
+}
+
+func (e *Email) Execute(ctx context.Context, params map[string]any) (any, error) {
 	operation, ok := params["operation"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid 'operation' parameter")
@@ -314,7 +320,7 @@ func (e *Email) read(params map[string]any) (any, error) {
 	// 标记为已读
 	if markRead, ok := params["mark_as_read"].(bool); !ok || markRead {
 		item := imap.FormatFlagsOp(imap.AddFlags, true)
-		flags := []interface{}{imap.SeenFlag}
+		flags := []any{imap.SeenFlag}
 		c.Store(seqset, item, flags, nil)
 	}
 
@@ -401,7 +407,7 @@ func (e *Email) delete(params map[string]any) (any, error) {
 	seqset.AddNum(uint32(messageID))
 
 	item := imap.FormatFlagsOp(imap.AddFlags, true)
-	flags := []interface{}{imap.DeletedFlag}
+	flags := []any{imap.DeletedFlag}
 	err = c.Store(seqset, item, flags, nil)
 	if err != nil {
 		return nil, e.formatError("delete", err)
@@ -500,7 +506,7 @@ func (e *Email) setFlag(params map[string]any, flag string, add bool) (any, erro
 		item = imap.FormatFlagsOp(imap.RemoveFlags, true)
 	}
 
-	flags := []interface{}{flag}
+	flags := []any{flag}
 	err = c.Store(seqset, item, flags, nil)
 	if err != nil {
 		return nil, e.formatError("set_flag", err)

@@ -30,7 +30,12 @@ func (l *LS) Description() string {
 }
 
 // Execute 执行目录列表
-func (l *LS) Execute(ctx context.Context, params map[string]interface{}) (interface{}, error) {
+// SecurityLevel returns the tool's security risk level
+func (t *LS) SecurityLevel() tools.SecurityLevel {
+    return tools.LevelSafe // Default, needs manual update for risky tools
+}
+
+func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 	// 获取目录路径（默认为当前目录）
 	dirPath := "."
 	if path, ok := params["path"].(string); ok && path != "" {
@@ -68,7 +73,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]interface{}) (interf
 	}
 
 	// 构建结果
-	var items []map[string]interface{}
+	var items []map[string]any
 
 	for _, entry := range entries {
 		// 跳过隐藏文件（除非指定显示）
@@ -76,7 +81,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]interface{}) (interf
 			continue
 		}
 
-		item := map[string]interface{}{
+		item := map[string]any{
 			"name": entry.Name(),
 			"type": func() string {
 				if entry.IsDir() {
@@ -95,12 +100,12 @@ func (l *LS) Execute(ctx context.Context, params map[string]interface{}) (interf
 			subDir := filepath.Join(dirPath, entry.Name())
 			subEntries, err := ioutil.ReadDir(subDir)
 			if err == nil {
-				children := make([]map[string]interface{}, 0)
+				children := make([]map[string]any, 0)
 				for _, subEntry := range subEntries {
 					if !showHidden && strings.HasPrefix(subEntry.Name(), ".") {
 						continue
 					}
-					child := map[string]interface{}{
+					child := map[string]any{
 						"name": subEntry.Name(),
 						"type": func() string {
 							if subEntry.IsDir() {
@@ -121,7 +126,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]interface{}) (interf
 		items = append(items, item)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"success":     true,
 		"path":        dirPath,
 		"total_items": len(items),
