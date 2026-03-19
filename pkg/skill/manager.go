@@ -42,6 +42,9 @@ type Manager interface {
 	// EvolveSkills 执行技能进化（优胜劣汰）
 	EvolveSkills() error
 
+	// StartEvolutionScheduler 启动定时演化调度器
+	StartEvolutionScheduler(ctx context.Context, interval time.Duration)
+
 	// ArchiveSkill 归档技能（软淘汰）
 	ArchiveSkill(name string) error
 
@@ -660,6 +663,23 @@ func (m *defaultMgr) EvolveSkills() error {
 	}
 
 	return nil
+}
+
+// StartEvolutionScheduler 启动定时演化调度器
+func (m *defaultMgr) StartEvolutionScheduler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = m.EvolveSkills()
+			}
+		}
+	}()
 }
 
 // ArchiveSkill 归档技能（软淘汰）

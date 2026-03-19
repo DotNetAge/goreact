@@ -1,10 +1,10 @@
 package builtin
 
 import (
-	"github.com/ray/goreact/pkg/tools"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/ray/goreact/pkg/tools"
 	"io"
 	"net/smtp"
 	"strings"
@@ -63,7 +63,7 @@ func (e *Email) Description() string {
 // Execute 执行邮件操作
 // SecurityLevel returns the tool's security risk level
 func (t *Email) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelHighRisk // Default, needs manual update for risky tools
+	return tools.LevelHighRisk // Default, needs manual update for risky tools
 }
 
 func (e *Email) Execute(ctx context.Context, params map[string]any) (any, error) {

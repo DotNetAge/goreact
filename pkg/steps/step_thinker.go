@@ -3,9 +3,13 @@ package steps
 import (
 	"context"
 
+	"github.com/DotNetAge/gochat/pkg/pipeline"
 	"github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/thinker"
 )
+
+// Ensure thinkerStep implements gochat's pipeline.Step.
+var _ pipeline.Step[*core.PipelineContext] = (*thinkerStep)(nil)
 
 // thinkerStep wraps the Thinker interface into a pipeline.Step.
 type thinkerStep struct {

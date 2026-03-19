@@ -30,7 +30,7 @@ func (w *Write) Description() string {
 // Execute 执行文件写入
 // SecurityLevel returns the tool's security risk level
 func (t *Write) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSensitive // Default, needs manual update for risky tools
+	return tools.LevelSensitive // Default, needs manual update for risky tools
 }
 
 func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error) {

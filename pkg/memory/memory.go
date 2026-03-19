@@ -4,32 +4,38 @@ import (
 	"context"
 )
 
-// Manager defines the interface for long-term semantic memory storage and retrieval.
-// Advanced clients can implement this using Vector Databases (RAG) to provide
-// intelligent context recall based on the user's current intent or query.
-type Manager interface {
-	// Store saves a specific piece of information or preference to the user's long-term memory.
-	Store(ctx context.Context, sessionID string, key string, value any) error
+// WorkingMemory 代表短期会话记忆，用于记录会话经验与临时授权。
+// 支持基于时间衰减的洗牌机制。
+type WorkingMemory interface {
+	// RecallContext 根据当前意图召回短期会话上下文。
+	RecallContext(ctx context.Context, sessionID, intent string) (string, error)
+	// Update 记录或更新一条短期记忆，deltaWeight 用于调整其权重（如随时间衰减或因惩罚降低）。
+	Update(ctx context.Context, sessionID, key string, deltaWeight float64) error
+	// Store 保存具体的键值对（例如白名单授权 whitelist:xxx）。
+	Store(ctx context.Context, sessionID, key string, value any) error
+	// Retrieve 获取具体的键值对。
+	Retrieve(ctx context.Context, sessionID, key string) (any, error)
+}
 
-	// Retrieve gets a specific key-value pair from memory (useful for exact matches/state).
-	Retrieve(ctx context.Context, sessionID string, key string) (any, error)
+// SemanticMemory 代表长期知识库（RAG/GraphRAG），提供只读的知识召回。
+type SemanticMemory interface {
+	// RecallKnowledge 根据当前意图从外部知识库中检索并召回相关背景知识。
+	RecallKnowledge(ctx context.Context, intent string) (string, error)
+}
 
-	// Recall dynamically searches and retrieves relevant memory fragments based on
-	// the current semantic context/intent (e.g., "What did the user say about their diet last week?").
-	// Returns a string summarizing the relevant memories, ready to be injected into the LLM prompt.
-	Recall(ctx context.Context, sessionID string, intent string) (string, error)
+// MuscleMemory 代表肌肉记忆，用于存储大模型在执行特定 Skill 过程中“拨乱反正”后蒸馏出的成功经验捷径。
+type MuscleMemory interface {
+	// RecallExperience 召回特定技能的成功经验或避坑指南。
+	RecallExperience(ctx context.Context, skillName string) (string, error)
+	// DistillExperience 提炼并保存特定技能的新 SOP 或经验教训。
+	DistillExperience(ctx context.Context, skillName, newSOP string) error
+}
 
-	// Update modifies an existing memory entry's weight or content.
-	// Used by the ReAct pipeline (Observer/Terminator) to reinforce successful behaviors
-	// (increase weight) or penalize hallucinations/failures (decrease weight, naturally decaying to 0).
-	Update(ctx context.Context, sessionID string, key string, deltaWeight float64) error
-
-	// Compress summarizes or prunes older/less relevant memories to save space.
+// MemoryBank 将三种记忆模态组合在一起，成为 Agent 的专属记忆体。
+type MemoryBank interface {
+	Working() WorkingMemory
+	Semantic() SemanticMemory
+	Muscle() MuscleMemory
+	// Compress 压缩或修剪旧的、不相关的记忆以节省空间。
 	Compress(ctx context.Context, sessionID string) error
-
-	// Persist forces an immediate write to the underlying storage mechanism.
-	Persist(ctx context.Context, sessionID string) error
-
-	// Load pulls the latest state from the underlying storage.
-	Load(ctx context.Context, sessionID string) error
 }

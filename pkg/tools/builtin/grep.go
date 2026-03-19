@@ -33,7 +33,7 @@ func (gr *Grep) Description() string {
 // Execute 执行文本搜索
 // SecurityLevel returns the tool's security risk level
 func (t *Grep) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSafe // Default, needs manual update for risky tools
+	return tools.LevelSafe // Default, needs manual update for risky tools
 }
 
 func (gr *Grep) Execute(ctx context.Context, params map[string]any) (any, error) {

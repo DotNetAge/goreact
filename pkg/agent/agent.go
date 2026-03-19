@@ -1,23 +1,134 @@
 package agent
 
-// Agent 智能体配置（纯配置，不持有运行时对象）
-// Agent = System Prompt + Model Name
-// 通过 System Prompt 定义角色和行为，通过 Model Name 指定使用的模型
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/ray/goreact/pkg/core"
+	"github.com/ray/goreact/pkg/engine"
+	"github.com/ray/goreact/pkg/memory"
+	"github.com/ray/goreact/pkg/skill"
+	"github.com/ray/goreact/pkg/tools"
+)
+
+// Agent 智能体实体（Rich Domain Model）
+// Agent = 角色设定(Config) + 大脑与身体(Reactor/Engine) + 记忆体系(MemoryBank)
 type Agent struct {
-	Name         string            // 智能体名称
-	Description  string            // 智能体描述（用于选择匹配）
+	// --- 静态配置与描述 (Config & Identity) ---
+	AgentName    string            // 智能体名称
+	AgentDesc    string            // 智能体描述（用于选择匹配）
 	SystemPrompt string            // 系统提示词（定义 Agent 的角色和行为）
 	ModelName    string            // 使用的模型名称（引用 Model 配置）
 	Metadata     map[string]string // 元数据（可选）
+
+	// --- 运行时状态机引擎 (Runtime Engine) ---
+	// 引擎是 Agent 的核心执行器，负责 ReAct 循环流转。
+	reactor *engine.Reactor
+
+	// --- 技能与演化 (Skill & Evolution) ---
+	skillManager skill.Manager
+
+	// --- 记忆体系 (Memory Architecture) ---
+	// 专属记忆体，包含短期工作记忆、语义知识库与肌肉记忆。
+	memoryBank memory.MemoryBank
 }
 
-// NewAgent 创建新的智能体
+// NewAgent 创建一个新的智能体模版/配置
 func NewAgent(name, description, systemPrompt, modelName string) *Agent {
 	return &Agent{
-		Name:         name,
-		Description:  description,
+		AgentName:    name,
+		AgentDesc:    description,
 		SystemPrompt: systemPrompt,
 		ModelName:    modelName,
 		Metadata:     make(map[string]string),
 	}
+}
+
+// =========================================================================
+// 应用层入口 (Application API)
+// =========================================================================
+
+// Chat 执行多轮对话流任务，内部启动 ReAct 引擎循环
+func (a *Agent) Chat(ctx context.Context, sessionID, task string, opts ...core.ContextOption) (string, error) {
+	if a.reactor == nil {
+		return "", fmt.Errorf("AgentNotAssembled: The agent has not been assembled by a Builder. Missing reactor engine.")
+	}
+
+	// 调用底层 Reactor 执行 ReAct 循环
+	reactCtx, err := a.reactor.Run(ctx, sessionID, task, opts...)
+
+	// 记录 Skill 执行数据 (如果命中)
+	if a.skillManager != nil && reactCtx != nil {
+		if activeSkill, ok := reactCtx.Get("active_skill"); ok {
+			if skillName, isStr := activeSkill.(string); isStr {
+				success := err == nil && reactCtx.Error == nil
+				tokens := 0
+				if reactCtx.TotalTokens != nil {
+					tokens = reactCtx.TotalTokens.TotalTokens
+				}
+
+				// 质量打分策略: 成功则给 1.0, 失败给 0.0
+				score := 0.0
+				if success {
+					score = 1.0
+				}
+
+				_ = a.skillManager.RecordExecution(
+					skillName,
+					success,
+					time.Since(reactCtx.StartTime),
+					tokens,
+					score,
+				)
+			}
+		}
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	// 提取最终输出
+	if reactCtx.FinalResult != "" {
+		return reactCtx.FinalResult, nil
+	}
+	return "No final answer produced.", nil
+}
+
+// =========================================================================
+// 智能体嵌套闭环 (Agent-as-a-Tool Interface Implementation)
+// =========================================================================
+
+// Ensure Agent implements the tools.Tool interface
+var _ tools.Tool = (*Agent)(nil)
+
+// Name 继承工具名，等价于 Agent 自己的名称
+func (a *Agent) Name() string {
+	return a.AgentName
+}
+
+// Description 告诉父智能体该“工具”能干什么
+func (a *Agent) Description() string {
+	return a.AgentDesc
+}
+
+// SecurityLevel 子智能体的安全级别
+func (a *Agent) SecurityLevel() tools.SecurityLevel {
+	return tools.LevelSensitive
+}
+
+// Execute 充当工具被调用时，其实就是启动自己的独立 ReAct 引擎解决子任务
+func (a *Agent) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
+	taskDesc, ok := input["task"].(string)
+	if !ok {
+		taskDesc = "Execute nested task based on provided parameters."
+	}
+
+	// 当作子会话执行
+	ans, err := a.Chat(ctx, "sub-session-"+a.AgentName, taskDesc)
+	if err != nil {
+		return nil, err
+	}
+	return ans, nil
 }

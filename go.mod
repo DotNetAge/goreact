@@ -3,7 +3,7 @@ module github.com/ray/goreact
 go 1.25.1
 
 require (
-	github.com/DotNetAge/gochat v0.1.7
+	github.com/DotNetAge/gochat v0.1.8
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-message v0.18.2
 	go.uber.org/zap v1.27.1

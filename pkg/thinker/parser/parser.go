@@ -75,3 +75,74 @@ func ParseLLMOutput(raw string) (trace *core.Trace, finalResult string, isFinish
 
 	return trace, "", false, nil
 }
+
+// TaskType represents the logical nature of a planned task.
+type TaskType string
+
+const (
+	TaskSequence TaskType = "sequence"
+	TaskIf       TaskType = "if"
+	TaskLoop     TaskType = "loop"
+)
+
+// PlannedTask represents a single logical unit in a generated plan.
+type PlannedTask struct {
+	Type      TaskType
+	StepName  string
+	Task      string
+	Condition string // For If/Loop
+	Then      string // For If
+	Else      string // For If
+}
+
+// ParsePlan extracts a structured task flow from the LLM's planning output.
+// It looks for patterns like "Step N:", "If [cond] Then", "Repeat [task] Until".
+func ParsePlan(raw string) ([]PlannedTask, error) {
+	var tasks []PlannedTask
+	lines := strings.Split(raw, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// 1. Match Sequence: "Step 1: Analyze data"
+		if strings.HasPrefix(strings.ToLower(line), "step") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				tasks = append(tasks, PlannedTask{
+					Type:     TaskSequence,
+					StepName: strings.TrimSpace(parts[0]),
+					Task:     strings.TrimSpace(parts[1]),
+				})
+			}
+			continue
+		}
+
+		// 2. Match If: "If [file exists] then [read file] else [create file]"
+		if strings.HasPrefix(strings.ToLower(line), "if") {
+			// Basic heuristic parsing for the demo/prototype
+			tasks = append(tasks, PlannedTask{
+				Type: TaskIf,
+				Task: line,
+			})
+			continue
+		}
+
+		// 3. Match Loop: "Repeat [check status] until [success]"
+		if strings.HasPrefix(strings.ToLower(line), "repeat") || strings.HasPrefix(strings.ToLower(line), "loop") {
+			tasks = append(tasks, PlannedTask{
+				Type: TaskLoop,
+				Task: line,
+			})
+			continue
+		}
+	}
+
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("no structured tasks found in plan")
+	}
+
+	return tasks, nil
+}

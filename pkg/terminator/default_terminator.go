@@ -33,14 +33,14 @@ func (t *defaultTerminator) CheckTermination(ctx *core.PipelineContext) (bool, e
 		ctx.Logger.Warn("Engine halted due to max iterations limit", "max_steps", ctx.MaxSteps)
 		return true, nil
 	}
-	
+
 	// Rule 3: Stagnation & Infinite loops (Simple heuristic)
 	// If the last 3 traces have the exact same Action name and input, the LLM is looping blindly.
 	if len(ctx.Traces) >= 3 {
 		t1 := ctx.Traces[len(ctx.Traces)-1]
 		t2 := ctx.Traces[len(ctx.Traces)-2]
 		t3 := ctx.Traces[len(ctx.Traces)-3]
-		
+
 		if t1.Action != nil && t2.Action != nil && t3.Action != nil {
 			if t1.Action.Name == t2.Action.Name && t2.Action.Name == t3.Action.Name {
 				// We'd ideally hash or strictly compare the Input Maps here.

@@ -3,9 +3,13 @@ package steps
 import (
 	"context"
 
+	"github.com/DotNetAge/gochat/pkg/pipeline"
 	"github.com/ray/goreact/pkg/actor"
 	"github.com/ray/goreact/pkg/core"
 )
+
+// Ensure actorStep implements gochat's pipeline.Step.
+var _ pipeline.Step[*core.PipelineContext] = (*actorStep)(nil)
 
 // actorStep wraps the Actor interface into a pipeline.Step.
 type actorStep struct {
@@ -23,6 +27,14 @@ func (s *actorStep) Name() string {
 }
 
 func (s *actorStep) Execute(ctx context.Context, state *core.PipelineContext) error {
+	// Check if a Hook (e.g., SecurityHook) has injected an error into the state
+	// indicating that the operation was rejected or failed authorization.
+	if state.Error != nil {
+		// We return the error so that gochat pipeline stops the current execution cycle
+		// and triggers OnStepError hooks.
+		return state.Error
+	}
+
 	// The state passed is exactly our PipelineContext (thanks to generics).
 	return s.a.Act(state)
 }

@@ -28,7 +28,7 @@ func (e *Echo) Description() string {
 // Execute 执行回显操作
 // SecurityLevel returns the tool's security risk level
 func (t *Echo) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSafe // Default, needs manual update for risky tools
+	return tools.LevelSafe // Default, needs manual update for risky tools
 }
 
 func (e *Echo) Execute(ctx context.Context, params map[string]any) (any, error) {

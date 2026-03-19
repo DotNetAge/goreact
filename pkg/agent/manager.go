@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	gochatcore "github.com/DotNetAge/gochat/pkg/core"
+	"github.com/ray/goreact/pkg/model"
+	"github.com/ray/goreact/pkg/tools"
 )
 
 // SelectionMethod 表示 Agent 选择的方式
@@ -35,15 +37,19 @@ type SelectionResult struct {
 
 // Manager 智能体管理器
 type Manager struct {
-	agents    map[string]*Agent
-	mutex     sync.RWMutex
-	llmClient gochatcore.Client // 用于语义匹配（可选）
+	agents       map[string]*Agent
+	modelManager *model.Manager
+	globalTools  []tools.Tool
+	mutex        sync.RWMutex
+	llmClient    gochatcore.Client // 用于语义匹配（可选）
 }
 
 // NewManager 创建智能体管理器
-func NewManager() *Manager {
+func NewManager(modelManager *model.Manager) *Manager {
 	return &Manager{
-		agents: make(map[string]*Agent),
+		agents:       make(map[string]*Agent),
+		modelManager: modelManager,
+		globalTools:  make([]tools.Tool, 0),
 	}
 }
 
@@ -53,26 +59,52 @@ func (m *Manager) WithLLMClient(client gochatcore.Client) *Manager {
 	return m
 }
 
-// Register 注册智能体
+// WithGlobalTools 设置所有 Agent 共享的全局工具
+func (m *Manager) WithGlobalTools(t ...tools.Tool) *Manager {
+	m.globalTools = append(m.globalTools, t...)
+	return m
+}
+
+// Register 注册智能体实体（数据配置）
 func (m *Manager) Register(agent *Agent) error {
-	if agent.Name == "" {
+	if agent.AgentName == "" {
 		return fmt.Errorf("agent name cannot be empty")
 	}
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-	m.agents[agent.Name] = agent
+	m.agents[agent.AgentName] = agent
 	return nil
 }
 
-// Get 获取智能体
+// Get 获取智能体并尝试装配
 func (m *Manager) Get(name string) (*Agent, error) {
 	m.mutex.RLock()
-	defer m.mutex.RUnlock()
 	agent, exists := m.agents[name]
+	m.mutex.RUnlock()
+
 	if !exists {
 		return nil, fmt.Errorf("agent not found: %s", name)
 	}
+
+	// 如果未装配，进行按需装配
+	if agent.reactor == nil {
+		if err := m.assembleAgent(agent); err != nil {
+			return nil, fmt.Errorf("failed to assemble agent %s: %w", name, err)
+		}
+	}
+
 	return agent, nil
+}
+
+// assembleAgent 内部装配逻辑
+func (m *Manager) assembleAgent(a *Agent) error {
+	builder := NewBuilder(m.modelManager)
+	if len(m.globalTools) > 0 {
+		builder.WithTools(m.globalTools...)
+	}
+
+	_, err := builder.Build(a)
+	return err
 }
 
 // List 列出所有智能体
@@ -87,14 +119,20 @@ func (m *Manager) List() []*Agent {
 	return agents
 }
 
-// SelectAgent 根据任务选择最合适的 Agent
-// 使用关键词匹配 + 语义匹配（如果有 LLM）
-// 返回选择结果，包含选择方式和匹配分数
+// SelectAgent 根据任务选择最合适的 Agent 并确保其已装配
 func (m *Manager) SelectAgent(task string) (*Agent, error) {
 	result, err := m.SelectAgentWithResult(task)
 	if err != nil {
 		return nil, err
 	}
+
+	// 确保选出的 Agent 已装配
+	if result.Agent.reactor == nil {
+		if err := m.assembleAgent(result.Agent); err != nil {
+			return nil, fmt.Errorf("failed to assemble selected agent %s: %w", result.Agent.AgentName, err)
+		}
+	}
+
 	return result.Agent, nil
 }
 
@@ -170,8 +208,8 @@ func (m *Manager) filterByKeywords(task string) []scoredAgent {
 
 	for _, agent := range m.agents {
 		score := 0.0
-		descLower := strings.ToLower(agent.Description)
-		nameLower := strings.ToLower(agent.Name)
+		descLower := strings.ToLower(agent.AgentDesc)
+		nameLower := strings.ToLower(agent.AgentName)
 
 		// 检查任务中的关键词是否匹配 Agent 描述
 		taskWords := strings.Fields(taskLower)
@@ -226,7 +264,7 @@ func (m *Manager) selectBySemantic(task string, candidates []*Agent) (*Agent, er
 	// 构建 prompt
 	var sb strings.Builder
 	for i, agent := range candidates {
-		fmt.Fprintf(&sb, "%d. %s: %s\n", i+1, agent.Name, agent.Description)
+		fmt.Fprintf(&sb, "%d. %s: %s\n", i+1, agent.AgentName, agent.AgentDesc)
 	}
 
 	prompt := fmt.Sprintf(`You are an agent selection assistant. Given a task and a list of available agents, select the most suitable agent.
@@ -260,8 +298,8 @@ Your selection:`, task, sb.String())
 
 	// 在候选中查找匹配的 Agent
 	for _, candidate := range candidates {
-		if strings.Contains(strings.ToLower(selectedName), strings.ToLower(candidate.Name)) ||
-			strings.Contains(strings.ToLower(candidate.Name), strings.ToLower(selectedName)) {
+		if strings.Contains(strings.ToLower(selectedName), strings.ToLower(candidate.AgentName)) ||
+			strings.Contains(strings.ToLower(candidate.AgentName), strings.ToLower(selectedName)) {
 			return candidate, nil
 		}
 	}

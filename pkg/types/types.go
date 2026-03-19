@@ -1,8 +1,8 @@
 package types
 
 import (
-	llm "github.com/DotNetAge/gochat/pkg/core"
 	"errors"
+	llm "github.com/DotNetAge/gochat/pkg/core"
 	"time"
 )
 

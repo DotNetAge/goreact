@@ -1,41 +1,42 @@
-# GoReAct 核心特性 (Core Features)
+# GoReAct 核心特性 (Core Features) - Phase 4 进化版
 
-GoReAct 是一个高前沿、具备自进化能力的 ReAct (Reasoning + Acting) 智能体框架。基于深度架构重构与认知科学理念，GoReAct 抛弃了传统的硬编码工作流，转而拥抱高度自治的**“仿生认知模型”**。
+GoReAct 是一个具备**逻辑推理、自主规划与自进化能力**的 ReAct (Reasoning + Acting) 智能体框架。基于深度架构重构，它实现了从“简单的 ReAct 循环”到“可编程认知引擎”的跨越。
 
 以下是贯穿整个框架体系的核心特性集：
 
-## 1. 万物皆工具 (Agent-as-a-Tool, AAAT)
-* **分形嵌套架构**：彻底打破单体 Agent 的局限。任何一个装配完毕的 Agent 实例暴露的 `Chat()` 接口，在物理签名上完全等价于一个 `tools.Tool`。
-* **无缝多智能体协作**：Supervisor Agent 可以像调用计算器一样，将复杂的子任务分配给挂载为 Tool 的 Sub-Agent，实现无限嵌套的超级大脑，而无需编写复杂的协调代码。
-> **💡 例如**：总控 Agent 收到“开发一个完整的微服务”的任务，它只需在自己的工具列表里调用 `CodeWriter Agent` 和 `Reviewer Agent`。对总控来说，呼叫另一个智能体，就跟调用一个“查天气”的函数一样简单。
+## 1. 万能逻辑管线 (Universal Pipeline & Logic Primitives)
+* **图灵完备的执行流**：GoReAct 不再局限于线性的任务执行。通过深度集成 `gochat` 原生的控制流原语，管线原生支持：
+    -   **Sequence (顺序)**: 默认的任务流。
+    -   **Branch (分支 - `IfStep`)**: 基于上下文观察结果的实时决策。
+    -   **Iteration (循环 - `LoopStep`)**: 带有物理熔断（MaxLoops）与哨兵错误（`Break`/`Return`）支持的重复执行。
+* **逻辑驱动力**：这意味着 Agent 可以处理“如果失败则重试”、“循环直到找到结果”等复杂逻辑，而无需在 Thinker 内部编写混乱的 Prompt。
 
-## 2. 认知流拆解 (Cognitive Task Decomposition)
-* **告别硬编码 DAG**：抛弃传统框架中脆弱的、基于代码的依赖图（DAG）或状态机。
-* **Markdown SOP 驱动**：技能（Skill）本质上是一份人类可读的 `SKILL.md` 指南。框架将其无缝注入子智能体的 System Prompt 中，完全依赖大模型（Thinker）强大的上下文理解能力，自觉、柔性地分步执行任务，极大增强了系统的容错与“拨乱反正”能力。
-> **💡 例如**：你不需要编写 `if step1() { step2() }` 这样僵硬的 Go 代码。你只需要用大白话写一份 Markdown：“第一步去查库，第二步如果发现空值就调脚本清理”。大模型读懂后会自动一步步做；如果第二步报错了，它还能自己思考换个参数重试，而不是直接让程序崩溃。
+## 2. 认知流拆解与模式驱动 (Cognitive Decomposition)
+* **暗语驱动模式 (Codeword-Driven)**：通过前缀暗语（如 `/plan`, `/specs`）精准控制 Thinker 的思考深度。
+    -   **`/plan` (Planning Mode)**：专注于任务拆解，生成可被解析为 Pipeline Steps 的结构化路线图。
+    -   **`/specs` (Specification Mode)**：强制召回记忆中的所有技术约束，生成详尽的需求说明。
+* **自维护指令**：支持 `/clear`（清空轨迹）和 `/compress`（强制压缩），赋予 Agent 自动管理上下文生命周期的能力。
 
-## 3. 拦截式安全防线 (Sudo HITL Security)
-* **三级安全定级**：所有外部工具（Tools）强制声明 `SecurityLevel`（Level 0 Safe, Level 1 Sensitive, Level 2 HighRisk）。
-* **操作系统级授权机制**：摒弃沉重的沙箱容器，在 Actor 阶段引入 Pipeline Security Hook。遇到高危操作，系统自动挂起，向宿主（人类终端）发起 Sudo 授权请求，支持“拒绝”、“单次执行”与“会话/永久加白”。
-> **💡 例如**：当 Agent 在执行任务时试图运行 `rm -rf /` 或是向外部发送一封敏感邮件，系统会像手机的权限弹窗一样卡住，并在控制台问你：“该智能体正在尝试高危操作，允许单次执行还是永久加白？”你不点头，它绝对按不了回车。
-
-## 4. 三模态仿真记忆系统 (Tri-Modal MemoryBank)
+## 3. 三模态仿真记忆系统 (Tri-Modal MemoryBank)
 *记忆的本质是为了消除幻觉。Agent 独占的 MemoryBank 完美映射了人类认知：*
-* **短期/工作记忆 (Working Memory)**：记录当前会话的零碎状态与白名单授权，内置 $e^{-\lambda t}$ 时间衰减机制，保证上下文不过载。
-* **永久/知识记忆 (Semantic Memory/RAG)**：底层对接外部的 Vector RAG 或 Graph RAG，为 Agent 锚定企业代码库或行业规则，**消除事实类主幻觉**。
-* **经验/肌肉记忆 (Muscle Memory)**：独创机制。Agent 将历史任务中“碰壁-反思-成功”的过程蒸馏为最佳实践捷径。再次执行同类任务时，直接唤醒肌肉记忆，**消除操作类幻觉，实现极速响应**。
-> **💡 例如**：
-> - **短期记忆**：记得你十分钟前刚骂过它“以后别用 JSON 回复我”。
-> - **永久记忆**：通过翻阅企业手册，准确回答“公司去年的差旅报销流程是啥”。
-> - **肌肉记忆**：上次跑编译时报错了，它摸索半天发现是少加了一个环境变量；这次你再让它编译，它连说明书都不看，直接带上环境变量跑，再也不踩坑。
+* **短期/工作记忆 (Working Memory)**：记录当前会话的状态与临时授权，内置时间衰减机制，保证上下文不过载。
+* **永久/知识记忆 (Semantic Memory/RAG)**：通过分布式 RAG 锚定外部事实，**消除事实类主幻觉**。
+* **经验/肌肉记忆 (Muscle Memory)**：Agent 将历史任务中“碰壁-反思-成功”的过程蒸馏为 SOP 捷径。再次执行同类任务时，直接唤醒经验，**消除操作类幻觉，实现极速响应**。
 
-## 5. 达尔文演化与终极跃迁 (Darwinian Evolution)
-* **优胜劣汰调度器**：内置全局技能打分器（综合成功率、消耗、耗时），后台自动执行软淘汰，保证技能池的高效与纯净。
-* **著书立说 (Skill Refinement)**：Agent 定期对高权重的“肌肉记忆”进行二次蒸馏，将优化后的最佳大纲反向覆写回原始的 `SKILL.md`，完成对既有经验的升华固化。
-* **开疆拓土 (Skill Discovery)**：能力的哲学边界拓展。Agent 通过后台分析长期沉淀的散落对话，自主挖掘出高频长尾需求，**无中生有地撰写出一份全新的 `NEW_SKILL.md`**，实现从“执行者”向“创造者”的认知跃迁。
-> **💡 例如**：Agent 发现你最近一周每天都在让它“查出这三张表、合并剔重、然后发给老板”。虽然一开始并没有这个技能，但它在夜间“做梦”时自己总结出了规律，并在系统里悄悄写了一份《每日报表生成 SOP》。第二天你再开口时，它已经成了这个任务的专家。
+## 4. 技能进化与达尔文演化 (Skill Evolution)
+* **Markdown SOP 驱动**：技能（Skill）是一份人类可读的 `SKILL.md` 指南。框架将其动态注入子智能体的 System Prompt 中，实现柔性执行。
+* **著书立说 (Skill Refinement)**：Agent 定期对高权重的“肌肉记忆”进行二次蒸馏，反向覆写回原始的 `SKILL.md`，实现对既有经验的升华。
+* **开疆拓土 (Skill Discovery)**：Agent 通过分析长期沉淀的对话轨迹，自主挖掘高频需求，**自动撰写出全新的 `NEW_SKILL.md`**，实现从“执行者”向“创造者”的跃迁。
 
-## 6. 应用与引擎的完美分层 (Layered Architecture)
-* **技术引擎层 (`engine.Reactor`)**：纯粹的微观状态机（Think -> Act -> Observe -> Terminate），面向底层极客。
-* **应用业务层 (`agent` & `model`)**：面向终端开发者。通过 Agent Builder 工厂模式，将简单的纯数据配置（角色设定、大脑模型）全自动装配为可直接调用的、具备完整记忆体和运行管线的实体 Agent。
-> **💡 例如**：框架的底层开发者可以去深挖状态机里的流转钩子；但对于只想用它来做个应用的普通开发者，只需写两行代码 `AgentBuilder.Create("数据分析师", "gpt-4")`，就能得到一个自带安全防线和记忆系统的战斗实体。
+## 5. 提示词工程工具箱 (Prompt Toolkit)
+* **协议化提示词**：Prompt 被视为 Agent 的运行时配置协议。
+* **Fluent API Builder**：流式组装 System 指令、Tools 定义、Few-Shot 示例与记忆上下文。
+* **智能窗口压缩**：内置 `SlidingWindow` 策略与多模态 Token 计数器（精确支持中英混合），确保在长程管线执行中的 Token 安全与成本最优。
+
+## 6. 万物皆工具 (Agent-As-A-Tool, AAAT)
+* **分形嵌套架构**：任何一个 Agent 实例都可以被包装为 `tools.Tool`。Supervisor Agent 可以像调用计算器一样调用 Sub-Agent。
+* **Sudo HITL 安全防线**：所有工具强制声明 `SecurityLevel`。遇到敏感操作（如删除文件、发送邮件），系统自动触发安全钩子（SecurityHook），向人类请求授权，支持“单次允许”与“永久加白”。
+
+## 7. 极致解耦的 Reactor 引擎
+* **Reactor 状态机**：极致精简的四步循环（Think -> Act -> Observe -> Terminate）。
+* **应用与引擎分离**：底层极客可以定制微观状态转换，而应用层开发者只需通过 `AgentBuilder` 配置角色与模型即可获得完整的战斗力。

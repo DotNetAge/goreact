@@ -1,15 +1,17 @@
 package thinker
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/DotNetAge/gochat/pkg/core"
 	reactCore "github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/memory"
+	"github.com/ray/goreact/pkg/prompt/builder"
+	"github.com/ray/goreact/pkg/prompt/compression"
+	"github.com/ray/goreact/pkg/prompt/counter"
+	"github.com/ray/goreact/pkg/prompt/formatter"
 	"github.com/ray/goreact/pkg/thinker/parser"
 	"github.com/ray/goreact/pkg/thinker/prompt"
 	"github.com/ray/goreact/pkg/tools"
@@ -17,11 +19,11 @@ import (
 
 // Default Thinker Implementation.
 type defaultThinker struct {
-	llmClient     core.Client
-	modelName     string
-	toolManager   tools.Manager
-	memoryManager memory.Manager
-	sysTemplate   *template.Template
+	llmClient   core.Client
+	modelName   string
+	toolManager tools.Manager
+	memoryBank  memory.MemoryBank
+	sysTemplate string // Changed to raw string for builder
 }
 
 // Option configures a defaultThinker
@@ -39,9 +41,17 @@ func WithToolManager(mgr tools.Manager) Option {
 	}
 }
 
-func WithMemoryManager(mgr memory.Manager) Option {
+func WithMemoryBank(bank memory.MemoryBank) Option {
 	return func(t *defaultThinker) {
-		t.memoryManager = mgr
+		t.memoryBank = bank
+	}
+}
+
+func WithSystemPrompt(tpl string) Option {
+	return func(t *defaultThinker) {
+		if tpl != "" {
+			t.sysTemplate = tpl
+		}
 	}
 }
 
@@ -49,7 +59,7 @@ func Default(client core.Client, opts ...Option) Thinker {
 	t := &defaultThinker{
 		llmClient:   client,
 		modelName:   "gpt-4",
-		sysTemplate: template.Must(template.New("react_sys").Parse(prompt.ReActSystemPrompt)),
+		sysTemplate: prompt.ReActSystemPrompt,
 		toolManager: tools.NewSimpleManager(),
 	}
 
@@ -63,136 +73,94 @@ func (t *defaultThinker) Think(ctx *reactCore.PipelineContext) error {
 	ctx.Logger.Info("Thinker is reasoning...", "step", ctx.CurrentStep)
 	start := time.Now()
 
-	// 1. Fetch dynamically relevant tools from the Tool RAG Manager.
+	// Sub-pipeline Step 0: Self-Maintenance Commands (Short-circuit)
+	if strings.HasPrefix(ctx.Input, "/clear") {
+		ctx.Traces = nil
+		ctx.IsFinished = true
+		ctx.FinalResult = "Context cleared. I'm ready for a fresh start."
+		ctx.FinishReason = "ContextReset"
+		return nil
+	}
+
+	// Sub-pipeline Step 1: Intent & Mode Resolution (Codewords)
+	mode, template := t.resolveMode(ctx.Input)
+
+	// Sub-pipeline Step 2: Tool Discovery
 	availableTools, err := t.toolManager.ListAvailableTools(ctx, ctx.Input)
 	if err != nil {
 		return fmt.Errorf("failed to list available tools: %w", err)
 	}
 
-	messages := t.buildMessages(ctx, availableTools)
+	// Sub-pipeline Step 3: Prompt Synthesis using pkg/prompt/builder
+	pb := t.createPromptBuilder(ctx, availableTools, template)
 
-	// 2. Prepare Tool Options with Usage Callback AND Multimodal Attachments
+	// If it's a forced compress command, we can apply more aggressive strategy
+	if strings.HasPrefix(ctx.Input, "/compress") {
+		pb.WithCompression(compression.NewSlidingWindowStrategy(1)) // Aggressive!
+	}
+
+	builtPrompt := pb.Build()
+
+	// Sub-pipeline Step 4: LLM Execution
+	messages := []core.Message{
+		{Role: core.RoleSystem, Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: builtPrompt.System}}},
+		{Role: core.RoleUser, Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: builtPrompt.User}}},
+	}
+
 	llmOpts := []core.Option{
 		core.WithModel(t.modelName),
 		core.WithUsageCallback(func(usage core.Usage) {
 			ctx.TotalTokens.Add(usage.PromptTokens, usage.CompletionTokens)
-			ctx.Logger.Debug("Token usage updated via callback",
-				"prompt", usage.PromptTokens,
-				"completion", usage.CompletionTokens,
-				"total", ctx.TotalTokens.TotalTokens)
 		}),
 		core.WithAttachments(ctx.Attachments...),
 	}
 
-	// 3. Call the LLM in STREAMING mode
-	stream, err := t.llmClient.ChatStream(ctx, messages, llmOpts...)
+	rawResponse, err := t.callLLM(ctx, messages, llmOpts)
 	if err != nil {
-		ctx.Metrics.IncCounter("thinker_api_errors", 1, nil)
-		return fmt.Errorf("LLM API failed to start stream during thinking phase: %w", err)
-	}
-	defer stream.Close()
-
-	var fullResponseBuilder strings.Builder
-
-	for stream.Next() {
-		ev := stream.Event()
-		if ev.Err != nil {
-			ctx.Logger.Error(ev.Err, "Stream broken unexpectedly")
-			return ev.Err
-		}
-
-		if ev.Type == core.EventContent || ev.Type == core.EventThinking {
-			fullResponseBuilder.WriteString(ev.Content)
-		}
-
-		if ctx.OnThoughtStream != nil && ev.Content != "" {
-			ctx.OnThoughtStream(ev.Content)
-		}
+		return err
 	}
 
-	rawResponseText := fullResponseBuilder.String()
 	ctx.Metrics.RecordTimer("thinker_latency", time.Since(start), nil)
 
-	// 5. Intent Clarification vs Action Parsing
-	trace, finalAnswer, isFinished, parseErr := parser.ParseLLMOutput(rawResponseText)
-	if parseErr != nil {
-		ctx.Logger.Warn("Thinker output parse failed", "err", parseErr.Error())
-
-		errorTrace := &reactCore.Trace{
-			Step:    ctx.CurrentStep,
-			Thought: "(Format Error Reflection)",
-			Action:  nil,
-			Observation: &reactCore.Observation{
-				Data:      fmt.Sprintf("SYSTEM ERROR: Your previous output failed to parse. Err: %v. Please STRICTLY follow the Thought/Action/ActionInput format.", parseErr),
-				IsSuccess: false,
-				Error:     parseErr,
-			},
-		}
-		ctx.AppendTrace(errorTrace)
-		return nil
-	}
-
-	// 6. Update Pipeline State
-	if isFinished {
-		ctx.IsFinished = true
-		ctx.FinalResult = finalAnswer
-		ctx.FinishReason = "TargetAccomplishedOrClarifying"
-		ctx.Logger.Info("Thinker accomplished the task", "final_answer", finalAnswer)
-
-		if trace != nil && trace.Thought != "" {
-			trace.Step = ctx.CurrentStep
-			ctx.AppendTrace(trace)
-		}
-	} else {
-		trace.Step = ctx.CurrentStep
-		ctx.AppendTrace(trace)
-		ctx.Logger.Info("Thinker decided on an action", "action", trace.Action.Name)
-	}
-
-	return nil
+	// Sub-pipeline Step 5: Mode-specific Parsing
+	return t.processOutput(ctx, mode, rawResponse)
 }
 
-// buildMessages serializes the entire context and history into LLM Prompt messages.
-func (t *defaultThinker) buildMessages(ctx *reactCore.PipelineContext, currentTools []tools.Tool) []core.Message {
-	var sysBuf bytes.Buffer
+// resolveMode detects "Codewords" like /plan or /specs
+func (t *defaultThinker) resolveMode(input string) (string, string) {
+	if strings.HasPrefix(input, "/plan") {
+		return "plan", prompt.PlanningSystemPrompt
+	}
+	if strings.HasPrefix(input, "/specs") {
+		return "specs", prompt.SpecsSystemPrompt
+	}
+	return "react", t.sysTemplate
+}
 
-	var toolStrings []string
+// createPromptBuilder internal helper to setup the builder
+func (t *defaultThinker) createPromptBuilder(ctx *reactCore.PipelineContext, currentTools []tools.Tool, sysTpl string) *builder.FluentPromptBuilder {
+	pb := builder.New().
+		WithSystemTemplate(sysTpl).
+		WithTask(ctx.Input).
+		WithMaxTokens(4000).
+		WithTokenCounter(counter.NewUniversalEstimator("mixed")).
+		WithCompression(compression.NewSlidingWindowStrategy(10))
+
+	// 1. Transform tools to ToolDesc for the formatter
+	var toolDescs []formatter.ToolDesc
 	var toolNames []string
 	for _, tool := range currentTools {
-		toolStrings = append(toolStrings, fmt.Sprintf("- %s: %s", tool.Name(), tool.Description()))
+		toolDescs = append(toolDescs, formatter.ToolDesc{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+		})
 		toolNames = append(toolNames, tool.Name())
 	}
+	pb.WithTools(toolDescs)
+	pb.WithVariable("ToolNames", strings.Join(toolNames, ", "))
 
-	t.sysTemplate.Execute(&sysBuf, map[string]any{
-		"Tools":     strings.Join(toolStrings, "\n"),
-		"ToolNames": strings.Join(toolNames, ", "),
-	})
-
-	messages := []core.Message{
-		{
-			Role:    core.RoleSystem,
-			Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: sysBuf.String()}},
-		},
-	}
-
-	// 1. Recall long-term memory if available
-	if t.memoryManager != nil {
-		recallContext, err := t.memoryManager.Recall(ctx, ctx.SessionID, ctx.Input)
-		if err == nil && recallContext != "" {
-			messages = append(messages, core.Message{
-				Role:    core.RoleSystem,
-				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: fmt.Sprintf("System Note - Memory Recall:\n%s", recallContext)}},
-			})
-		}
-	}
-
-	// 2. Build User Input (Attachments will be injected via gochat's ProcessAttachments)
-	messages = append(messages, core.Message{
-		Role:    core.RoleUser,
-		Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: ctx.Input}},
-	})
-
-	// 3. Append ReAct Trace History
+	// 2. Format ReAct Traces into Builder History
+	var history []builder.Turn
 	for _, trace := range ctx.Traces {
 		assistantContent := ""
 		if trace.Thought != "" {
@@ -201,26 +169,103 @@ func (t *defaultThinker) buildMessages(ctx *reactCore.PipelineContext, currentTo
 		if trace.Action != nil {
 			assistantContent += fmt.Sprintf("Action: %s\nActionInput: %v\n", trace.Action.Name, trace.Action.Input)
 		}
-
 		if assistantContent != "" {
-			messages = append(messages, core.Message{
-				Role:    core.RoleAssistant,
-				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: assistantContent}},
-			})
+			history = append(history, builder.Turn{Role: "assistant", Content: assistantContent})
 		}
 
 		if trace.Observation != nil {
-			status := "SUCCESS"
-			if !trace.Observation.IsSuccess {
-				status = "FAILED"
-			}
-			obsText := fmt.Sprintf("Observation (Status: %s):\n%s", status, trace.Observation.Data)
-			messages = append(messages, core.Message{
-				Role:    core.RoleUser,
-				Content: []core.ContentBlock{{Type: core.ContentTypeText, Text: obsText}},
-			})
+			obsText := fmt.Sprintf("Observation (Status: %v):\n%s", trace.Observation.IsSuccess, trace.Observation.Data)
+			history = append(history, builder.Turn{Role: "user", Content: obsText})
 		}
 	}
+	pb.WithHistory(history)
 
-	return messages
+	// 3. Inject Memories
+	if t.memoryBank != nil {
+		memories := make(map[string]string)
+		if w, _ := t.memoryBank.Working().RecallContext(ctx, ctx.SessionID, ctx.Input); w != "" {
+			memories["Working"] = w
+		}
+		if s, _ := t.memoryBank.Semantic().RecallKnowledge(ctx, ctx.Input); s != "" {
+			memories["Semantic"] = s
+		}
+		pb.WithVariable("Memories", memories)
+	}
+	return pb
+}
+
+func (t *defaultThinker) callLLM(ctx *reactCore.PipelineContext, messages []core.Message, opts []core.Option) (string, error) {
+	stream, err := t.llmClient.ChatStream(ctx, messages, opts...)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+
+	var sb strings.Builder
+	for stream.Next() {
+		ev := stream.Event()
+		if ev.Type == core.EventContent || ev.Type == core.EventThinking {
+			sb.WriteString(ev.Content)
+			if ctx.OnThoughtStream != nil {
+				ctx.OnThoughtStream(ev.Content)
+			}
+		}
+	}
+	return sb.String(), nil
+}
+
+func (t *defaultThinker) processOutput(ctx *reactCore.PipelineContext, mode, raw string) error {
+	if mode == "plan" {
+		tasks, err := parser.ParsePlan(raw)
+		if err == nil {
+			ctx.Logger.Info("Plan parsed into structured tasks", "count", len(tasks))
+			// Here we could dynamically build a Sub-Pipeline and attach it to context
+			// For now, we store them in PlanSteps for the Driving Force to consume
+			for _, task := range tasks {
+				ctx.PlanSteps = append(ctx.PlanSteps, task.Task)
+			}
+			ctx.IsFinished = false       // Not finished! We need to execute the plan.
+			ctx.Input = ctx.PlanSteps[0] // Switch input to the first task
+			ctx.CurrentPlan = 0
+			return nil
+		}
+
+		// Fallback if parsing fails
+		ctx.IsFinished = true
+		ctx.FinalResult = raw
+		return nil
+	}
+
+	if mode == "specs" {
+		ctx.IsFinished = true
+		ctx.FinalResult = raw
+		return nil
+	}
+
+	trace, finalAnswer, isFinished, parseErr := parser.ParseLLMOutput(raw)
+	if parseErr != nil {
+		// Auto-recovery reflection
+		ctx.AppendTrace(&reactCore.Trace{
+			Step:    ctx.CurrentStep,
+			Thought: "(Format Error Reflection)",
+			Observation: &reactCore.Observation{
+				Data:      fmt.Sprintf("SYSTEM ERROR: Format mismatch. Err: %v.", parseErr),
+				IsSuccess: false,
+			},
+		})
+		return nil
+	}
+
+	if isFinished {
+		ctx.IsFinished = true
+		ctx.FinalResult = finalAnswer
+		ctx.FinishReason = "TaskComplete"
+	}
+
+	if trace != nil {
+		trace.Step = ctx.CurrentStep
+		ctx.AppendTrace(trace)
+	}
+
+	return nil
 }

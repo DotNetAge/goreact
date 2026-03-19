@@ -30,7 +30,7 @@ func (e *Edit) Description() string {
 // Execute 执行文件编辑
 // SecurityLevel returns the tool's security risk level
 func (t *Edit) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSensitive // Default, needs manual update for risky tools
+	return tools.LevelSensitive // Default, needs manual update for risky tools
 }
 
 func (e *Edit) Execute(ctx context.Context, params map[string]any) (any, error) {

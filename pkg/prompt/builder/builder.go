@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/ray/goreact/pkg/prompt"
+	"github.com/ray/goreact/pkg/prompt/compression"
 	"github.com/ray/goreact/pkg/prompt/formatter"
 )
 
@@ -27,19 +28,20 @@ type FewShotExample struct {
 
 // FluentPromptBuilder 流式 API 的 Prompt 构建器
 type FluentPromptBuilder struct {
-	systemPrompt     string
-	userPrompt       string
-	task             string
-	tools            []formatter.ToolDesc
-	history          []Turn
-	fewShots         []FewShotExample
-	variables        map[string]any
-	toolFormatter    formatter.ToolFormatter
-	historyFormatter HistoryFormatter
-	maxTokens        int
-	tokenCounter     prompt.TokenCounter
-	systemTemplate   string
-	userTemplate     string
+	systemPrompt        string
+	userPrompt          string
+	task                string
+	tools               []formatter.ToolDesc
+	history             []Turn
+	fewShots            []FewShotExample
+	variables           map[string]any
+	toolFormatter       formatter.ToolFormatter
+	historyFormatter    HistoryFormatter
+	maxTokens           int
+	tokenCounter        prompt.TokenCounter
+	compressionStrategy compression.CompressionStrategy
+	systemTemplate      string
+	userTemplate        string
 }
 
 // New 创建新的 FluentPromptBuilder
@@ -126,12 +128,37 @@ func (b *FluentPromptBuilder) WithTokenCounter(counter prompt.TokenCounter) *Flu
 	return b
 }
 
+// WithCompression 设置压缩策略
+func (b *FluentPromptBuilder) WithCompression(strategy compression.CompressionStrategy) *FluentPromptBuilder {
+	b.compressionStrategy = strategy
+	return b
+}
+
 // Build 构建 Prompt
 func (b *FluentPromptBuilder) Build() *prompt.Prompt {
-	// 准备变量
+	// 1. 如果有压缩策略，先执行历史记录压缩
+	if b.compressionStrategy != nil && len(b.history) > 0 {
+		// 转换 Turn 类型
+		compTurns := make([]compression.Turn, len(b.history))
+		for i, t := range b.history {
+			compTurns[i] = compression.Turn{Role: t.Role, Content: t.Content}
+		}
+
+		compressed, err := b.compressionStrategy.Compress(compTurns, b.maxTokens, b.tokenCounter)
+		if err == nil {
+			// 转回 builder.Turn
+			newHistory := make([]Turn, len(compressed))
+			for i, t := range compressed {
+				newHistory[i] = Turn{Role: t.Role, Content: t.Content}
+			}
+			b.history = newHistory
+		}
+	}
+
+	// 2. 准备变量
 	vars := b.prepareVariables()
 
-	// 渲染模板
+	// 3. 渲染模板
 	system := b.renderTemplate(b.systemTemplate, vars)
 	user := b.renderTemplate(b.userTemplate, vars)
 

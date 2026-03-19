@@ -8,7 +8,7 @@ import (
 )
 
 // defaultObserver represents the senses of the system.
-// It translates raw binary/structural execution data from the Actor into plain text 
+// It translates raw binary/structural execution data from the Actor into plain text
 // that the LLM (Thinker) can comprehend.
 type defaultObserver struct{}
 
@@ -26,7 +26,7 @@ func Default(opts ...Option) Observer {
 
 func (o *defaultObserver) Observe(ctx *core.PipelineContext) error {
 	lastTrace := ctx.LastTrace()
-	
+
 	// Observation is only needed if there was a Tool execution attempted in this step.
 	if lastTrace == nil || lastTrace.Action == nil {
 		return nil
@@ -50,7 +50,7 @@ func (o *defaultObserver) Observe(ctx *core.PipelineContext) error {
 		if err, ok := rawErrVal.(error); ok {
 			obs.IsSuccess = false
 			obs.Error = err
-			// Convert the raw Go panic or HTTP timeout into a polite text observation 
+			// Convert the raw Go panic or HTTP timeout into a polite text observation
 			// so the Thinker knows to retry or pivot.
 			obs.Data = fmt.Sprintf("Action failed to execute. Error details: %v", err)
 			obs.Raw = err
@@ -58,7 +58,7 @@ func (o *defaultObserver) Observe(ctx *core.PipelineContext) error {
 	} else if hasOut && rawOutVal != nil {
 		// 3. Serialize and truncate Output
 		obs.Raw = rawOutVal
-		
+
 		// Attempt to format the output into a readable string for the LLM.
 		switch v := rawOutVal.(type) {
 		case string:

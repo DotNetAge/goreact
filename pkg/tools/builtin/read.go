@@ -31,7 +31,7 @@ func (r *Read) Description() string {
 // Execute 执行文件读取
 // SecurityLevel returns the tool's security risk level
 func (t *Read) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSafe // Default, needs manual update for risky tools
+	return tools.LevelSafe // Default, needs manual update for risky tools
 }
 
 func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) {

@@ -39,12 +39,12 @@ func main() {
 	toolMgr := tools.NewSimpleManager()
 	toolMgr.Register(builtin.NewCalculator())
 	toolMgr.Register(builtin.NewDateTime())
-	
+
 	fmt.Println("🛠️  Equipped Tools: [Calculator, DateTime]")
 
 	// 3. Assemble the Reactor
 	agent := engine.NewReactor(
-		engine.WithThinker(thinker.Default(client, 
+		engine.WithThinker(thinker.Default(client,
 			thinker.WithModel("qwen3.5:2b"),
 			thinker.WithToolManager(toolMgr),
 		)),
@@ -64,7 +64,7 @@ func main() {
 	fmt.Printf("\n👤 User: %s\n\n🧠 Thinking Log (Models may take several minutes to load on slow PCs)... \n", userInput)
 
 	// 6. Run the Engine with Thought Stream injected into Context setup
-	reactCtx, err := agent.Run(ctx, "session-001", userInput, 
+	reactCtx, err := agent.Run(ctx, "session-001", userInput,
 		core.WithThoughtStream(func(chunk string) {
 			fmt.Print(chunk) // Dynamic typing effect
 		}),
@@ -76,9 +76,9 @@ func main() {
 
 	// 7. Output Final Results & Audit
 	fmt.Printf("\n\n✅ Final Answer: %s\n", reactCtx.FinalResult)
-	fmt.Printf("📊 Token Audit: Prompt: %d | Completion: %d | Total: %d\n", 
-		reactCtx.TotalTokens.PromptTokens, 
-		reactCtx.TotalTokens.CompletionTokens, 
+	fmt.Printf("📊 Token Audit: Prompt: %d | Completion: %d | Total: %d\n",
+		reactCtx.TotalTokens.PromptTokens,
+		reactCtx.TotalTokens.CompletionTokens,
 		reactCtx.TotalTokens.TotalTokens)
 	fmt.Printf("⏱️  Time Spent: %v\n", time.Since(reactCtx.StartTime))
 }

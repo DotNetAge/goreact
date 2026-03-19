@@ -13,7 +13,7 @@ type Terminator interface {
 	//
 	// It returns true (with a valid state mutation inside Context, such as FinalResult
 	// or FinishReason) if the Agent must halt the current ReAct workflow loop.
-	// 
+	//
 	// The return err signifies a catastrophic failure in the evaluation rule engine itself
 	// (not Agent task failure), and usually forces an immediate abort of the application.
 	CheckTermination(ctx *core.PipelineContext) (bool, error)

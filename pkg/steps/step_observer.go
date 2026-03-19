@@ -3,9 +3,13 @@ package steps
 import (
 	"context"
 
+	"github.com/DotNetAge/gochat/pkg/pipeline"
 	"github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/observer"
 )
+
+// Ensure observerStep implements gochat's pipeline.Step.
+var _ pipeline.Step[*core.PipelineContext] = (*observerStep)(nil)
 
 // observerStep wraps the Observer interface into a pipeline.Step.
 type observerStep struct {

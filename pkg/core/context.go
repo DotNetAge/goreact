@@ -19,6 +19,10 @@ type PipelineContext struct {
 	Traces      []*Trace
 	Attachments []chatcore.Attachment // User or Tool supplied multimedia/files
 
+	// Execution Plan (Driving Force)
+	PlanSteps   []string // Sequence of sub-tasks from /plan or Skill
+	CurrentPlan int      // Current active sub-task index
+
 	// Configuration & Constraints
 	MaxSteps int
 

@@ -1,81 +1,67 @@
 # Thinker (思考者)
 
-`Thinker` 位于 GoReAct 架构（Thinker - Actor - Observer - Terminator）的最前端，是整个 ReAct（Reasoning + Acting）引擎的“大脑”。
-
-它不仅负责处理与用户的首次交互与意图理解，更是每一次 ReAct 循环中负责**推理 (Reasoning)**、**规划 (Planning)** 与 **决策 (Decision Making)** 的核心组件。借鉴业界前沿框架（如 LangChain, LlamaIndex, AutoGen 以及 Reflexion 论文）的设计理念，GoReAct 的 `Thinker` 被设计为一个高度模块化、可扩展的认知流水线。
+`Thinker` 位于 GoReAct 架构的最前端，是整个 ReAct 引擎的“大脑”。它负责推理、规划与动作决策。
 
 ---
 
-## 核心职责 (Core Responsibilities)
+## 1. 核心架构：内部子管线 (Internal Sub-pipeline)
 
-`Thinker` 的工作贯穿于 Agent 的整个生命周期，具体包含以下五大核心能力：
+重构后的 `Thinker` 不再是一个臃肿的单一函数，而是一个高度模块化的**内部子管线**结构：
 
-### 1. 意图识别与任务规划 (Intent Recognition & Task Planning)
-在用户发起请求的第一时间，Thinker 需要对输入进行深度解析：
-- **意图缓存短路 (Intent Caching)：** 快速查找语义相似的历史请求或缓存，若命中则直接返回，降低大模型调用成本。
-- **用户意图分类与路由：**
-  - **澄清需求：** 判断输入是否含糊不清，是否需要反问用户补充上下文。
-  - **模型路由 (Model Routing)：** 根据意图的知识深度和复杂度，动态决定是将任务分配给本地小模型（如 Ollama）以提升速度和隐私，还是分配给云端大模型（如 GPT-4, Claude 3）以处理复杂推理。
-  - **周期性与定时任务处理 (Periodic/Cron Tasks)：** 
-    - **识别意图：** Thinker 可以从用户的指令中识别出定时或驻留需求（如：“每隔5分钟检查一次股票，超过100元通知我”）。
-    - **机制剥离 (Agent-as-a-Tool)：** GoReAct 引擎本身是一个一次性的状态机，**绝不阻塞等待**。处理此类任务的最佳实践不是在引擎中硬编码 Scheduler，而是向大模型提供一个如 `ScheduleTool` 或 `CronSkill`。
-    - **流转：** Thinker 在第一轮思考时决定调用 `ScheduleTool`，并将子任务的 Prompt 和 Cron 表达式作为参数下发给底层系统。底层工具（如 K8s CronJob）注册成功后返回结果。Thinker 随即告知用户“已成功设置定时任务”，结束当前循环。
-- **任务拆解 (Decomposition & Planning)：** 针对宏大或复杂的指令（如“分析苹果公司财报并写一份研报”），Thinker 需要构建前置规划。将复杂目标拆解为顺序执行的子任务队列或有向无环图（DAG），并在执行过程中动态维护这张“计划表”。
-- **基于 Skill 的流程编排与 RAG 缓存 (Skill-based Orchestration & RAG Caching)：** 当意图识别系统匹配到预置的特定能力或场景（即 Skill，例如“竞品分析”）时，Thinker 将加载该 Skill 中固化的 SOP（标准作业程序）。为了降低频繁调用带来的 Token 消耗，Thinker 借助 RAG（或向量数据库）将复杂 Skill 的“拆解逻辑与编排流程”持久化。后续遇到同类任务时，直接从 RAG 召回并复用已缓存的任务拆解结构与历史优化的 Prompt 模板，避免每次都需要让大模型从零开始消耗大量 Token 去理解和分解冗长的 Skill 指令。
-
-### 2. 上下文与记忆管理 (Context & Memory Management)
-在将问题提交给大模型之前，Thinker 负责组装最完美的上下文：
-
-- **全局思考上下文 (Pipeline Context)：** 在整个 ReAct 引擎管线中维护并共享状态。详尽记录每个环节（Thinker 决策、Actor 执行、Observer 观察、Terminator 判定）的输入数据与输出结果，这不仅作为历史轨迹供 LLM 随时回溯，也为各组件间的状态传递提供“数据总线”。
-- **提示词组装与清洗：** 利用 `PromptBuilder` 过滤无关字符，组装系统预设指令 (System Prompt)。
-- **轨迹管理 (Agent Scratchpad)：** 在多步 ReAct 循环中，Thinker 负责收集并格式化之前的“思考记录(Thought)”、“动作(Action)”和“观察结果(Observation)”，作为当前轮次思考的历史依据。
-- **滑动窗口与上下文压缩：** 当历史对话或观察结果（如超长网页源码）过长时，触发 Token 压缩策略（摘要、截断或向量化检索），严格控制会话窗口的 Token 消耗，防止爆显存或超出 LLM 限制。
-
-### 3. 高级 RAG 增强 (Retrieval-Augmented Generation)
-结合 GoRAG 的先进理念，提升大模型回答的准确率和时效性：
-- **记忆检索 (Memory RAG)：** 从短期/长期记忆库中提取与当前意图相关的历史偏好和事实。
-- **知识库增强 (Knowledge RAG)：** 挂载外部向量数据库或文档。
-- **高级查询转换 (Query Transformations)：**
-  - **HyDE (Hypothetical Document Embeddings)：** 让 LLM 先生成假设性答案，再以此去检索更相关的底层文档。
-  - **Step-Back Prompting：** 自动将用户的具象问题抽象化，以检索到更丰富的背景知识。
-
-> GoRAG提供了完整的RAG组件得处理任何形式的RAG功能
-
-### 4. 动作决策与工具绑定 (Action Formulation & Tool Binding)
-思考的最终目的是为了行动。Thinker 需要决定下一步“做什么”以及“用什么工具”：
-- **动态工具路由 (Tool RAG)：** 当系统注册了海量工具时，全部注入 Prompt 会导致 Token 溢出。Thinker 会根据当前意图，动态检索并过滤出当前步骤最相关的 Top-K 个工具 Schema (如 JSON Schema)。
-- **思维链引导 (Chain-of-Thought)：** 强制或引导大模型输出严密的推理步骤。
-- **动作参数构造：** 引导 LLM 为选定的工具生成精准的输入参数。
-
-
-### 5. 输出解析与反思纠错 (Output Parsing & Reflection)
-将大模型的自然语言输出，转化为下游 `Actor` 能够直接执行的结构化指令：
-- **结构化解析 (Output Parsers)：** 使用正则或 JSON/XML 解析器，强制提取出 `[Thought, Action, ActionInput]` 结构。
-- **格式自动修复 (Auto-Fixing)：** 当 LLM 输出格式错乱时，Thinker 内部实施重试或提供纠错提示（"Your output was not valid JSON, please fix..."）。
-- **反思与自我纠正 (Reflexion)：** 接收 `Observer` 传来的执行失败反馈（如工具调用超时、参数类型错误）或 `Terminator` 的不满意评估。在下一次 Prompt 中注入反思经验：“上次尝试失败了，原因是 XXX，我这次应该换一种工具或改变参数”。
+1.  **Intent & Mode Resolution (意图与模式解析)**：识别输入中的“暗语（Codewords）”，决定当前思维模式。
+2.  **Tool Discovery (工具发现)**：根据当前任务动态筛选最相关的工具集。
+3.  **Prompt Synthesis (提示词合成)**：利用 `pkg/prompt/builder` 流式组装系统指令、历史记录、Few-Shot 示例及记忆体。
+4.  **Context Compression (上下文压缩)**：自动应用 Token 窗口管理策略（如 SlidingWindow），防止上下文溢出。
+5.  **LLM Execution (执行调用)**：通过 `gochat` 客户端执行流式推理。
+6.  **Output Reflection (输出反思与解析)**：解析 `Thought/Action/ActionInput` 结构，并对格式错误进行自动纠错反思。
 
 ---
 
-## 架构集成位置 (Integration in ReAct Loop)
+## 2. 思维暗语驱动 (Codeword Driven Modes)
 
-在一次典型的 GoReAct 执行循环中，Thinker 的位置如下：
+通过在输入中加入前缀暗语，可以强制切换 `Thinker` 的思考深度与管线行为：
 
-1. **[Thinker]** 接收 User Input 或前一轮的 Observation。
-2. **[Thinker]** 检索记忆、加载工具、进行思考，最终输出 `Action` 和 `ActionInput`。
-3. **[Actor]** 接收 Thinker 的输出，实际执行工具调用（如发 HTTP 请求、执行代码）。
-4. **[Observer]** 观察 Actor 的执行结果，清理并格式化反馈数据。
-5. **[Terminator]** 检查是否达到最终目标。若未达到，将 Observation 再次送入 **[Thinker]** 开启下一轮。
+-   **`/plan` (Planning Mode)**：
+    -   **职能**：专注于长程任务拆解。
+    -   **行为**：不执行具体工具，而是输出一份结构化的阶段性目标路线图。
+-   **`/specs` (Specification Mode)**：
+    -   **职能**：需求与约束分析。
+    -   **行为**：强制召回 `MemoryBank` 中的历史约束与技术细节，生成详尽的规格说明书。
+-   **Default (ReAct Mode)**：
+    -   **职能**：标准的推理-行动循环。
+    -   **行为**：输出 `Thought -> Action -> ActionInput`，直接驱动 `Actor` 执行任务。
 
-## 设计指引 (Design Guidelines)
+---
 
-- **接口隔离：** `Thinker` 应该是一个顶层 Interface。内部的 Planner, OutputParser, QueryTransformer 应当拆分为独立的可插拔组件。
-- **Pipeline模式：** Thinker 的预处理阶段（如 RAG 检索、Token 压缩）是一种独立的管线或者是处理步骤，gochat/pkg/pipeline 的管线模式可以将每个部分进行进理步骤的包装分片独立处理，以达到既能直接调用包内的接口又能通过步骤组合灵活组成不同的管线。
-- **实时思考流同步 (Thought Streaming)：** 在进行“慢思考”时，大模型可能需要数秒甚至十几秒来生成 `Thought` 或 `Action` 的 JSON 文本。Thinker 必须支持流式（Streaming）回调通道，让外界（如前端 UI）能像打字机一样，实时看到 Agent “正在思考的过程” 和 “准备调用的工具名称”，极大优化用户体验。
-- **精准的 Token 审计与归因 (Token Accounting)：** 为了控制 Agent 的高昂使用成本，每一次 ReAct 循环都必须将消耗的 `PromptTokens` 和 `CompletionTokens` 精准累加至 PipelineContext 的生命周期中，以便 Terminator 基于财务预算做出硬性熔断裁决。
+## 3. 自维护指令 (Self-Maintenance Commands)
 
-- **可观测性 (Observability)：** 思考过程的每一个子阶段（检索了什么、压缩了多少 Token、生成的原始 Prompt 是什么）都必须对外暴露 Hook 或 Trace，以便于调试和性能监控。
-- **依赖注入(Dependence Injection)**
-Thinker 通过DI的方式，采用Go特有的Option Pattern注入不同接口实例，与不同的外部功能进行交互。
-- LLMClient - gochat/pkg/core.Client
-- Tools RAG - gorag/infra/searcher/native
+除了思维模式切换，Thinker 还支持对上下文生命周期的直接干预：
 
+-   **`/clear`**：
+    -   **作用**：物理清空当前会话的所有历史轨迹（Traces）。
+    -   **场景**：当上下文过长、出现逻辑死循环或需要切换完全无关的话题时。
+-   **`/compress`**：
+    -   **作用**：强制触发极度激进的上下文压缩（仅保留最近 1 轮）。
+    -   **场景**：手动 Token 瘦身，保留当前意图但丢弃冗长过程。
+
+---
+
+## 4. 有机集成：Prompt & Memory
+
+`Thinker` 与其他核心包实现了深度有机整合：
+
+-   **Prompt Toolkit**：完全接管了提示词的构建与格式化，通过 `Fluent API` 确保了指令的精准度。
+-   **Memory Bank**：三模态记忆（工作记忆、语义知识、肌肉经验）被作为动态变量无缝注入 Prompt 模板，消除了“事实幻觉”与“操作幻觉”。
+-   **Auto-Reflection**：当 LLM 输出无法被 `Parser` 解析时，Thinker 会自动生成一条 `Format Error Reflection` 轨迹，告知模型错误原因并引导其纠正。
+
+---
+
+## 4. 接口指引
+
+```go
+type Thinker interface {
+    // Think 执行一轮思考循环，将决策结果更新至 PipelineContext
+    Think(ctx *PipelineContext) error
+}
+```
+通过 Option 模式支持自定义模型、工具管理器、记忆体及系统模板。

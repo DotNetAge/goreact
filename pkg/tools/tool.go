@@ -52,8 +52,8 @@ type MapTool struct {
 	ExecuteFunc     func(ctx context.Context, input map[string]any) (any, error)
 }
 
-func (t *MapTool) Name() string               { return t.ToolName }
-func (t *MapTool) Description() string        { return t.ToolDescription }
+func (t *MapTool) Name() string                 { return t.ToolName }
+func (t *MapTool) Description() string          { return t.ToolDescription }
 func (t *MapTool) SecurityLevel() SecurityLevel { return t.Level }
 func (t *MapTool) Execute(ctx context.Context, input map[string]any) (any, error) {
 	if t.ExecuteFunc == nil {

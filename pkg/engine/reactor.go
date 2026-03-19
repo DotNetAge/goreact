@@ -24,6 +24,7 @@ type Reactor struct {
 	actor      actor.Actor
 	observer   observer.Observer
 	terminator terminator.Terminator
+	hooks      []pipeline.Hook[*core.PipelineContext]
 }
 
 // Option is a functional option for configuring a Reactor.
@@ -40,6 +41,13 @@ func WithEngineLogger(l core.Logger) Option {
 func WithEngineMetrics(m core.Metrics) Option {
 	return func(r *Reactor) {
 		r.metrics = m
+	}
+}
+
+// WithPipelineHook injects a custom hook into the pipeline execution.
+func WithPipelineHook(h pipeline.Hook[*core.PipelineContext]) Option {
+	return func(r *Reactor) {
+		r.hooks = append(r.hooks, h)
 	}
 }
 
@@ -115,6 +123,11 @@ func (r *Reactor) Run(ctx context.Context, sessionID, input string, customOpts .
 		steps.Observer(r.observer),
 		steps.CheckFinish(r.terminator),
 	)
+
+	// Register all configured hooks
+	for _, h := range r.hooks {
+		p.AddHook(h)
+	}
 
 	// 4. The main loop
 	for {

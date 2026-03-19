@@ -198,7 +198,7 @@ func (t *MCPTool) Name() string {
 // Description 返回工具描述
 // SecurityLevel returns the tool's security risk level
 func (t *MCPTool) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelHighRisk // MCP tools are external, treat as high risk by default
+	return tools.LevelHighRisk // MCP tools are external, treat as high risk by default
 }
 
 func (t *MCPTool) Description() string {

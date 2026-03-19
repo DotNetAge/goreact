@@ -1,9 +1,9 @@
 package builtin
 
 import (
-	"github.com/ray/goreact/pkg/tools"
 	"context"
 	"fmt"
+	"github.com/ray/goreact/pkg/tools"
 	"os/exec"
 )
 
@@ -28,7 +28,7 @@ func (b *Bash) Description() string {
 // Execute 执行bash命令
 // SecurityLevel returns the tool's security risk level
 func (t *Bash) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelHighRisk // Default, needs manual update for risky tools
+	return tools.LevelHighRisk // Default, needs manual update for risky tools
 }
 
 func (b *Bash) Execute(ctx context.Context, params map[string]any) (any, error) {

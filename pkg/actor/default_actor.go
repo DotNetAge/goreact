@@ -37,7 +37,7 @@ func Default(opts ...Option) Actor {
 
 func (a *defaultActor) Act(ctx *core.PipelineContext) error {
 	lastTrace := ctx.LastTrace()
-	
+
 	if lastTrace == nil || lastTrace.Action == nil {
 		return nil
 	}
@@ -58,7 +58,7 @@ func (a *defaultActor) Act(ctx *core.PipelineContext) error {
 	start := time.Now()
 
 	result, err := tool.Execute(ctx, action.Input)
-	
+
 	ctx.Metrics.RecordTimer(fmt.Sprintf("tool_%s_latency", action.Name), time.Since(start), nil)
 
 	// 3. Output Hand-off

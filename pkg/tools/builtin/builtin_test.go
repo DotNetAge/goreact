@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -93,7 +94,7 @@ func TestDateTime(t *testing.T) {
 }
 
 func TestGrep(t *testing.T) {
-	// 创建Grep工具
+	// 创建 Grep 工具
 	grep := NewGrep()
 
 	// 测试在当前文件中查找模式
@@ -104,4 +105,93 @@ func TestGrep(t *testing.T) {
 	if result == nil {
 		t.Error("Expected non-nil result for grep")
 	}
+}
+
+func TestReplace(t *testing.T) {
+	// 创建 Replace 工具
+	replace := NewReplace()
+
+	// 创建一个临时测试文件
+	testFile := "/tmp/test_replace.txt"
+	initialContent := "Hello World! Hello Go! Hello Testing!"
+	err := os.WriteFile(testFile, []byte(initialContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer os.Remove(testFile)
+
+	t.Run("replace all occurrences", func(t *testing.T) {
+		result, err := replace.Execute(context.Background(), map[string]any{
+			"path":    testFile,
+			"search":  "Hello",
+			"replace": "Hi",
+		})
+
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+
+		resultMap := result.(map[string]any)
+		if resultMap["success"] != true {
+			t.Error("Expected success to be true")
+		}
+		if int(resultMap["replacements"].(int)) != 3 {
+			t.Errorf("Expected 3 replacements, got %v", resultMap["replacements"])
+		}
+
+		// 验证文件内容
+		content, _ := os.ReadFile(testFile)
+		expected := "Hi World! Hi Go! Hi Testing!"
+		if string(content) != expected {
+			t.Errorf("Expected file content '%s', got '%s'", expected, string(content))
+		}
+	})
+
+	t.Run("replace with limit", func(t *testing.T) {
+		// 重置文件内容
+		os.WriteFile(testFile, []byte(initialContent), 0644)
+
+		result, err := replace.Execute(context.Background(), map[string]any{
+			"path":    testFile,
+			"search":  "Hello",
+			"replace": "Hi",
+			"limit":   2.0,
+		})
+
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+
+		resultMap := result.(map[string]any)
+		if int(resultMap["replacements"].(int)) != 2 {
+			t.Errorf("Expected 2 replacements, got %v", resultMap["replacements"])
+		}
+
+		// 验证文件内容 (只替换前 2 个)
+		content, _ := os.ReadFile(testFile)
+		expected := "Hi World! Hi Go! Hello Testing!"
+		if string(content) != expected {
+			t.Errorf("Expected file content '%s', got '%s'", expected, string(content))
+		}
+	})
+
+	t.Run("text not found", func(t *testing.T) {
+		result, err := replace.Execute(context.Background(), map[string]any{
+			"path":    testFile,
+			"search":  "NotFound",
+			"replace": "Something",
+		})
+
+		if err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+
+		resultMap := result.(map[string]any)
+		if resultMap["success"] != false {
+			t.Error("Expected success to be false when text not found")
+		}
+		if int(resultMap["replacements"].(int)) != 0 {
+			t.Errorf("Expected 0 replacements, got %v", resultMap["replacements"])
+		}
+	})
 }

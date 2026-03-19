@@ -31,7 +31,7 @@ func (g *Glob) Description() string {
 // Execute 执行文件名匹配
 // SecurityLevel returns the tool's security risk level
 func (t *Glob) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSafe // Default, needs manual update for risky tools
+	return tools.LevelSafe // Default, needs manual update for risky tools
 }
 
 func (g *Glob) Execute(ctx context.Context, params map[string]any) (any, error) {

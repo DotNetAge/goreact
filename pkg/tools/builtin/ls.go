@@ -32,7 +32,7 @@ func (l *LS) Description() string {
 // Execute 执行目录列表
 // SecurityLevel returns the tool's security risk level
 func (t *LS) SecurityLevel() tools.SecurityLevel {
-    return tools.LevelSafe // Default, needs manual update for risky tools
+	return tools.LevelSafe // Default, needs manual update for risky tools
 }
 
 func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {

@@ -10,12 +10,12 @@ import (
 type Thinker interface {
 	// Think evaluates the current state of the ReAct loop and reasoning context.
 	// It must do one of two things:
-	// 1. Decide on a new Action, attaching it (along with its reasoning 'Thought') 
+	// 1. Decide on a new Action, attaching it (along with its reasoning 'Thought')
 	//    as a new Trace onto the PipelineContext.
-	// 2. Decide the task is completed (or failed), setting ctx.IsFinished = true 
+	// 2. Decide the task is completed (or failed), setting ctx.IsFinished = true
 	//    and populating ctx.FinalResult.
 	//
-	// It returns an error only if the Thinking process itself fatally fails 
+	// It returns an error only if the Thinking process itself fatally fails
 	// (e.g., LLM network crash, prompt generation failure).
 	Think(ctx *core.PipelineContext) error
 }

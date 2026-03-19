@@ -3,9 +3,13 @@ package steps
 import (
 	"context"
 
+	"github.com/DotNetAge/gochat/pkg/pipeline"
 	"github.com/ray/goreact/pkg/core"
 	"github.com/ray/goreact/pkg/terminator"
 )
+
+// Ensure checkFinishStep implements gochat's pipeline.Step.
+var _ pipeline.Step[*core.PipelineContext] = (*checkFinishStep)(nil)
 
 // checkFinishStep wraps the Terminator interface into a pipeline.Step.
 // Unlike the others, its purpose is to validate state boundaries and decide
