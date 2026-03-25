@@ -2,144 +2,98 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 )
 
-// DefaultMemoryManager is a basic in-memory KV store for session states.
-// It is NOT a semantic RAG memory, but satisfies the Manager interface.
-type DefaultMemoryManager struct {
-	memories    map[string]map[string]any
-	mutex       sync.RWMutex
-	persistPath string
+// DefaultMemoryBank 是 MemoryBank 的一个简单基础实现，
+// 它通过内部 KV 存储来模拟三种不同模式的记忆。
+type DefaultMemoryBank struct {
+	working  *defaultWorkingMemory
+	semantic *defaultSemanticMemory
+	muscle   *defaultMuscleMemory[any]
 }
 
-// NewDefaultMemoryManager creates a default memory manager
-func NewDefaultMemoryManager(persistPath string) (*DefaultMemoryManager, error) {
-	if persistPath == "" {
-		persistPath = "./memory"
+func NewDefaultMemoryBank() *DefaultMemoryBank {
+	return &DefaultMemoryBank{
+		working:  &defaultWorkingMemory{data: make(map[string]any)},
+		semantic: &defaultSemanticMemory{},
+		muscle:   &defaultMuscleMemory[any]{data: make(map[string]any)},
 	}
-
-	if err := os.MkdirAll(persistPath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create memory directory: %w", err)
-	}
-
-	return &DefaultMemoryManager{
-		memories:    make(map[string]map[string]any),
-		persistPath: persistPath,
-	}, nil
 }
 
-func (m *DefaultMemoryManager) Store(ctx context.Context, sessionID string, key string, value any) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+func (b *DefaultMemoryBank) Working() WorkingMemory { return b.working }
+func (b *DefaultMemoryBank) Semantic() SemanticMemory { return b.semantic }
+func (b *DefaultMemoryBank) Muscle() MuscleMemory[any] { return b.muscle }
 
-	if _, ok := m.memories[sessionID]; !ok {
-		m.memories[sessionID] = make(map[string]any)
-	}
-	m.memories[sessionID][key] = value
+func (b *DefaultMemoryBank) Compress(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-func (m *DefaultMemoryManager) Retrieve(ctx context.Context, sessionID string, key string) (any, error) {
+// --- 内部实现 ---
+
+type defaultWorkingMemory struct {
+	data  map[string]any
+	mutex sync.RWMutex
+}
+
+func (w *defaultWorkingMemory) RecallContext(ctx context.Context, sessionID, intent string) (string, error) {
+	return "", nil
+}
+
+func (w *defaultWorkingMemory) Update(ctx context.Context, sessionID, key string, deltaWeight float64) error {
+	return nil
+}
+
+func (w *defaultWorkingMemory) Store(ctx context.Context, sessionID, key string, value any) error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	w.data[sessionID+":"+key] = value
+	return nil
+}
+
+func (w *defaultWorkingMemory) Retrieve(ctx context.Context, sessionID, key string) (any, error) {
+	w.mutex.RLock()
+	defer w.mutex.RUnlock()
+	return w.data[sessionID+":"+key], nil
+}
+
+type defaultSemanticMemory struct{}
+
+func (s *defaultSemanticMemory) RecallKnowledge(ctx context.Context, intent string) (string, error) {
+	return "No semantic knowledge found.", nil
+}
+
+func (s *defaultSemanticMemory) QueryGraph(ctx context.Context, query string, depth int) (any, error) {
+	// 在默认实现中，我们模拟返回一个空的结果。
+	// 实际应用中，开发者会注入支持分布式图检索的 Client（如 Nebula, Neo4j）。
+	return nil, nil
+}
+
+type defaultMuscleMemory[T any] struct {
+	data  map[string]T
+	mutex sync.RWMutex
+}
+
+func (m *defaultMuscleMemory[T]) RecallExperience(ctx context.Context, skillName string) (string, error) {
+	return "", nil
+}
+
+func (m *defaultMuscleMemory[T]) DistillExperience(ctx context.Context, skillName, newAction string) error {
+	return nil
+}
+
+func (m *defaultMuscleMemory[T]) LoadCompiledAction(ctx context.Context, intent string) (T, error) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
-
-	if session, ok := m.memories[sessionID]; ok {
-		if val, exists := session[key]; exists {
-			return val, nil
-		}
-	}
-	return nil, nil // Or an explicit ErrNotFound
+	// 注意：这里是 NativeRAG 的极简实现（精确查表）。
+	// 在生产环境中接入 GoRAG 后，这里应该是向量语义召回逻辑。
+	return m.data[intent], nil
 }
 
-// Recall in the default manager just returns a basic JSON dump of all keys
-// (which is a naive replacement for proper RAG semantic recall).
-func (m *DefaultMemoryManager) Recall(ctx context.Context, sessionID string, intent string) (string, error) {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	session, ok := m.memories[sessionID]
-	if !ok || len(session) == 0 {
-		return "", nil // No memory found
-	}
-
-	// Just dump the entire state
-	data, _ := json.Marshal(session)
-	return fmt.Sprintf("Known state/preferences: %s", string(data)), nil
-}
-
-// Update modifies a memory's abstract weight/status.
-// In this simplistic implementation, we just log or ignore the delta.
-func (m *DefaultMemoryManager) Update(ctx context.Context, sessionID string, key string, deltaWeight float64) error {
+func (m *defaultMuscleMemory[T]) SaveCompiledAction(ctx context.Context, intent string, sop T) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
-	// 实际的高级记忆模块（如 RAG 向量记忆）应该根据 deltaWeight 更新条目的权重。
-	// 这里仅保留方法签名，提供最基础的伪实现。
-	if session, ok := m.memories[sessionID]; ok {
-		if _, exists := session[key]; exists {
-			// 在此处理时间衰减或权重增减逻辑
-			return nil
-		}
-	}
-	return nil
-}
-
-func (m *DefaultMemoryManager) Compress(ctx context.Context, sessionID string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	if session, ok := m.memories[sessionID]; ok {
-		for key, value := range session {
-			if value == nil {
-				delete(session, key)
-			}
-		}
-	}
-	return nil
-}
-
-func (m *DefaultMemoryManager) Persist(ctx context.Context, sessionID string) error {
-	m.mutex.RLock() // RLock is fine since json.Marshal only reads
-	defer m.mutex.RUnlock()
-
-	session, ok := m.memories[sessionID]
-	if !ok {
-		return errors.New("session not found")
-	}
-
-	data, err := json.MarshalIndent(session, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	filePath := filepath.Join(m.persistPath, sessionID+"_memory.json")
-	return os.WriteFile(filePath, data, 0644)
-}
-
-func (m *DefaultMemoryManager) Load(ctx context.Context, sessionID string) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	filePath := filepath.Join(m.persistPath, sessionID+"_memory.json")
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // OK if doesn't exist yet
-		}
-		return err
-	}
-
-	session := make(map[string]any)
-	if err := json.Unmarshal(data, &session); err != nil {
-		return err
-	}
-
-	m.memories[sessionID] = session
+	// 在高级实现中，这应该触发一个 Index() 操作。
+	m.data[intent] = sop
 	return nil
 }

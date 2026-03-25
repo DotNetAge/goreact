@@ -1,91 +1,108 @@
-# Skill 系统设计与执行原理
+# Skill 系统设计：从“提示词工程”到“智能体编译”
 
-本目录 (`pkg/skill`) 实现了基于 [Agent Skills 规范](https://agentskills.io) 的技能管理与演化系统。
+本目录 (`pkg/skill`) 实现了 GoReAct 核心的技能进化与执行引擎。不同于传统的 DAG 工作流或简单的 System Prompt 注入，GoReAct 采用了**“三态转化”**架构，旨在解决复杂任务编排中的 Token 成本、响应延迟与执行确定性问题。
 
-在回答“Skill 是如何被分解成多个处理环节并执行”的这个问题之前，我们需要先纠正一个传统软件工程的思维定势：**在 GoReAct 中，Skill 的任务拆解不是由 Go 代码（如硬编码的 DAG 图或状态机）完成的，而是由大模型（LLM）的认知能力通过 Prompt 驱动完成的。**
+## 1. 核心哲学：技能的三态转化 (The Three States of Skill)
 
-## 1. 什么是 Skill？（SOP 数据包）
+在 GoReAct 中，一个 Skill 不仅仅是一段文字，它是一个从“模糊意图”进化到“确切逻辑”的生命体。
 
-在 GoReAct 架构中，`Skill` 并不是一段可编译的二进制可执行代码，而是一个高度结构化的 **SOP（标准作业程序）数据包**。
+### 状态一：源码态 (The Source - `SKILL.md`)
+*   **载体**：由人类编写的 Markdown 标准作业程序 (SOP)。
+*   **执行方式**：**解释执行 (Interpretation)**。
+*   **核心任务**：**建立理想化预期 (Idealized Expectation)**。
+    *   Master-Agent 首次接触 Skill，通过高成本的 LLM 推理（Master-Sub 编排）进行探索。
+    *   在首次成功执行后，系统记录全链路 Trace，生成第一份“理想化”的步骤与结果指纹。
 
-一个标准的 Skill 实体包含：
-- **元数据 (Frontmatter)**：名称、描述、兼容性限制、允许调用的基础 Tool 列表。
-- **核心指令 (Instructions)**：这是核心！它是用 Markdown 编写的、写给大模型看的**分步操作指南**。
-- **上下文外挂**：
-  - `scripts/`：Skill 专属的辅助脚本代码。
-  - `references/`：Skill 专属的参考文档（供 RAG 使用）。
-  - `assets/`：静态资源。
+### 状态二：结晶态 (The Crystallized - `AST/DAG`)
+*   **载体**：存储在 `MemoryBank.Muscle` 中的**结构化执行图 (Execution Graph)**。
+*   **特性**：原子化、强结构化，包含每一步的 **预期观察 (Expected Observation)**。
+*   **生成方式**：**结晶 (Crystallization)**。
+    *   将解释期的成功经验编译为确定的 Action 序列 + 预期指纹。
+    *   **本质**：这是技能的“编译产物”，即真正的“肌肉记忆”。
 
-## 2. 运行原理：认知流拆解 (Cognitive Decomposition)
-
-当系统需要执行一个复杂 Skill 时，具体的运行原理和步骤如下：
-
-### Step 1: 动态检索与组装 (RAG Agent Manager)
-当应用层下发一个模糊任务（例如：“帮我清理并分析这份销售数据”）。
-`skill.Manager` 利用 LLM 语义匹配，从技能库中“检索”出最匹配的技能：`DataCleaningSkill`。
-
-### Step 2: 上下文注入 (Context Injection)
-引擎并不会把 `DataCleaningSkill` 丢给某个代码执行器，而是**动态构建一个 Sub-Agent（子智能体）**，并将该 Skill 的 `Instructions`（Markdown 步骤指南）和 `References` 完整地无缝注入到这个子智能体的 **System Prompt** 中。
-
-*提示词示例片段：*
-> You are equipped with the DataCleaningSkill. 
-> To execute this skill, you MUST strictly follow these steps:
-> 1. Use the 'read' tool to inspect the CSV header.
-> 2. Use the 'bash' tool to run the python script provided in your scripts directory to drop NaN values.
-> 3. Use the 'calculator' tool to compute the average of the "Sales" column.
-
-### Step 3: ReAct 循环执行 (The ReAct Loop)
-这是真正的拆解发生的地方。大模型（Thinker）读取了被注入的 System Prompt。
-由于大模型具备强大的上下文理解与遵循能力，它会在 ReAct 的多次迭代中，**自觉地、一步一步地**按照 Skill 定义的环节生成 `Thought` 和 `Action`。
-- **Loop 1**: Thinker 意识到需要执行第 1 步，下发 `Action: read`。Actor 执行后 Observer 返回数据。
-- **Loop 2**: Thinker 根据观察结果，进行下一步推理，发现必须执行第 2 步，下发 `Action: bash`。
-- **Loop N**: Thinker 发现指南中的所有步骤均已完成，下发 `Final Answer`。
-
-## 3. 为什么采用这种设计？
-
-这种设计的优势是极其巨大的：
-1. **降维打击的极度解耦**：如果使用代码去定义 DAG（先执行 A 再执行 B，如果失败执行 C），那开发者必须为每一个 Skill 编写复杂的 Go 代码逻辑（参考已被删除的 `Coordinator`）。而现在，**任何人只需要写一篇 Markdown 就能教会 Agent 一个新技能**。
-2. **柔性容错**：在严格的 DAG 中，如果步骤 2 失败（比如文件格式稍有不同），程序直接崩溃。而在 Prompt 驱动的 ReAct 循环中，如果步骤 2 报错，Observer 会把错误信息告诉 Thinker，Thinker 会根据报错自行思考（“哦，文件编码是 GBK，我换个参数重试”），体现出了真正的“智能体”韧性。
-3. **分形结构闭环 (Agent-as-a-Tool)**：一个装载了特定 Skill 的 Sub-Agent，对外可以被直接包装成一个简单的 `tools.Tool` 暴露给 Supervisor Agent。形成无限嵌套的超级大脑。
-
-## 4. 技能蒸馏与经验固化 (Skill Distillation & Muscle Memory)
-
-这是一个极为前沿的设计洞察：**`SKILL.md` 只是新手的“工具说明书”，而高级 Agent 应该拥有“肌肉记忆”。**
-
-如果每次执行任务，Agent 都要把长达几千 Token 的 `SKILL.md` 全文读一遍，再去磕磕绊绊地尝试，不仅耗费大量算力，而且极易因为大模型的注意力偏移而犯错。
-
-在 GoReAct 的进阶设计中，Skill 具备**“经验固化（蒸馏）”**的能力：
-1. **初见 (Reading the Manual)**：Agent 第一次接触某个 Skill，完整阅读 `SKILL.md` 并艰难但成功地完成了任务。
-2. **反思与蒸馏 (Distillation)**：在任务成功后（结合 `Observer` 和 `Terminator` 的确认），Agent 会对刚才的成功路径进行“反思”。它提取出最关键的步骤、参数捷径和避坑指南，生成一段极其精炼的**“成功经验 (Distilled SOP)”**。
-3. **肌肉记忆 (Muscle Memory)**：这段被高度压缩的经验会被写入 Agent 的 `MemoryBank`（作为与该 Skill 绑定的永久记忆，并随着后续调用不断 `Update` 其权重）。
-4. **再次调用 (Mastery)**：当 Agent 下次再被要求使用该 Skill 时，系统优先从 Memory 中召回这段“肌肉记忆”而非原始的说明书。Agent 凭借成功经验，可以极速、精确地完成操作。这极大地降低了 Token 消耗，并使 Agent 表现得越来越“老练”。
-
-## 5. 扩展性设计：Manager 接口
-
-系统为了实现最大的定制灵活性，在设计 `skill.Manager` 时采用了经典的“面向接口编程”策略。
-
-### 5.1 基础接口与默认实现
-`pkg/skill/manager.go` 中定义了一个强大的 `Manager` interface，同时提供了一个基于内存的 `defaultMgr` 作为“部分实现”（即开箱即用的基础实现）。
-这个 `defaultMgr` 实现了技能加载、内存缓存、关键词/语义混合匹配（Hybrid Selection）以及基础的打分演化逻辑。
-
-### 5.2 为什么需要应用层继承与扩展？
-真实的生产级 Agent 平台，技能往往不是存在本地硬盘或内存里的。
-如果你希望将 GoReAct 集成到更庞大的企业系统中，你（应用开发者）应当实现自己的 `Manager`（或采用组合模式包装 `defaultMgr`），以实现以下高级特性：
-1. **分布式存储**：重写 `LoadSkill` 和 `GetSkill`，从 Redis、PostgreSQL 甚至是 AWS S3 桶中动态拉取技能。
-2. **多租户隔离**：重写管理逻辑，根据不同的用户或租户 Token 隔离可见的技能池。
-3. **企业级向量检索 (RAG)**：重写 `SelectSkill`，不再使用简单的本地匹配或单次 LLM 问询，而是对接专业的向量数据库（如 Milvus / Qdrant）进行海量技能的精准 Embedding 匹配。
-
-因此，当前的 `defaultMgr` 只是一个极其坚实的骨架和 MVP，真正的生产级扩展完全交由应用层自主定义！
+### 状态三：执行态 (The Execution - `Adaptive Fast-Path`)
+*   **执行方式**：**自适应快径执行 (Adaptive Execution)**。
+    *   优先加载结晶态，绕过 LLM Think 循环。
+    *   **判定逻辑**：**实际 (Actual) vs. 预期 (Expect)**。
+    *   如果一切如旧（匹配预期），则“短路执行”以极速完成任务。
+    *   如果出现偏差（不及预期），则触发“升级机制”。
 
 ---
 
-## 6. 当前代码库落实状态预警（审计发现）
+## 2. 肌肉记忆的进化：预期修正与自我修复
 
-**注意：当前框架中“优胜劣汰”的机制定义已完成，但尚未与核心执行引擎（Reactor）闭环。**
+肌肉记忆在 GoReAct 中不是僵化的代码，而是一个具备“反馈回路”的进化内核。
 
-通过代码审计发现，`skill.Manager` 内部提供了精妙的统计结构和 `RecordExecution`、`EvolveSkills` 方法。但目前的 `engine.Reactor` 的 `Run()` 方法执行结束后，**尚未自动回调** `RecordExecution` 去登记执行数据，也没有后台协程（Scheduler）去定期触发 `EvolveSkills()`。
+### 2.1 升级机制 (Escalation)
+当执行态发生偏差时，系统立即挂起线性执行，启动调查与修复机制。核心角色分工如下：
+*   **Observer (法官)**：负责**裁定**。它对比实际结果 (Actual) 与预期指纹 (Expectation)。如果发现不匹配，法官敲锤驳回，判定为“不及预期”，并触发升级。
+*   **Thinker (警察/侦探)**：被法官唤醒后接手案件。它负责**推理**与调查误差原因：
+    1.  **环境变迁**：如果业务逻辑正确但结果指纹变了（如 API 更新），推断为 **“预期落后”**。
+    2.  **执行异常**：如果是因为偶发性错误（如网络超时），推断为 **“执行错误”**。
 
-**Phase 4 待办补全项**：
-这需要我们在后续重构中：
-1. 在 `Reactor.Run()` 的终止阶段，如果上下文中挂载了 Skill，自动将 `reactCtx.TotalTokens` 和耗时反馈给 SkillManager。
-2. 实现一个背景轮询任务或触发器，定期执行技能池的“大清洗”。
+### 2.2 经验更新 (Experience Update)
+*   如果是**预期落后**，`Crystallizer` 会利用最新的成功 Trace **修正肌肉记忆中的预期指纹**。
+*   这种“对齐误差”的过程，实现了无需模型微调的“逻辑层进化”，使 Agent 越用越精准。
+
+---
+
+## 3. 编排模式：Master 与 Sub-Agent 的协作
+
+### Master-Agent (总控)
+*   **职责**：负责全局状态管理、任务拆解判定、子任务分发、以及最终结果的聚合。
+*   **决策逻辑**：
+    *   **原子判断**：若步骤匹配现有原子 Tool，直接分发。
+    *   **复合判断**：若步骤复杂模糊，开启独立的 `Sub-ReAct` 循环进行降维推理。
+
+### Sub-Agent (执行者)
+*   **职责**：执行特定的原子任务。
+*   **输出**：返回包含结果数据与执行路径的 `TaskResult`，供 Master 进行最终判定与结晶。
+
+---
+
+## 4. 自适应执行流程图 (Mermaid)
+
+```mermaid
+graph TD
+    Start((用户输入)) --> Intent{意图识别}
+    Intent -- 存在肌肉记忆 --> FastPath[加载结晶态 Graph]
+    Intent -- 无记忆/新技能 --> Interpret[源码态: 建立理想预期]
+
+    subgraph InterpretMode [解释执行期]
+        Interpret --> MasterThink[Master: 任务拆解]
+        MasterThink --> TaskType{原子 vs 复合?}
+        TaskType -- 原子 --> AtomicTool[原子工具]
+        TaskType -- 复合 --> SubAgent[Sub-Agent ReAct]
+        AtomicTool --> ObsCollect[收集 Observation]
+        SubAgent --> ObsCollect
+        ObsCollect --> Success{成功?}
+        Success -- 是 --> Crystallize[结晶器: 提取 Trace]
+    end
+
+    Crystallize --> SaveMemory[(存入 MuscleMemory: Action + Expectation)]
+
+    subgraph FastPathMode [自适应快径]
+        FastPath --> ExecStep[执行原子步骤]
+        ExecStep --> Compare{Actual vs Expect?}
+        Compare -- 匹配 --> NextStep{有下一步?}
+        NextStep -- 是 --> ExecStep
+        NextStep -- 否 --> FinalAnswer((完成任务))
+        Compare -- 不匹配 --> Escalate[升级: 唤醒 Thinker]
+    end
+
+    subgraph SelfHealing [自我修复与进化]
+        Escalate --> FullReAct[Thinker 警察: 分析误差原因]
+        FullReAct -- 预期落后 --> UpdateExpect[修正肌肉记忆预期]
+        FullReAct -- 执行错误 --> Retry[修正路径/重试]
+        UpdateExpect --> SaveMemory
+    end
+```
+
+---
+
+## 5. 开发路线 (Phase 4 重点)
+
+1.  **数据模型重构**：定义 `CrystallizedGraph`，包含 `Expectation` 校验逻辑。
+2.  **实现升级机制**：在 `Reactor` 中增加从线性模式切换到 ReAct 模式的逻辑。
+3.  **完善结晶器**：实现从 Trace 中自动提取并泛化“预期指纹”的算法。
+4.  **Master-Sub 闭环**：实现子任务 Trace 的回传与 Master 层的最终判定逻辑。

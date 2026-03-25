@@ -52,5 +52,18 @@ func (m *MockClient) Chat(ctx context.Context, messages []gochatcore.Message, op
 
 // ChatStream 实现 core.Client 接口
 func (m *MockClient) ChatStream(ctx context.Context, messages []gochatcore.Message, opts ...gochatcore.Option) (*gochatcore.Stream, error) {
-	return nil, fmt.Errorf("ChatStream not implemented in mock")
+	resp, err := m.Chat(ctx, messages, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan gochatcore.StreamEvent, 1)
+	ch <- gochatcore.StreamEvent{
+		Type:    gochatcore.EventContent,
+		Content: resp.Content,
+		Usage:   resp.Usage,
+	}
+	close(ch)
+
+	return gochatcore.NewStream(ch, nil), nil
 }

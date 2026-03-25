@@ -1,5 +1,8 @@
 package core
 
+// JSONSchema is a map representation of a JSON Schema object.
+type JSONSchema map[string]any
+
 // Action represents a specific tool call or plan decided by the Thinker.
 type Action struct {
 	// Name is the registered tool or skill name (e.g., "Calculator", "SearchEngine").

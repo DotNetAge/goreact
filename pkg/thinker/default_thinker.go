@@ -134,6 +134,9 @@ func (t *defaultThinker) resolveMode(input string) (string, string) {
 	if strings.HasPrefix(input, "/specs") {
 		return "specs", prompt.SpecsSystemPrompt
 	}
+	if strings.HasPrefix(input, "/json") {
+		return "json", t.sysTemplate
+	}
 	return "react", t.sysTemplate
 }
 
@@ -236,9 +239,10 @@ func (t *defaultThinker) processOutput(ctx *reactCore.PipelineContext, mode, raw
 		return nil
 	}
 
-	if mode == "specs" {
+	if mode == "json" || mode == "specs" {
 		ctx.IsFinished = true
 		ctx.FinalResult = raw
+		ctx.FinishReason = "DirectOutput"
 		return nil
 	}
 

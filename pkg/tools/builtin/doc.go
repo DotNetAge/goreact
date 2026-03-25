@@ -8,7 +8,7 @@
 // 工具分类：
 // Tier 1 - 文件操作：Read, Write, Edit
 // Tier 2 - 搜索浏览：Glob, Grep, LS
-// Tier 3 - 执行扩展：Bash, Calculator, DateTime
+// Tier 3 - 执行扩展：Bash, Calculator, DateTime, Cron
 //
 // 已移除：
 // - Email → 移至独立插件包 (goreact-plugins/email)
