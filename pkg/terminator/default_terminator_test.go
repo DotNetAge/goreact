@@ -1,4 +1,4 @@
-package terminator_test
+package terminator
 
 import (
 	"context"
@@ -7,125 +7,143 @@ import (
 	"github.com/DotNetAge/goreact/pkg/core"
 )
 
-// mockTerminator is a mock implementation of the Terminator interface
-type mockTerminator struct {
-	shouldStop bool
-	err        error
-}
-
-func (m *mockTerminator) CheckTermination(ctx *core.PipelineContext) (bool, error) {
-	if m.err != nil {
-		return false, m.err
-	}
-
-	if m.shouldStop {
-		ctx.IsFinished = true
-		ctx.FinishReason = "TestStopped"
-		return true, nil
-	}
-
-	// Check max steps
-	if ctx.CurrentStep >= ctx.MaxSteps {
-		ctx.IsFinished = true
-		ctx.FinishReason = "MaxStepsReached"
-		return true, nil
-	}
-
-	return false, nil
-}
-
-func TestMockTerminator_CheckTermination(t *testing.T) {
-	t.Run("continue loop", func(t *testing.T) {
-		terminator := &mockTerminator{
-			shouldStop: false,
-		}
-
+func TestDefaultTerminator_CheckTermination(t *testing.T) {
+	t.Run("Rule 1 - already finished", func(t *testing.T) {
+		term := Default()
 		ctx := core.NewPipelineContext(context.Background(), "test", "input")
-		ctx.CurrentStep = 2
-		ctx.MaxSteps = 10
+		ctx.IsFinished = true
 
-		stop, err := terminator.CheckTermination(ctx)
+		stop, err := term.CheckTermination(ctx)
 		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if stop {
-			t.Error("Expected to continue loop, got stop=true")
-		}
-		if ctx.IsFinished {
-			t.Error("Expected context not to be finished")
-		}
-	})
-
-	t.Run("stop by flag", func(t *testing.T) {
-		terminator := &mockTerminator{
-			shouldStop: true,
-		}
-
-		ctx := core.NewPipelineContext(context.Background(), "test", "input")
-
-		stop, err := terminator.CheckTermination(ctx)
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
+			t.Errorf("Expected no error, got %v", err)
 		}
 		if !stop {
-			t.Error("Expected stop=true, got false")
-		}
-		if !ctx.IsFinished {
-			t.Error("Expected context to be finished")
-		}
-		if ctx.FinishReason != "TestStopped" {
-			t.Errorf("Expected FinishReason 'TestStopped', got '%s'", ctx.FinishReason)
+			t.Error("Expected stop=true when already finished")
 		}
 	})
 
-	t.Run("max steps reached", func(t *testing.T) {
-		terminator := &mockTerminator{
-			shouldStop: false,
-		}
-
+	t.Run("Rule 2 - max steps exceeded", func(t *testing.T) {
+		term := Default()
 		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
 		ctx.CurrentStep = 10
-		ctx.MaxSteps = 10
 
-		stop, err := terminator.CheckTermination(ctx)
+		stop, err := term.CheckTermination(ctx)
 		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
+			t.Errorf("Expected no error, got %v", err)
 		}
 		if !stop {
-			t.Error("Expected stop=true due to max steps")
+			t.Error("Expected stop=true when max steps exceeded")
+		}
+		if ctx.FinishReason != "MaxStepsExceeded" {
+			t.Errorf("Expected FinishReason 'MaxStepsExceeded', got %q", ctx.FinishReason)
 		}
 		if !ctx.IsFinished {
-			t.Error("Expected context to be finished")
-		}
-		if ctx.FinishReason != "MaxStepsReached" {
-			t.Errorf("Expected FinishReason 'MaxStepsReached', got '%s'", ctx.FinishReason)
+			t.Error("Expected IsFinished to be set")
 		}
 	})
 
-	t.Run("error handling", func(t *testing.T) {
-		terminator := &mockTerminator{
-			err: assertError("terminator failed"),
-		}
+	t.Run("Rule 2 - beyond max steps", func(t *testing.T) {
+		term := Default()
 		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 5
+		ctx.CurrentStep = 6
 
-		stop, err := terminator.CheckTermination(ctx)
-		if err == nil {
-			t.Fatal("Expected error, got nil")
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if !stop {
+			t.Error("Expected stop=true when beyond max steps")
+		}
+	})
+
+	t.Run("Rule 3 - no stagnation (less than 3 traces)", func(t *testing.T) {
+		term := Default()
+		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
+		ctx.CurrentStep = 1
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "tool1"}})
+
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
 		}
 		if stop {
-			t.Error("Expected stop=false on error")
+			t.Error("Expected stop=false when no stagnation detected")
+		}
+	})
+
+	t.Run("Rule 3 - no stagnation (different actions)", func(t *testing.T) {
+		term := Default()
+		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
+		ctx.CurrentStep = 3
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "tool1"}})
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "tool2"}})
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "tool3"}})
+
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if stop {
+			t.Error("Expected stop=false when actions differ")
+		}
+	})
+
+	t.Run("Rule 3 - stagnation detected (same action 3 times)", func(t *testing.T) {
+		term := Default()
+		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
+		ctx.CurrentStep = 3
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "same_tool"}})
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "same_tool"}})
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "same_tool"}})
+
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if stop {
+			t.Error("Expected stop=false (stagnation is warning only)")
+		}
+	})
+
+	t.Run("nil actions are handled", func(t *testing.T) {
+		term := Default()
+		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
+		ctx.CurrentStep = 3
+		ctx.AppendTrace(&core.Trace{})
+		ctx.AppendTrace(&core.Trace{})
+		ctx.AppendTrace(&core.Trace{Action: &core.Action{Name: "tool"}})
+
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if stop {
+			t.Error("Expected stop=false when some actions are nil")
+		}
+	})
+
+	t.Run("continues when not at max steps", func(t *testing.T) {
+		term := Default()
+		ctx := core.NewPipelineContext(context.Background(), "test", "input")
+		ctx.MaxSteps = 10
+		ctx.CurrentStep = 5
+
+		stop, err := term.CheckTermination(ctx)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if stop {
+			t.Error("Expected stop=false when below max steps")
 		}
 	})
 }
 
-func assertError(msg string) error {
-	return &testError{msg: msg}
-}
-
-type testError struct {
-	msg string
-}
-
-func (e *testError) Error() string {
-	return e.msg
+func TestTerminator_Interface(t *testing.T) {
+	var _ Terminator = Default()
 }
