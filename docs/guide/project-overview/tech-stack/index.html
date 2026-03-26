@@ -1,0 +1,2011 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="GoReact" name="description"/>
+<meta content="goRAG Team" name="author"/>
+<link href="../architecture-overview/" rel="prev"/>
+<link href="../../core-types-and-interfaces/core-types-and-interfaces/" rel="next"/>
+<link href="../../../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.6" name="generator"/>
+<title>技术栈 - GoReact 文档</title>
+<link href="../../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="purple" data-md-color-primary="purple" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#_1">
+          跳转至
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header" data-md-component="header">
+<nav aria-label="页眉" class="md-header__inner md-grid">
+<a aria-label="GoReact 文档" class="md-header__button md-logo" data-md-component="logo" href="../../.." title="GoReact 文档">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            GoReact 文档
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              技术栈
+            
+          </span>
+</div>
+</div>
+</div>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="搜索" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="搜索" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="查找" class="md-search__options">
+<button aria-label="清空当前内容" class="md-search__icon md-icon" tabindex="-1" title="清空当前内容" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+<div class="md-search__suggest" data-md-component="search-suggest"></div>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/DotNetAge/goreact" title="前往仓库">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<nav aria-label="标签" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../project-overview/">
+          
+  
+  
+  GoReact
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../development-guide/development-guide/">
+          
+  
+  
+  开发指南
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../examples-and-integration/examples-and-integration/">
+          
+  
+  
+  示例和集成
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api-reference/api-reference/">
+          
+  
+  
+  API 参考
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../concepts/01-introduction/">
+          
+  
+  
+  ReAct
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="导航栏" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="GoReact 文档" class="md-nav__button md-logo" data-md-component="logo" href="../../.." title="GoReact 文档">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+    GoReact 文档
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/DotNetAge/goreact" title="前往仓库">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_1" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    GoReact
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_1_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    GoReact
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../project-overview/">
+<span class="md-ellipsis">
+    
+  
+    项目概述
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../quick-start/">
+<span class="md-ellipsis">
+    
+  
+    快速开始 (Quick Start)
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../framework-introduction/">
+<span class="md-ellipsis">
+    
+  
+    框架介绍
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../core-features/">
+<span class="md-ellipsis">
+    
+  
+    核心特性
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../architecture-overview/">
+<span class="md-ellipsis">
+    
+  
+    架构概览
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    技术栈
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    技术栈
+  
+
+    
+  </span>
+</a>
+<nav aria-label="目录" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_2">
+<span class="md-ellipsis">
+      
+        简介
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_3">
+<span class="md-ellipsis">
+      
+        项目结构与模块化设计
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_4">
+<span class="md-ellipsis">
+      
+        核心依赖与版本信息
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_5">
+<span class="md-ellipsis">
+      
+        日志系统与可观测性
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_6">
+<span class="md-ellipsis">
+      
+        模型与客户端集成
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_7">
+<span class="md-ellipsis">
+      
+        开发工具链与测试框架
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_8">
+<span class="md-ellipsis">
+      
+        依赖管理与版本兼容性
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_9">
+<span class="md-ellipsis">
+      
+        架构与数据流概览
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_10">
+<span class="md-ellipsis">
+      
+        结论
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_7" id="__nav_1_7_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    核心类型和接口
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_7_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    核心类型和接口
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-types-and-interfaces/core-types-and-interfaces/">
+<span class="md-ellipsis">
+    
+  
+    核心类型和接口
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-types-and-interfaces/core-data-structures/">
+<span class="md-ellipsis">
+    
+  
+    核心数据结构
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-types-and-interfaces/core-interface-definitions/">
+<span class="md-ellipsis">
+    
+  
+    核心接口定义
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-types-and-interfaces/execution-context/">
+<span class="md-ellipsis">
+    
+  
+    执行上下文
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-types-and-interfaces/observability-types/">
+<span class="md-ellipsis">
+    
+  
+    可观测性类型
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_8" id="__nav_1_8_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    核心引擎
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_8_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    核心引擎
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/core-engine/">
+<span class="md-ellipsis">
+    
+  
+    核心引擎
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/reactor-engine/">
+<span class="md-ellipsis">
+    
+  
+    Reactor 引擎
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/thinker-step/">
+<span class="md-ellipsis">
+    
+  
+    思考器步骤
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/executor-step/">
+<span class="md-ellipsis">
+    
+  
+    执行器步骤
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/observer-step/">
+<span class="md-ellipsis">
+    
+  
+    观察器步骤
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../core-engine/termination-check-step/">
+<span class="md-ellipsis">
+    
+  
+    终止检查步骤
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_9" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_9" id="__nav_1_9_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    架构设计
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_9_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    架构设计
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/architecture-design/">
+<span class="md-ellipsis">
+    
+  
+    架构设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/architecture-overview/">
+<span class="md-ellipsis">
+    
+  
+    架构概览
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/dataflow-design/">
+<span class="md-ellipsis">
+    
+  
+    数据流设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/pattern-system/">
+<span class="md-ellipsis">
+    
+  
+    模式系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/pipeline-pattern-implementation/">
+<span class="md-ellipsis">
+    
+  
+    管道模式实现
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/core-component-design/core-component-design/">
+<span class="md-ellipsis">
+    
+  
+    核心组件设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/core-component-design/thinker-component-design/">
+<span class="md-ellipsis">
+    
+  
+    思考器组件设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/core-component-design/executor-component-design/">
+<span class="md-ellipsis">
+    
+  
+    执行器组件设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/core-component-design/observer-component-design/">
+<span class="md-ellipsis">
+    
+  
+    观察器组件设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture-design/core-component-design/terminator-component-design/">
+<span class="md-ellipsis">
+    
+  
+    终止器组件设计
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_10" id="__nav_1_10_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    思考器系统
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_10_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_10">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    思考器系统
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../thinker-system/thinker-system/">
+<span class="md-ellipsis">
+    
+  
+    思考器系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../thinker-system/thinker-interface-and-implementation/">
+<span class="md-ellipsis">
+    
+  
+    Thinker 接口和实现
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../thinker-system/prompt-protocol-system/">
+<span class="md-ellipsis">
+    
+  
+    提示协议系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../thinker-system/pattern-parsing-system/">
+<span class="md-ellipsis">
+    
+  
+    模式解析系统
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_11" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_11" id="__nav_1_11_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    执行器系统
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_11_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_11">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    执行器系统
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/executor-system/">
+<span class="md-ellipsis">
+    
+  
+    执行器系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/actor-interface-and-implementation/">
+<span class="md-ellipsis">
+    
+  
+    Actor 接口和实现
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/security-mechanism/">
+<span class="md-ellipsis">
+    
+  
+    安全机制
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/tool-system/">
+<span class="md-ellipsis">
+    
+  
+    工具系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/tool-manager/">
+<span class="md-ellipsis">
+    
+  
+    工具管理器
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/tool-interface-design/">
+<span class="md-ellipsis">
+    
+  
+    工具接口设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/mcp-provider-integration/">
+<span class="md-ellipsis">
+    
+  
+    MCP提供商集成
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/built-in-tools/built-in-tools/">
+<span class="md-ellipsis">
+    
+  
+    内置工具集
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/built-in-tools/file-operation-tools/">
+<span class="md-ellipsis">
+    
+  
+    文件操作工具
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/built-in-tools/search-browse-tools/">
+<span class="md-ellipsis">
+    
+  
+    搜索浏览工具
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/built-in-tools/utility-tools/">
+<span class="md-ellipsis">
+    
+  
+    实用辅助工具
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../executor-system/tool-system/built-in-tools/execution-extension-tools/">
+<span class="md-ellipsis">
+    
+  
+    执行扩展工具
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observer-system/">
+<span class="md-ellipsis">
+    
+  
+    观察器系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../terminator-system/">
+<span class="md-ellipsis">
+    
+  
+    终止器系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_14" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_14" id="__nav_1_14_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    工具系统
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_14_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_14">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    工具系统
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tool-system/tool-system/">
+<span class="md-ellipsis">
+    
+  
+    工具系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tool-system/tool-interface-definition/">
+<span class="md-ellipsis">
+    
+  
+    工具接口定义
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tool-system/built-in-tool-library/">
+<span class="md-ellipsis">
+    
+  
+    内置工具库
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../tool-system/mcp-provider-integration/">
+<span class="md-ellipsis">
+    
+  
+    MCP 提供商集成
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_15" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_15" id="__nav_1_15_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    记忆管理系统
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_15_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_15">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    记忆管理系统
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/memory-management-system/">
+<span class="md-ellipsis">
+    
+  
+    记忆管理系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/memorybank-interface-design/">
+<span class="md-ellipsis">
+    
+  
+    MemoryBank 接口设计
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/working-memory-system/">
+<span class="md-ellipsis">
+    
+  
+    工作记忆系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/semantic-memory-system/">
+<span class="md-ellipsis">
+    
+  
+    语义记忆系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/muscle-memory-system/">
+<span class="md-ellipsis">
+    
+  
+    肌肉记忆系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../memory-management-system/memory-persistence-and-recovery/">
+<span class="md-ellipsis">
+    
+  
+    记忆持久化和恢复
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../compilation-action/">
+<span class="md-ellipsis">
+    
+  
+    编译动作
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_16" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_16" id="__nav_1_16_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    技能系统
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_16_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_16">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    技能系统
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../skill-system/skill-system/">
+<span class="md-ellipsis">
+    
+  
+    技能系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../skill-system/skill-specification/">
+<span class="md-ellipsis">
+    
+  
+    技能规范
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../skill-system/skill-crystallizer/">
+<span class="md-ellipsis">
+    
+  
+    技能编译器
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../skill-system/skill-manager/">
+<span class="md-ellipsis">
+    
+  
+    技能管理器
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_17" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_17" id="__nav_1_17_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    日志和指标
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_17_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_17">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    日志和指标
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../logging-and-metrics/logging-and-metrics/">
+<span class="md-ellipsis">
+    
+  
+    日志和指标
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../logging-and-metrics/logging-system/">
+<span class="md-ellipsis">
+    
+  
+    日志系统
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../logging-and-metrics/metrics-system/">
+<span class="md-ellipsis">
+    
+  
+    指标系统
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_1_18" type="checkbox"/>
+<label class="md-nav__link" for="__nav_1_18" id="__nav_1_18_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Agent编排
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_1_18_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_1_18">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Agent编排
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../master-slave-pattern/">
+<span class="md-ellipsis">
+    
+  
+    主从模式
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../evolution-pipeline/">
+<span class="md-ellipsis">
+    
+  
+    进化管道
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../refactor-plan-phase4/">
+<span class="md-ellipsis">
+    
+  
+    GoReAct 重构与功能补全计划（Phase 4）文档
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    开发指南
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    开发指南
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development-guide/development-guide/">
+<span class="md-ellipsis">
+    
+  
+    开发指南
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development-guide/custom-tool-development/">
+<span class="md-ellipsis">
+    
+  
+    自定义工具开发
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development-guide/custom-thinker-development/">
+<span class="md-ellipsis">
+    
+  
+    自定义思考器开发
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development-guide/agent-builder-and-manager/">
+<span class="md-ellipsis">
+    
+  
+    代理构建器和管理器
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development-guide/mock-client-and-testing/">
+<span class="md-ellipsis">
+    
+  
+    Mock 客户端和测试
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    示例和集成
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    示例和集成
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../examples-and-integration/examples-and-integration/">
+<span class="md-ellipsis">
+    
+  
+    示例和集成
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../examples-and-integration/basic-examples/">
+<span class="md-ellipsis">
+    
+  
+    基础示例
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../examples-and-integration/advanced-examples/">
+<span class="md-ellipsis">
+    
+  
+    高级示例
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API 参考
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/api-reference/">
+<span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/reactor-api/">
+<span class="md-ellipsis">
+    
+  
+    Reactor API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/actor-api/">
+<span class="md-ellipsis">
+    
+  
+    Actor API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/thinker-api/">
+<span class="md-ellipsis">
+    
+  
+    Thinker API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/tool-api/">
+<span class="md-ellipsis">
+    
+  
+    工具 API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/memory-api/">
+<span class="md-ellipsis">
+    
+  
+    Memory API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/skill-api/">
+<span class="md-ellipsis">
+    
+  
+    Skill API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/config-api/">
+<span class="md-ellipsis">
+    
+  
+    配置 API
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    ReAct
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    ReAct
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/01-introduction/">
+<span class="md-ellipsis">
+    
+  
+    导论：什么是 ReAct？
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/02-background/">
+<span class="md-ellipsis">
+    
+  
+    技术演进：从推理到行动
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/03-mechanism/">
+<span class="md-ellipsis">
+    
+  
+    核心机制：交织推理与行动
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/04-paradigms/">
+<span class="md-ellipsis">
+    
+  
+    设计范式：ReAct 的提示工程与架构
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/05-skills/">
+<span class="md-ellipsis">
+    
+  
+    技能 (Skills)：Agent 的领域专家能力封装
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/06-evolution/">
+<span class="md-ellipsis">
+    
+  
+    范式演进：从 ReAct 到 Reflexion 与 Self-Reflection
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/07-multi-agent/">
+<span class="md-ellipsis">
+    
+  
+    多 Agent 编排：理论、模式与前沿应用
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/08-frontiers/">
+<span class="md-ellipsis">
+    
+  
+    前沿研究：ReAct 在 RAG 与工具调用中的应用
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../concepts/09-summary/">
+<span class="md-ellipsis">
+    
+  
+    总结与未来展望
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="目录" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_2">
+<span class="md-ellipsis">
+      
+        简介
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_3">
+<span class="md-ellipsis">
+      
+        项目结构与模块化设计
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_4">
+<span class="md-ellipsis">
+      
+        核心依赖与版本信息
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_5">
+<span class="md-ellipsis">
+      
+        日志系统与可观测性
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_6">
+<span class="md-ellipsis">
+      
+        模型与客户端集成
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_7">
+<span class="md-ellipsis">
+      
+        开发工具链与测试框架
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_8">
+<span class="md-ellipsis">
+      
+        依赖管理与版本兼容性
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_9">
+<span class="md-ellipsis">
+      
+        架构与数据流概览
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#_10">
+<span class="md-ellipsis">
+      
+        结论
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="_1">技术栈<a class="headerlink" href="#_1" title="Permanent link">¶</a></h1>
+<h2 id="_2">简介<a class="headerlink" href="#_2" title="Permanent link">¶</a></h2>
+<p>本技术栈文档面向 GoReAct 框架的使用者与贡献者，系统梳理框架所采用的 Go 语言版本要求、核心依赖库及其版本信息，并解释选择这些技术的原因与优势。同时覆盖开发工具链、构建系统、测试框架、依赖管理策略、模块化设计与版本兼容性要点，帮助读者快速理解框架的技术基础与生态。</p>
+<h2 id="_3">项目结构与模块化设计<a class="headerlink" href="#_3" title="Permanent link">¶</a></h2>
+<ul>
+<li>框架采用按功能域划分的模块化组织方式，核心模块包括 engine（引擎）、thinker（思考器）、actor（行动者）、observer（观察者）、terminator（终止器）、prompt（提示词）、memory（记忆）、metrics（指标）、log（日志）、tools（工具）、model（模型管理）等。</li>
+<li>模块间通过清晰的接口耦合，例如 engine.Reactor 通过函数选项注入 thinker、actor、observer、terminator 等组件；core.PipelineContext 作为跨模块的状态载体，承载会话、追踪、令牌用量、日志与指标等。</li>
+<li>该设计保证了可插拔性与可扩展性，便于替换或增强特定认知组件。</li>
+</ul>
+<h2 id="_4">核心依赖与版本信息<a class="headerlink" href="#_4" title="Permanent link">¶</a></h2>
+<ul>
+<li>Go 语言版本要求：1.25.1（模块声明明确）</li>
+<li>主要外部依赖：</li>
+<li>github.com/DotNetAge/gochat：用于通用聊天与管道执行（框架核心引擎依赖）</li>
+<li>go.uber.org/zap：高性能结构化日志库（框架日志适配层）</li>
+<li>gopkg.in/yaml.v3：YAML 序列化与反序列化（配置与协议）</li>
+<li>emersion/go-imap、emersion/go-message：IMAP/邮件相关（间接依赖）</li>
+<li>go.uber.org/multierr：多错误聚合（间接依赖）</li>
+<li>golang.org/x/text：文本处理（间接依赖）</li>
+</ul>
+<p>选择理由与优势
+- gochat：提供统一的管道执行与钩子机制，支撑框架“管线即驱动”的核心理念，便于实现 If/Loop/Sequence 等控制流。
+- zap：性能优异、结构化强、支持生产与开发两种配置，满足可观测性与调试需求。
+- yaml.v3：稳定、高效、广泛用于配置文件与协议交互，利于跨平台与人类可读性。
+- 间接依赖：作为稳定生态的一部分，提供网络协议与文本处理能力，降低重复造轮子成本。</p>
+<h2 id="_5">日志系统与可观测性<a class="headerlink" href="#_5" title="Permanent link">¶</a></h2>
+<ul>
+<li>日志接口抽象：定义统一 Logger 接口与 Field 辅助函数，屏蔽具体实现差异。</li>
+<li>zap 适配器：提供生产与开发两种默认配置，支持时间编码、字段转换与子 Logger 构建。</li>
+<li>可观测性集成：engine.Reactor 在 PipelineContext 中注入 Logger 与 Metrics，贯穿一次会话的全生命周期。</li>
+</ul>
+<pre class="mermaid"><code>    classDiagram
+    class Logger {
+    +Debug(msg, fields)
+    +Info(msg, fields)
+    +Warn(msg, fields)
+    +Error(msg, fields)
+    +With(fields) Logger
+    }
+    class ZapLogger {
+    -logger
+    +NewDefaultZapLogger()
+    +NewDevelopmentZapLogger()
+    +Debug(msg, fields)
+    +Info(msg, fields)
+    +Warn(msg, fields)
+    +Error(msg, fields)
+    +With(fields) Logger
+    }
+    Logger &lt;|.. ZapLogger : "实现"
+</code></pre>
+<h2 id="_6">模型与客户端集成<a class="headerlink" href="#_6" title="Permanent link">¶</a></h2>
+<ul>
+<li>模型管理器：集中注册、校验与创建不同提供商（OpenAI、Anthropic、Ollama）的 LLM 客户端，支持温度、超时、BaseURL 等参数校验。</li>
+<li>客户端创建：根据模型配置动态创建对应客户端实例，统一接入框架的执行管线。</li>
+</ul>
+<pre class="mermaid"><code>    flowchart TD
+    Start(["开始"]) --&gt; Validate["校验模型配置<br/>名称/提供商/ID/温度/超时/BaseURL/APIKey"]
+    Validate --&gt; Valid{"配置有效?"}
+    Valid --&gt; |否| Error["返回错误"]
+    Valid --&gt; |是| Provider{"提供商类型"}
+    Provider --&gt; |OpenAI| CreateOpenAI["创建 OpenAI 客户端"]
+    Provider --&gt; |Anthropic| CreateAnthropic["创建 Anthropic 客户端"]
+    Provider --&gt; |Ollama| CreateOllama["创建 Ollama 客户端"]
+    CreateOpenAI --&gt; Done(["完成"])
+    CreateAnthropic --&gt; Done
+    CreateOllama --&gt; Done
+    Error --&gt; End(["结束"])
+    Done --&gt; End
+</code></pre>
+<h2 id="_7">开发工具链与测试框架<a class="headerlink" href="#_7" title="Permanent link">¶</a></h2>
+<ul>
+<li>构建系统：基于 Go Modules，Go 版本要求 1.25.1，使用标准 go 命令进行构建与运行。</li>
+<li>测试框架：使用 Go 内置 testing 包，配合示例与单元测试验证核心组件行为（thinker、actor、engine）。</li>
+<li>示例与集成测试：examples 目录提供 Ollama 与云端模型的端到端示例，验证框架在真实 LLM 客户端下的运行效果。</li>
+</ul>
+<h2 id="_8">依赖管理与版本兼容性<a class="headerlink" href="#_8" title="Permanent link">¶</a></h2>
+<ul>
+<li>依赖声明：go.mod 明确列出直接依赖与间接依赖，确保可复现构建。</li>
+<li>版本策略：优先采用稳定版本，结合 go.mod 的 require/indirect 分组，减少不必要的升级风险。</li>
+<li>兼容性建议：</li>
+<li>保持 Go 版本不低于 1.25.1，以获得最新语言特性与性能优化。</li>
+<li>对第三方库升级需进行回归测试，尤其是 gochat、zap、yaml.v3 等核心依赖。</li>
+<li>对 IMAP/邮件相关功能的使用应关注间接依赖的变更，避免破坏性更新。</li>
+</ul>
+<h2 id="_9">架构与数据流概览<a class="headerlink" href="#_9" title="Permanent link">¶</a></h2>
+<ul>
+<li>核心循环：Reactor 将 Thinker、Actor、Observer、Terminator 四个组件组装为统一的执行管线，每轮循环输出 Trace（思维-动作-观察），直至终止条件达成。</li>
+<li>状态载体：PipelineContext 携带会话、追踪、令牌用量、日志、指标与附件等信息，贯穿整个执行周期。</li>
+<li>可观测性：默认注入 Logger 与 Metrics，支持延迟、错误、Token 使用与资源使用统计。</li>
+</ul>
+<pre class="mermaid"><code>    sequenceDiagram
+    participant U as "用户"
+    participant R as "Reactor"
+    participant P as "Pipeline"
+    participant T as "Thinker"
+    participant A as "Actor"
+    participant O as "Observer"
+    participant M as "Terminator"
+    U-&gt;&gt;R : "Run(sessionID, input)"
+    R-&gt;&gt;P : "构建并执行循环"
+    loop "直到终止"
+    P-&gt;&gt;T : "思考(生成思维与动作)"
+    T--&gt;&gt;P : "写入Trace"
+    P-&gt;&gt;A : "执行动作"
+    A--&gt;&gt;P : "写入原始输出"
+    P-&gt;&gt;O : "观察并清洗结果"
+    O--&gt;&gt;P : "附加Observation"
+    P-&gt;&gt;M : "检查终止条件"
+    M--&gt;&gt;P : "是否结束?"
+    end
+    P--&gt;&gt;R : "返回最终上下文"
+    R--&gt;&gt;U : "返回结果与统计"
+</code></pre>
+<h2 id="_10">结论<a class="headerlink" href="#_10" title="Permanent link">¶</a></h2>
+<p>GoReAct 以 gochat 为核心引擎，结合 zap 与 yaml.v3 构建高性能、可观测且易扩展的 ReAct 框架。模块化设计使认知组件高度解耦，配合完善的测试与示例，便于在本地与云端模型上快速落地。遵循 go.mod 的依赖约束与版本策略，有助于在长期演进中保持稳定性与兼容性。</p>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      Copyright © 2024 Raya Info
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "search.suggest", "search.highlight", "content.code.highlight", "content.code.copy", "content.code.annotate"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+<script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+<script src="../../../javascripts/mathjax.js"></script>
+<script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>
