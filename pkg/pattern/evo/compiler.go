@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 const CompilationPrompt = `You are a Code Compiler for AI Agents. 

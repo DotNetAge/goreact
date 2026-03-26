@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // mockActor is a mock implementation of the Actor interface

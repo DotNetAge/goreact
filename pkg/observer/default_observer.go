@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // defaultObserver represents the senses of the system.

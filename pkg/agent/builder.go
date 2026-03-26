@@ -3,15 +3,15 @@ package agent
 import (
 	"fmt"
 
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/model"
-	"github.com/ray/goreact/pkg/observer"
-	"github.com/ray/goreact/pkg/skill"
-	"github.com/ray/goreact/pkg/terminator"
-	"github.com/ray/goreact/pkg/thinker"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/engine"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/model"
+	"github.com/DotNetAge/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/skill"
+	"github.com/DotNetAge/goreact/pkg/terminator"
+	"github.com/DotNetAge/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // Builder Agent 装配工厂

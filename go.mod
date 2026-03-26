@@ -1,4 +1,4 @@
-module github.com/ray/goreact
+module github.com/DotNetAge/goreact
 
 go 1.25.1
 

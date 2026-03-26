@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/mock"
-	"github.com/ray/goreact/pkg/pattern/mastersub"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/mock"
+	"github.com/DotNetAge/goreact/pkg/pattern/mastersub"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 func TestMasterSubOrchestration(t *testing.T) {

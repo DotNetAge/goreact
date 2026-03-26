@@ -1,7 +1,7 @@
 package evo
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // CompiledAction 代表技能的“编译态”

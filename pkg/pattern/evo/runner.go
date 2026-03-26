@@ -9,11 +9,11 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/observer"
-	"github.com/ray/goreact/pkg/prompt/builder"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/prompt/builder"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 // AdaptiveRunner 负责执行编译态图形，并在偏差时触发升级

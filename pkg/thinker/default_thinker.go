@@ -6,15 +6,15 @@ import (
 	"time"
 
 	"github.com/DotNetAge/gochat/pkg/core"
-	reactCore "github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/prompt/builder"
-	"github.com/ray/goreact/pkg/prompt/compression"
-	"github.com/ray/goreact/pkg/prompt/counter"
-	"github.com/ray/goreact/pkg/prompt/formatter"
-	"github.com/ray/goreact/pkg/thinker/parser"
-	"github.com/ray/goreact/pkg/thinker/prompt"
-	"github.com/ray/goreact/pkg/tools"
+	reactCore "github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/prompt/builder"
+	"github.com/DotNetAge/goreact/pkg/prompt/compression"
+	"github.com/DotNetAge/goreact/pkg/prompt/counter"
+	"github.com/DotNetAge/goreact/pkg/prompt/formatter"
+	"github.com/DotNetAge/goreact/pkg/thinker/parser"
+	"github.com/DotNetAge/goreact/pkg/thinker/prompt"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // Default Thinker Implementation.

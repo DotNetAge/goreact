@@ -64,24 +64,20 @@ response, err := myAgent.ChatWithFiles(context.Background(), "分析这个报表
 
 ---
 
-## 4. 万物皆工具 (Agent-as-a-Tool) 的最终实现
+## 4. 模式驱动编排 (Pattern-Driven Orchestration)
 
-由于 Agent 暴露了极其简洁的 `Chat(task string) string` 接口，它天生就可以直接实现 `tools.Tool` 接口！
+GoReAct 弃用了不切实际的“智能体即工具 (AAAT)”嵌套模式，转而支持更稳健的编排模式：
 
-这就完美闭合了 GoReAct 的终极愿景：
-1. **Supervisor Agent** 接到宏大任务。
-2. Supervisor 发现自己拥有一个名为 `CodeReviewer` 的 Tool。
-3. 实际上，这个 Tool 就是另一个被装配好的 **Sub-Agent**（自带其独立的 Reactor 闭环和小模型）。
-4. Supervisor 像调用计算器一样调用了子 Agent，而子 Agent 在底层启动自己的思考与执行循环。
-
-这种设计不仅实现了极度的解耦，也将多智能体协作的复杂性隐藏在了统一的 Tool 抽象之下。
+- **Master-Sub (主从编排)**: `Agent` 内部可作为 Master 调用其他子组件或协同者，通过显式的任务分发保证逻辑可控。
+- **Evolution (动作编译)**: `Agent` 会根据历史成功的推理轨迹生成 `CompiledAction`（肌肉记忆），通过 `EvolutionPipeline` 实现极速执行。
+- **语义化召回**: 通过 GoRAG 对接，Agent 在执行过程中能够根据当前上下文语义化地召回最匹配的工具与技能，而非硬编码。
 
 ---
 
-## 5. 当前代码库落实状态预警
+## 5. 当前代码库落实状态 (Phase 4 已闭环)
 
-**请注意：当前的源码库正在向此设计范式重构，但尚未完全闭环。**
+**Phase 4 已经完成了向此设计范式的核心重构：**
 
-1. 遗留的 `Coordinator` 已被证实是错误的设计并已从代码库中删除。
-2. **核心缺失环节（Phase 4 待办）**：目前的 `agent.Manager` 仍然只返回 `*agent.Agent` 的纯数据结构，尚未实现**“自动向 Agent 内部注入 Reactor 并暴露 `.Chat()`/`.Execute()` 方法”**的装配工厂逻辑。
-3. 接下来需要实现 `AgentBuilder` 或改造 `Agent` 结构体，让其真正持有 `engine.Reactor`，彻底取代目前裸露在 `examples` 中的手动装配代码。
+1. **AgentBuilder**：已实现完整的装配工厂逻辑，能够自动向 `Agent` 内部注入 `Reactor`、`MemoryBank` 与 `SkillManager`。
+2. **Evolution Pipeline**：已实现完整的动作编译与自适应执行路径，支持 `CompiledAction` 的存储与检索。
+3. **三态转化**：建立了从源码态 (Markdown Skill) 到编译态 (CompiledAction) 再到执行态 (Fast-Path) 的完整生命周期管理。

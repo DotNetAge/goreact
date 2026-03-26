@@ -1,7 +1,7 @@
 package terminator
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // defaultTerminator ensures the ReAct loop does not run forever.

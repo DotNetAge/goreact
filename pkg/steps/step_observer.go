@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/observer"
 )
 
 // Ensure observerStep implements gochat's pipeline.Step.

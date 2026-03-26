@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 var (

@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/observer"
-	"github.com/ray/goreact/pkg/pattern/mastersub"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/pattern/mastersub"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 // EvolutionPipeline 提供了一站式的自适应编排能力

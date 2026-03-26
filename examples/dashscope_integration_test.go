@@ -8,14 +8,14 @@ import (
 
 	"github.com/DotNetAge/gochat/pkg/client/base"
 	"github.com/DotNetAge/gochat/pkg/client/openai"
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/observer"
-	"github.com/ray/goreact/pkg/terminator"
-	"github.com/ray/goreact/pkg/thinker"
-	"github.com/ray/goreact/pkg/tools"
-	"github.com/ray/goreact/pkg/tools/builtin"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/engine"
+	"github.com/DotNetAge/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/terminator"
+	"github.com/DotNetAge/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools/builtin"
 )
 
 // TestDashScopeIntegration 执行 DashScope (阿里云) Qwen3.5-Flash 的完整集成测试

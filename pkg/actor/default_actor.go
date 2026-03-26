@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // defaultActor represents the hands of the system.

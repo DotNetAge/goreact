@@ -52,8 +52,8 @@ type Provider interface {
 
 ```go
 import (
-    "github.com/ray/goreact/pkg/tool/provider"
-    "github.com/ray/goreact/pkg/tool/provider/mcp"
+    "github.com/DotNetAge/goreact/pkg/tool/provider"
+    "github.com/DotNetAge/goreact/pkg/tool/provider/mcp"
 )
 
 // 创建 Provider Registry

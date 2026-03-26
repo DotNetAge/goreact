@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/engine"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/engine"
 )
 
 // DefaultSubReactor 基于 engine.Reactor 实现子代理

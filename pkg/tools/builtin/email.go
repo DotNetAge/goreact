@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools"
 	"io"
 	"net/smtp"
 	"strings"

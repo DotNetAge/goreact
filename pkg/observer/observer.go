@@ -1,7 +1,7 @@
 package observer
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Observer represents the "Senses" of the ReAct engine.

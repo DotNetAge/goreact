@@ -135,8 +135,8 @@ go run cron_example.go
 
 ```go
 import (
-    "github.com/ray/goreact/pkg/tools"
-    "github.com/ray/goreact/pkg/tools/builtin"
+    "github.com/DotNetAge/goreact/pkg/tools"
+    "github.com/DotNetAge/goreact/pkg/tools/builtin"
 )
 
 toolMgr := tools.NewSimpleManager()

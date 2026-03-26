@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	gochatcore "github.com/DotNetAge/gochat/pkg/core"
-	"github.com/ray/goreact/pkg/model"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/model"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // SelectionMethod 表示 Agent 选择的方式

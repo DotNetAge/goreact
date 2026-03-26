@@ -119,8 +119,8 @@ Cron 表达式由 5 个字段组成：
 
 ```go
 import (
-    "github.com/ray/goreact/pkg/tools"
-    "github.com/ray/goreact/pkg/tools/builtin"
+    "github.com/DotNetAge/goreact/pkg/tools"
+    "github.com/DotNetAge/goreact/pkg/tools/builtin"
 )
 
 toolMgr := tools.NewSimpleManager()

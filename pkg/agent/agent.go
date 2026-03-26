@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/engine"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/skill"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/engine"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/skill"
 )
 
 // Agent 智能体实体（Rich Domain Model）
@@ -94,41 +93,4 @@ func (a *Agent) Chat(ctx context.Context, sessionID, task string, opts ...core.C
 		return reactCtx.FinalResult, nil
 	}
 	return "No final answer produced.", nil
-}
-
-// =========================================================================
-// 智能体嵌套闭环 (Agent-as-a-Tool Interface Implementation)
-// =========================================================================
-
-// Ensure Agent implements the tools.Tool interface
-var _ tools.Tool = (*Agent)(nil)
-
-// Name 继承工具名，等价于 Agent 自己的名称
-func (a *Agent) Name() string {
-	return a.AgentName
-}
-
-// Description 告诉父智能体该“工具”能干什么
-func (a *Agent) Description() string {
-	return a.AgentDesc
-}
-
-// SecurityLevel 子智能体的安全级别
-func (a *Agent) SecurityLevel() tools.SecurityLevel {
-	return tools.LevelSensitive
-}
-
-// Execute 充当工具被调用时，其实就是启动自己的独立 ReAct 引擎解决子任务
-func (a *Agent) Execute(ctx context.Context, input map[string]interface{}) (interface{}, error) {
-	taskDesc, ok := input["task"].(string)
-	if !ok {
-		taskDesc = "Execute nested task based on provided parameters."
-	}
-
-	// 当作子会话执行
-	ans, err := a.Chat(ctx, "sub-session-"+a.AgentName, taskDesc)
-	if err != nil {
-		return nil, err
-	}
-	return ans, nil
 }

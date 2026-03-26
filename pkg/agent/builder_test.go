@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	chatcore "github.com/DotNetAge/gochat/pkg/core"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // mockLLMClient implements a simple deterministic LLM client for testing.
@@ -58,19 +58,10 @@ func (t *mockTool) Execute(ctx context.Context, input map[string]any) (any, erro
 }
 
 func TestAgentBuilderAndRunner(t *testing.T) {
-	// 我们可以直接验证 Agent 的核心逻辑是否工作。
-	// 这里通过 mock 对象来证明 AAAT (Agent-as-a-Tool) 签名的完备性。
+	// 我们可以直接验证 Agent 的基础属性是否工作。
+	agent := NewAgent("TestAgent", "A test agent.", "You are a test agent.", "mock-model")
 
-	agent := NewAgent("SubAgent", "A sub-agent for testing nested execution", "You are a test agent.", "mock-model")
-
-	// 验证 Agent 是否实现了 Tool 接口
-	var _ tools.Tool = agent
-
-	if agent.AgentName != "SubAgent" {
-		t.Errorf("Expected runner name 'SubAgent', got '%s'", agent.AgentName)
-	}
-
-	if agent.SecurityLevel() != tools.LevelSensitive {
-		t.Errorf("Expected runner security level to be LevelSensitive, got %v", agent.SecurityLevel())
+	if agent.AgentName != "TestAgent" {
+		t.Errorf("Expected runner name 'TestAgent', got '%s'", agent.AgentName)
 	}
 }

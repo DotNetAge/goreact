@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/terminator"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/terminator"
 )
 
 // Ensure checkFinishStep implements gochat's pipeline.Step.

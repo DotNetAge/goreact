@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 // Ensure thinkerStep implements gochat's pipeline.Step.

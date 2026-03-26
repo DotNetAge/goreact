@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 type dummyStep struct {

@@ -10,7 +10,7 @@ import (
 
 	"context"
 
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // MCPProvider Model Context Protocol 提供者

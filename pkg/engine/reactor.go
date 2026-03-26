@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/observer"
-	"github.com/ray/goreact/pkg/steps"
-	"github.com/ray/goreact/pkg/terminator"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/observer"
+	"github.com/DotNetAge/goreact/pkg/steps"
+	"github.com/DotNetAge/goreact/pkg/terminator"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 // Reactor represents the core ReAct loop engine.

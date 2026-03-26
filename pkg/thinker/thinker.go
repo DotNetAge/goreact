@@ -1,7 +1,7 @@
 package thinker
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Thinker represents the "Brain" of the ReAct engine.

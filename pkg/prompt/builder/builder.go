@@ -6,9 +6,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/ray/goreact/pkg/prompt"
-	"github.com/ray/goreact/pkg/prompt/compression"
-	"github.com/ray/goreact/pkg/prompt/formatter"
+	"github.com/DotNetAge/goreact/pkg/prompt"
+	"github.com/DotNetAge/goreact/pkg/prompt/compression"
+	"github.com/DotNetAge/goreact/pkg/prompt/formatter"
 )
 
 // Turn 对话轮次

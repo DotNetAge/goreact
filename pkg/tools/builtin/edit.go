@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // Edit 文件编辑工具（支持多位置精确编辑）

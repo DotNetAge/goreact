@@ -1,7 +1,7 @@
 package actor
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Actor represents the "Hands" of the ReAct engine.

@@ -3,7 +3,7 @@
 ## 🚀 快速开始
 
 ```go
-import "github.com/ray/goreact/pkg/tools/builtin"
+import "github.com/DotNetAge/goreact/pkg/tools/builtin"
 
 cron := builtin.NewCron()
 ```

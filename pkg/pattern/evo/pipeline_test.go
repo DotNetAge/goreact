@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/pattern/mastersub"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/pattern/mastersub"
 )
 
 // MockLogger 简易日志记录器

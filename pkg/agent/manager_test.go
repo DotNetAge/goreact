@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	chatcore "github.com/DotNetAge/gochat/pkg/core"
-	"github.com/ray/goreact/pkg/model"
+	"github.com/DotNetAge/goreact/pkg/model"
 )
 
 func TestManagerSelectionAndAssembly(t *testing.T) {

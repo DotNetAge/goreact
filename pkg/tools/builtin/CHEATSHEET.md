@@ -82,7 +82,7 @@ Bash("go test -v") → Read("coverage.out") → Grep("FAIL")
 ## 🚀 快速开始
 
 ```go
-import "github.com/ray/goreact/pkg/tool/builtin"
+import "github.com/DotNetAge/goreact/pkg/tool/builtin"
 
 // 创建工具实例
 read := builtin.NewRead()

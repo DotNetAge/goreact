@@ -1,7 +1,7 @@
 package terminator
 
 import (
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Terminator acts as the final "Judicial Defense Line" in the continuous ReAct loop.

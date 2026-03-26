@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Orchestrator 负责驱动 Master 与 Sub 的协作循环

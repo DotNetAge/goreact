@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ray/goreact/pkg/prompt"
+	"github.com/DotNetAge/goreact/pkg/prompt"
 )
 
 // Logger 日志接口

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // ====================

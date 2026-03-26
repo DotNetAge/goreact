@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // mockObserver is a mock implementation of the Observer interface

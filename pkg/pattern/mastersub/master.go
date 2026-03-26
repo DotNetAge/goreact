@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/thinker"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/thinker"
 )
 
 const MasterDecomposePrompt = `You are the Master Orchestrator for a ReAct Agent. 

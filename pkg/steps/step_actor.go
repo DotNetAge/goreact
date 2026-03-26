@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/actor"
-	"github.com/ray/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/actor"
+	"github.com/DotNetAge/goreact/pkg/core"
 )
 
 // Ensure actorStep implements gochat's pipeline.Step.

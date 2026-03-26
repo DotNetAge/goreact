@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // Replace 文件内容替换工具（支持全局或范围替换）

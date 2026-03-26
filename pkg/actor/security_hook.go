@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/DotNetAge/gochat/pkg/pipeline"
-	"github.com/ray/goreact/pkg/core"
-	"github.com/ray/goreact/pkg/memory"
-	"github.com/ray/goreact/pkg/tools"
+	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/tools"
 )
 
 // ErrOperationRejectedByUser is returned when a human in the loop rejects a high-risk tool execution.
