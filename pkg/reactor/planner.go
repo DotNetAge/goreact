@@ -2,7 +2,6 @@ package reactor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -179,16 +178,6 @@ func (p *BasePlanner) buildPlanPrompt(input string, state *goreactcore.State, si
 
 // parsePlanResponse parses the LLM response into a Plan
 func (p *BasePlanner) parsePlanResponse(response string, state *goreactcore.State) (*goreactcore.Plan, error) {
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no JSON found in response")
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	
 	var parsed struct {
 		Goal  string `json:"goal"`
 		Steps []struct {
@@ -196,9 +185,9 @@ func (p *BasePlanner) parsePlanResponse(response string, state *goreactcore.Stat
 			ExpectedAction string `json:"expected_action"`
 		} `json:"steps"`
 	}
-	
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+
+	if err := goreactcommon.ParseJSONObject(response, &parsed); err != nil {
+		return nil, err
 	}
 	
 	// Create plan

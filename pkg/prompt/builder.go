@@ -470,10 +470,14 @@ func (b *Builder) InjectReflections(prompt *Prompt, reflections []string) *Promp
 		return prompt
 	}
 
-	injection := "\n## Previous Learnings\n"
+	var sb strings.Builder
+	sb.WriteString("\n## Previous Learnings\n")
 	for _, r := range reflections {
-		injection += "- " + r + "\n"
+		sb.WriteString("- ")
+		sb.WriteString(r)
+		sb.WriteString("\n")
 	}
+	injection := sb.String()
 
 	b.addSection(prompt, &PromptSection{
 		Type:     "reflections",
@@ -490,10 +494,14 @@ func (b *Builder) InjectNegativePrompt(prompt *Prompt, negatives []string) *Prom
 		return prompt
 	}
 
-	injection := "\n## Behavior Constraints\n"
+	var sb strings.Builder
+	sb.WriteString("\n## Behavior Constraints\n")
 	for _, n := range negatives {
-		injection += "- " + n + "\n"
+		sb.WriteString("- ")
+		sb.WriteString(n)
+		sb.WriteString("\n")
 	}
+	injection := sb.String()
 
 	b.addSection(prompt, &PromptSection{
 		Type:     "negative_custom",

@@ -14,10 +14,10 @@ import (
 // Version is the framework version
 const Version = "0.1.0"
 
-// Framework is the main framework facade
+// Framework is the main framework facade.
+// Memory is the single source of truth for all resources.
+// Tools and agents are accessed through Memory's accessors.
 type Framework struct {
-	agents      *agent.Registry
-	tools       *tool.Registry
 	memory      *memory.Memory
 	resources   *resource.ResourceManager
 	orchestrator any
@@ -26,31 +26,29 @@ type Framework struct {
 // New creates a new Framework instance
 func New() *Framework {
 	return &Framework{
-		agents:    agent.NewRegistry(),
-		tools:     tool.NewRegistry(),
-		memory:    memory.NewMemory(),
+		memory:    memory.NewMemory(memory.NewMockGraphRAG()),
 		resources: resource.NewResourceManager(),
 	}
 }
 
-// RegisterAgent registers an agent
-func (f *Framework) RegisterAgent(a agent.Agent) error {
-	return f.agents.Register(a)
+// RegisterAgent registers an agent configuration to resources
+func (f *Framework) RegisterAgent(name string, agentConfig any) error {
+	return f.resources.RegisterAgent(name, agentConfig)
 }
 
-// GetAgent retrieves an agent by name
-func (f *Framework) GetAgent(name string) (agent.Agent, bool) {
-	return f.agents.Get(name)
+// GetAgent retrieves an agent node by name from memory
+func (f *Framework) GetAgent(ctx context.Context, name string) (*memory.AgentAccessor, error) {
+	return f.memory.Agents(), nil
 }
 
-// RegisterTool registers a tool
-func (f *Framework) RegisterTool(t tool.Tool) error {
-	return f.tools.Register(t)
+// RegisterTool registers a tool to the tool factory
+func (f *Framework) RegisterTool(name string, constructor tool.ToolConstructor) error {
+	return tool.GetToolFactory().Register(name, constructor)
 }
 
-// GetTool retrieves a tool by name
-func (f *Framework) GetTool(name string) (tool.Tool, bool) {
-	return f.tools.Get(name)
+// GetToolFactory returns the global tool factory
+func (f *Framework) GetToolFactory() *tool.ToolFactory {
+	return tool.GetToolFactory()
 }
 
 // Memory returns the memory instance
@@ -65,11 +63,13 @@ func (f *Framework) Resources() *resource.ResourceManager {
 
 // Ask executes a question with the default agent
 func (f *Framework) Ask(ctx context.Context, question string) (*agent.Result, error) {
-	a, exists := f.agents.Get("assistant")
-	if !exists {
+	// Get agent from memory
+	agentNode, err := f.memory.Agents().Get(ctx, "assistant")
+	if err != nil {
 		return nil, errors.New("agent not found")
 	}
-	return a.Ask(ctx, question)
+	_ = agentNode // Would create agent instance from node
+	return nil, errors.New("not implemented: agent instantiation from memory")
 }
 
 // Execute executes a task using the reactor
@@ -82,8 +82,8 @@ func (f *Framework) Execute(ctx context.Context, input string, opts ...reactor.O
 func Default() *Framework {
 	fw := New()
 	
-	// Register built-in tools
-	tool.RegisterBuiltins()
+	// Initialize built-in tools
+	tool.InitBuiltins()
 	
 	// Load resources
 	fw.memory.Load(context.Background(), fw.resources)

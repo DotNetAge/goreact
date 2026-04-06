@@ -9,9 +9,11 @@ import (
 	"github.com/DotNetAge/goreact/pkg/core"
 )
 
-// Executor executes tools with validation and error handling
+// Executor executes tools with validation and error handling.
+// It uses ToolFactory for on-demand tool instantiation instead of a registry.
 type Executor struct {
-	registry     *Registry
+	factory      *ToolFactory
+	infoAccessor ToolInfoAccessor
 	whitelist    *Whitelist
 	maxRetries   int
 	timeout      time.Duration
@@ -24,7 +26,7 @@ type ExecutorOption func(*Executor)
 // NewExecutor creates a new Executor
 func NewExecutor(opts ...ExecutorOption) *Executor {
 	e := &Executor{
-		registry:      globalRegistry,
+		factory:      globalToolFactory,
 		whitelist:     NewWhitelist(),
 		maxRetries:    common.DefaultActorMaxRetries,
 		timeout:       common.DefaultActorTimeout,
@@ -38,10 +40,17 @@ func NewExecutor(opts ...ExecutorOption) *Executor {
 	return e
 }
 
-// WithRegistry sets the registry
-func WithRegistry(registry *Registry) ExecutorOption {
+// WithFactory sets the tool factory
+func WithFactory(factory *ToolFactory) ExecutorOption {
 	return func(e *Executor) {
-		e.registry = registry
+		e.factory = factory
+	}
+}
+
+// WithToolInfoAccessor sets the tool info accessor (from Memory)
+func WithToolInfoAccessor(accessor ToolInfoAccessor) ExecutorOption {
+	return func(e *Executor) {
+		e.infoAccessor = accessor
 	}
 }
 
@@ -77,9 +86,21 @@ func WithAllowedLevels(levels []common.SecurityLevel) ExecutorOption {
 func (e *Executor) Execute(ctx context.Context, name string, params map[string]any) (*core.ActionResult, error) {
 	startTime := time.Now()
 	
-	// Get the tool
-	t, exists := e.registry.Get(name)
-	if !exists {
+	// Get the tool from factory (on-demand instantiation)
+	t, ok := e.factory.Create(name)
+	if !ok {
+		// Try to create from memory metadata if accessor is available
+		if e.infoAccessor != nil {
+			toolNode, err := e.infoAccessor.Get(ctx, name)
+			if err == nil && toolNode != nil {
+				// Create a dynamic tool from node
+				t = &DynamicTool{node: toolNode}
+				ok = true
+			}
+		}
+	}
+	
+	if !ok {
 		return nil, common.NewError(common.ErrCodeToolNotFound, fmt.Sprintf("tool %s not found", name), nil)
 	}
 	
@@ -144,11 +165,25 @@ func (e *Executor) Execute(ctx context.Context, name string, params map[string]a
 }
 
 // ValidateParams validates tool parameters
-func (e *Executor) ValidateParams(name string, params map[string]any) error {
-	info, exists := e.registry.GetInfo(name)
-	if !exists {
+func (e *Executor) ValidateParams(ctx context.Context, name string, params map[string]any) error {
+	// Get tool from factory
+	t, ok := e.factory.Create(name)
+	if !ok && e.infoAccessor != nil {
+		// Try to get from memory
+		toolNode, err := e.infoAccessor.Get(ctx, name)
+		if err != nil {
+			return common.NewError(common.ErrCodeToolNotFound, fmt.Sprintf("tool %s not found", name), nil)
+		}
+		t = &DynamicTool{node: toolNode}
+		ok = true
+	}
+	
+	if !ok {
 		return common.NewError(common.ErrCodeToolNotFound, fmt.Sprintf("tool %s not found", name), nil)
 	}
+	
+	// Get tool info
+	info := GetToolInfo(t)
 	
 	// Check required parameters
 	for _, param := range info.Parameters {

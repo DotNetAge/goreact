@@ -113,8 +113,12 @@ func (p *DefaultConcurrencyPool) Submit(ctx context.Context, task func() error) 
 	}
 	
 	p.wg.Add(1)
+	
+	// Update stats atomically under lock
+	p.mu.Lock()
 	p.stats.ActiveWorkers++
 	p.stats.QueuedTasks++
+	p.mu.Unlock()
 	
 	go func() {
 		defer p.wg.Done()

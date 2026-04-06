@@ -2,10 +2,11 @@ package orchestration
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
+
+	goreactcommon "github.com/DotNetAge/goreact/pkg/common"
 )
 
 // =============================================================================
@@ -432,21 +433,10 @@ func (m *LLMMerger) buildSummaryPrompt(results []*SubResult) string {
 
 // parseMergeResponse parses the LLM response into a map
 func (m *LLMMerger) parseMergeResponse(response string) (map[string]any, error) {
-	// Try to extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no JSON found in response")
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	
 	var result map[string]any
-	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	if err := goreactcommon.ParseJSONObject(response, &result); err != nil {
+		return nil, err
 	}
-	
 	return result, nil
 }
 

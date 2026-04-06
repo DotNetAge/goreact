@@ -654,17 +654,9 @@ func (e *Evolver) parseAnalysisResponse(response, sessionName string) (*SessionA
 		KeyInfo           []*KeyInfo         `json:"key_info"`
 		EvolutionPotential EvolutionPotential `json:"evolution_potential"`
 	}
-	
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no valid JSON found in response")
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+
+	if err := goreactcommon.ParseJSONObject(response, &parsed); err != nil {
+		return nil, err
 	}
 	
 	return &SessionAnalysis{

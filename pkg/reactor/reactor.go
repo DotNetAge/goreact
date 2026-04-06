@@ -4,6 +4,7 @@ package reactor
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/DotNetAge/gochat/pkg/core"
@@ -109,9 +110,9 @@ type Reactor struct {
 	// Configuration
 	config *Config
 
-	// Control
-	paused  bool
-	stopped bool
+	// Control (using atomic for thread-safe access)
+	paused  atomic.Bool
+	stopped atomic.Bool
 }
 
 // Config represents reactor configuration
@@ -333,7 +334,7 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 	}
 
 	// ReAct loop
-	for !r.state.IsComplete() && !r.paused && !r.stopped {
+	for !r.state.IsComplete() && !r.paused.Load() && !r.stopped.Load() {
 		select {
 		case <-ctx.Done():
 			r.state.SetStatus(goreactcommon.StatusCanceled)
@@ -411,7 +412,7 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 	}
 
 	// Check termination conditions
-	if r.paused {
+	if r.paused.Load() {
 		return &Result{
 			Status:          goreactcommon.StatusPaused,
 			SessionName:     r.state.SessionName,
@@ -424,7 +425,7 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 		}, nil
 	}
 
-	if r.stopped {
+	if r.stopped.Load() {
 		return &Result{
 			Status:      goreactcommon.StatusCanceled,
 			SessionName: r.state.SessionName,
@@ -473,7 +474,7 @@ func (r *Reactor) State() *goreactcore.State {
 
 // Pause pauses the execution
 func (r *Reactor) Pause() error {
-	r.paused = true
+	r.paused.Store(true)
 	return nil
 }
 
@@ -481,7 +482,7 @@ func (r *Reactor) Pause() error {
 func (r *Reactor) Resume(ctx context.Context, state *goreactcore.State, answer string) (*Result, error) {
 	r.state = state
 	r.state.ClearPendingQuestion()
-	r.paused = false
+	r.paused.Store(false)
 	return r.Execute(ctx, state.Input)
 }
 
@@ -504,7 +505,7 @@ func (r *Reactor) ResumeStream(ctx context.Context, state *goreactcore.State, an
 
 // Stop stops the execution
 func (r *Reactor) Stop() error {
-	r.stopped = true
+	r.stopped.Store(true)
 	return nil
 }
 

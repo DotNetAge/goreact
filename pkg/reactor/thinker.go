@@ -166,17 +166,6 @@ Decide what to do next:
 
 // parseResponse parses the LLM response
 func (t *BaseThinker) parseResponse(response string) (*goreactcore.Thought, error) {
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	
-	if jsonStart == -1 || jsonEnd == -1 {
-		// Return a thought with the raw response
-		return goreactcore.NewThought(response, "", "act", 0.5), nil
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	
 	var parsed struct {
 		Thought      string         `json:"thought"`
 		Decision     string         `json:"decision"`
@@ -186,9 +175,10 @@ func (t *BaseThinker) parseResponse(response string) (*goreactcore.Thought, erro
 		FinalAnswer  string         `json:"final_answer"`
 		Confidence   float64        `json:"confidence"`
 	}
-	
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+
+	if err := goreactcommon.ParseJSONObject(response, &parsed); err != nil {
+		// Return a thought with the raw response if no JSON found
+		return goreactcore.NewThought(response, "", "act", 0.5), nil
 	}
 	
 	thought := goreactcore.NewThought(parsed.Thought, parsed.FinalAnswer, parsed.Decision, parsed.Confidence)

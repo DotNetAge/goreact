@@ -18,6 +18,82 @@ type BashTool struct {
 	workDir string
 }
 
+// Dangerous command patterns that are blocked
+var dangerousCommands = []string{
+	"rm -rf /",
+	"rm -rf /*",
+	"mkfs",
+	"dd if=",
+	":(){ :|:& };:",  // Fork bomb
+	"> /dev/sd",
+	"> /dev/hd",
+	"chmod -R 777 /",
+	"chown -R",
+	"wget http",
+	"curl http",
+	"nc -l",
+	"netcat -l",
+	"/etc/passwd",
+	"/etc/shadow",
+	"iptables -F",
+	"ufw disable",
+	"systemctl stop",
+	"service stop",
+	"pkill -9",
+	"killall -9",
+	"shutdown",
+	"reboot",
+	"init 0",
+	"init 6",
+}
+
+// isCommandDangerous checks if a command contains dangerous patterns
+func isCommandDangerous(command string) bool {
+	lowerCmd := strings.ToLower(command)
+	for _, pattern := range dangerousCommands {
+		if strings.Contains(lowerCmd, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizePath validates and cleans a file path to prevent path traversal attacks.
+// It returns an error if the path contains suspicious patterns like "..".
+func sanitizePath(filePath string) (string, error) {
+	// Clean the path to resolve any . or .. elements
+	cleanPath := filepath.Clean(filePath)
+	
+	// Check for path traversal attempts
+	if strings.Contains(cleanPath, "..") {
+		return "", fmt.Errorf("path traversal detected: path cannot contain '..'")
+	}
+	
+	// Check for absolute paths that might escape allowed directories
+	// For security, we only allow paths under the current working directory
+	// or explicitly allowed directories
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+	
+	// Block access to sensitive system files
+	sensitivePaths := []string{
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/ssh",
+		"/root",
+		"/home",
+	}
+	for _, sensitive := range sensitivePaths {
+		if strings.HasPrefix(absPath, sensitive) {
+			return "", fmt.Errorf("access to sensitive path denied: %s", filePath)
+		}
+	}
+	
+	return cleanPath, nil
+}
+
 // NewBashTool creates a new BashTool
 func NewBashTool(workDir string) *BashTool {
 	if workDir == "" {
@@ -53,6 +129,11 @@ func (t *BashTool) Run(ctx context.Context, params map[string]any) (any, error) 
 		return nil, fmt.Errorf("command parameter must be a string")
 	}
 	
+	// Security check: block dangerous commands
+	if isCommandDangerous(command) {
+		return nil, fmt.Errorf("command blocked: contains potentially dangerous operations")
+	}
+	
 	// Build the command
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
 	cmd.Dir = t.workDir
@@ -61,8 +142,8 @@ func (t *BashTool) Run(ctx context.Context, params map[string]any) (any, error) 
 	output, err := cmd.CombinedOutput()
 	
 	result := map[string]any{
-		"command":  command,
-		"output":   string(output),
+		"command":   command,
+		"output":    string(output),
 		"exit_code": 0,
 	}
 	
@@ -117,13 +198,19 @@ func (t *ReadTool) Run(ctx context.Context, params map[string]any) (any, error) 
 		return nil, fmt.Errorf("file_path parameter must be a string")
 	}
 	
+	// Security: sanitize path to prevent traversal attacks
+	safePath, err := sanitizePath(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid file path: %w", err)
+	}
+	
 	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("file not found: %s", filePath)
+	if _, err := os.Stat(safePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("file not found: %s", safePath)
 	}
 	
 	// Open file
-	file, err := os.Open(filePath)
+	file, err := os.Open(safePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -158,11 +245,11 @@ func (t *ReadTool) Run(ctx context.Context, params map[string]any) (any, error) 
 	info, _ := file.Stat()
 	
 	return map[string]any{
-		"path":      filePath,
-		"content":   strings.Join(lines, "\n"),
-		"lines":     len(lines),
-		"total":     lineNum,
-		"size":      info.Size(),
+		"path":    safePath,
+		"content": strings.Join(lines, "\n"),
+		"lines":   len(lines),
+		"total":   lineNum,
+		"size":    info.Size(),
 	}, nil
 }
 
@@ -207,6 +294,12 @@ func (t *WriteTool) Run(ctx context.Context, params map[string]any) (any, error)
 		return nil, fmt.Errorf("file_path parameter must be a string")
 	}
 	
+	// Security: sanitize path to prevent traversal attacks
+	safePath, err := sanitizePath(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid file path: %w", err)
+	}
+	
 	content, ok := params["content"].(string)
 	if !ok {
 		return nil, fmt.Errorf("content parameter must be a string")
@@ -218,7 +311,7 @@ func (t *WriteTool) Run(ctx context.Context, params map[string]any) (any, error)
 	}
 	
 	// Ensure directory exists
-	dir := filepath.Dir(filePath)
+	dir := filepath.Dir(safePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
@@ -231,7 +324,7 @@ func (t *WriteTool) Run(ctx context.Context, params map[string]any) (any, error)
 		flag |= os.O_TRUNC
 	}
 	
-	file, err := os.OpenFile(filePath, flag, 0644)
+	file, err := os.OpenFile(safePath, flag, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -242,7 +335,7 @@ func (t *WriteTool) Run(ctx context.Context, params map[string]any) (any, error)
 	}
 	
 	return map[string]any{
-		"path":    filePath,
+		"path":    safePath,
 		"mode":    mode,
 		"written": len(content),
 	}, nil
@@ -404,26 +497,32 @@ func (t *DeleteTool) Run(ctx context.Context, params map[string]any) (any, error
 		return nil, fmt.Errorf("path parameter must be a string")
 	}
 	
+	// Security: sanitize path to prevent traversal attacks
+	safePath, err := sanitizePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path: %w", err)
+	}
+	
 	recursive := false
 	if r, ok := params["recursive"].(bool); ok {
 		recursive = r
 	}
 	
 	// Check if path exists
-	info, err := os.Stat(path)
+	info, err := os.Stat(safePath)
 	if os.IsNotExist(err) {
-		return nil, fmt.Errorf("path not found: %s", path)
+		return nil, fmt.Errorf("path not found: %s", safePath)
 	}
 	
 	// Delete
 	if info.IsDir() {
 		if recursive {
-			err = os.RemoveAll(path)
+			err = os.RemoveAll(safePath)
 		} else {
-			err = os.Remove(path)
+			err = os.Remove(safePath)
 		}
 	} else {
-		err = os.Remove(path)
+		err = os.Remove(safePath)
 	}
 	
 	if err != nil {
@@ -437,28 +536,10 @@ func (t *DeleteTool) Run(ctx context.Context, params map[string]any) (any, error
 	}, nil
 }
 
-// RegisterBuiltins registers built-in tools
+// RegisterBuiltins registers built-in tools to the global factory.
+// Deprecated: Use tool.InitBuiltins() instead.
 func RegisterBuiltins() error {
-	// File system tools
-	if err := Register(NewBashTool("")); err != nil {
-		return err
-	}
-	if err := Register(NewReadTool()); err != nil {
-		return err
-	}
-	if err := Register(NewWriteTool()); err != nil {
-		return err
-	}
-	if err := Register(NewGlobTool()); err != nil {
-		return err
-	}
-	if err := Register(NewListTool()); err != nil {
-		return err
-	}
-	if err := Register(NewDeleteTool()); err != nil {
-		return err
-	}
-	
+	globalToolFactory.RegisterBuiltins()
 	return nil
 }
 

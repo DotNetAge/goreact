@@ -161,49 +161,17 @@ func (r *Registry) Clear() {
 	r.plans = make(map[string]*SkillExecutionPlan)
 }
 
-// Global registry instance
-var globalRegistry = NewRegistry()
+// Note: Global registry and package-level functions have been removed.
+// Use SkillFactory for on-demand skill instantiation instead.
+// See factory.go for the new approach.
 
-// Register registers a skill to the global registry
-func Register(skill *Skill) error {
-	return globalRegistry.Register(skill)
-}
-
-// Unregister unregisters a skill from the global registry
-func Unregister(name string) {
-	globalRegistry.Unregister(name)
-}
-
-// Get retrieves a skill from the global registry
-func Get(name string) (*Skill, bool) {
-	return globalRegistry.Get(name)
-}
-
-// GetPlan retrieves a compiled execution plan from the global registry
-func GetPlan(name string) (*SkillExecutionPlan, bool) {
-	return globalRegistry.GetPlan(name)
-}
-
-// SetPlan sets a compiled execution plan in the global registry
-func SetPlan(plan *SkillExecutionPlan) {
-	globalRegistry.SetPlan(plan)
-}
-
-// List lists all registered skills from the global registry
-func List() []*Skill {
-	return globalRegistry.List()
-}
-
-// Search performs semantic search on skills from the global registry
-func Search(query string, topK int) []*Skill {
-	return globalRegistry.Search(query, topK)
-}
-
-// Executor executes skills
+// Executor executes skills.
+// It uses SkillFactory and SkillInfoAccessor (from Memory) for on-demand skill access.
 type Executor struct {
-	registry    *Registry
-	compiler    *Compiler
-	resolver    *RuntimeContextResolver
+	factory      *SkillFactory
+	infoAccessor SkillInfoAccessor
+	compiler     *Compiler
+	resolver     *RuntimeContextResolver
 	toolExecutor any // Would be tool.Executor
 	llmClient   core.Client
 }
@@ -214,7 +182,7 @@ type ExecutorOption func(*Executor)
 // NewExecutor creates a new Executor
 func NewExecutor(opts ...ExecutorOption) *Executor {
 	e := &Executor{
-		registry: globalRegistry,
+		factory:  globalSkillFactory,
 		compiler: NewCompiler(),
 	}
 	
@@ -230,24 +198,42 @@ func NewExecutor(opts ...ExecutorOption) *Executor {
 
 // Execute executes a skill by name
 func (e *Executor) Execute(ctx context.Context, name string, params map[string]any, state map[string]any) (any, error) {
-	// Check for cached plan
-	plan, exists := e.registry.GetPlan(name)
-	if !exists {
-		// Get skill and compile
-		skill, exists := e.registry.Get(name)
-		if !exists {
+	// Check for cached plan from memory
+	var plan *SkillExecutionPlan
+	var err error
+	
+	if e.infoAccessor != nil {
+		plan, err = e.infoAccessor.GetExecutionPlan(ctx, name)
+		if err != nil {
+			plan = nil
+		}
+	}
+	
+	if plan == nil {
+		// Get skill from factory or memory
+		skill, ok := e.factory.Create(name)
+		if !ok && e.infoAccessor != nil {
+			skill, err = e.infoAccessor.Get(ctx, name)
+			if err != nil {
+				return nil, common.NewError(common.ErrCodeSkillNotFound, fmt.Sprintf("skill %s not found", name), nil)
+			}
+			ok = true
+		}
+		
+		if !ok {
 			return nil, common.NewError(common.ErrCodeSkillNotFound, fmt.Sprintf("skill %s not found", name), nil)
 		}
 		
 		// Compile skill
-		var err error
 		plan, err = e.compiler.Compile(ctx, skill)
 		if err != nil {
 			return nil, common.NewError(common.ErrCodeSkillCompilation, fmt.Sprintf("failed to compile skill %s", name), err)
 		}
 		
-		// Cache the plan
-		e.registry.SetPlan(plan)
+		// Cache the plan in memory
+		if e.infoAccessor != nil {
+			_ = e.infoAccessor.StoreExecutionPlan(ctx, plan)
+		}
 	}
 	
 	// Resolve parameters
@@ -296,10 +282,17 @@ func (e *Executor) Execute(ctx context.Context, name string, params map[string]a
 	return results, nil
 }
 
-// WithRegistry sets the registry
-func WithRegistry(registry *Registry) ExecutorOption {
+// WithFactory sets the skill factory
+func WithFactory(factory *SkillFactory) ExecutorOption {
 	return func(e *Executor) {
-		e.registry = registry
+		e.factory = factory
+	}
+}
+
+// WithSkillInfoAccessor sets the skill info accessor (from Memory)
+func WithSkillInfoAccessor(accessor SkillInfoAccessor) ExecutorOption {
+	return func(e *Executor) {
+		e.infoAccessor = accessor
 	}
 }
 

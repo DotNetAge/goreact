@@ -2,10 +2,11 @@ package orchestration
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	goreactcommon "github.com/DotNetAge/goreact/pkg/common"
 )
 
 // =============================================================================
@@ -369,16 +370,6 @@ Respond in JSON format:
 
 // parseDecompositionResponse parses the LLM response into sub-tasks
 func (d *LLMBasedDecomposer) parseDecompositionResponse(response string, task *Task) ([]*SubTask, error) {
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no JSON found in response")
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	
 	var parsed struct {
 		SubTasks []struct {
 			Name              string   `json:"name"`
@@ -388,9 +379,9 @@ func (d *LLMBasedDecomposer) parseDecompositionResponse(response string, task *T
 			EstimatedDuration string   `json:"estimated_duration"`
 		} `json:"sub_tasks"`
 	}
-	
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+
+	if err := goreactcommon.ParseJSONObject(response, &parsed); err != nil {
+		return nil, err
 	}
 	
 	// Convert to SubTask slice

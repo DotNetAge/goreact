@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -112,44 +111,6 @@ func (r *Registry) Clear() {
 	r.infos = make(map[string]*ToolInfo)
 }
 
-// Global registry instance
-var globalRegistry = NewRegistry()
-
-// Register registers a tool to the global registry
-func Register(t Tool) error {
-	return globalRegistry.Register(t)
-}
-
-// Unregister unregisters a tool from the global registry
-func Unregister(name string) {
-	globalRegistry.Unregister(name)
-}
-
-// Get retrieves a tool from the global registry
-func Get(name string) (Tool, bool) {
-	return globalRegistry.Get(name)
-}
-
-// GetInfo retrieves tool info from the global registry
-func GetInfo(name string) (*ToolInfo, bool) {
-	return globalRegistry.GetInfo(name)
-}
-
-// List lists all registered tools from the global registry
-func List() []Tool {
-	return globalRegistry.List()
-}
-
-// ListInfo lists all tool info from the global registry
-func ListInfo() []*ToolInfo {
-	return globalRegistry.ListInfo()
-}
-
-// Execute executes a tool by name
-func Execute(ctx context.Context, name string, params map[string]any) (any, error) {
-	t, exists := globalRegistry.Get(name)
-	if !exists {
-		return nil, common.NewError(common.ErrCodeToolNotFound, fmt.Sprintf("tool %s not found", name), nil)
-	}
-	return t.Run(ctx, params)
-}
+// Note: Global registry and package-level functions have been removed.
+// Use ToolFactory for on-demand tool instantiation instead.
+// See factory.go for the new approach.

@@ -2,8 +2,8 @@ package reactor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/DotNetAge/gochat/pkg/core"
@@ -222,16 +222,6 @@ func (r *BaseReflector) buildReflectionPrompt(context []*goreactcore.TrajectoryS
 
 // parseReflectionResponse parses the LLM response into a Reflection
 func (r *BaseReflector) parseReflectionResponse(response string, state *goreactcore.State) (*goreactcore.Reflection, error) {
-	// Extract JSON from response
-	jsonStart := strings.Index(response, "{")
-	jsonEnd := strings.LastIndex(response, "}")
-	
-	if jsonStart == -1 || jsonEnd == -1 {
-		return nil, fmt.Errorf("no JSON found in response")
-	}
-	
-	jsonStr := response[jsonStart : jsonEnd+1]
-	
 	var parsed struct {
 		FailureReason string   `json:"failure_reason"`
 		Analysis      string   `json:"analysis"`
@@ -239,9 +229,9 @@ func (r *BaseReflector) parseReflectionResponse(response string, state *goreactc
 		Suggestions   []string `json:"suggestions"`
 		Confidence    float64  `json:"confidence"`
 	}
-	
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+
+	if err := goreactcommon.ParseJSONObject(response, &parsed); err != nil {
+		return nil, err
 	}
 	
 	reflection := goreactcore.NewReflection(
@@ -272,25 +262,42 @@ func (r *BaseReflector) analyzeFailure(context []*goreactcore.TrajectoryStep, st
 
 // generateAnalysis generates detailed analysis
 func (r *BaseReflector) generateAnalysis(context []*goreactcore.TrajectoryStep, state *goreactcore.State) string {
-	analysis := "Analysis of execution failure:\n"
-	
+	var sb strings.Builder
+	sb.WriteString("Analysis of execution failure:\n")
+
 	for i, step := range context {
 		if step.Thought != nil {
-			analysis += fmt.Sprintf("Step %d - Thought: %s\n", i, step.Thought.Content)
+			sb.WriteString("Step ")
+			sb.WriteString(strconv.Itoa(i))
+			sb.WriteString(" - Thought: ")
+			sb.WriteString(step.Thought.Content)
+			sb.WriteString("\n")
 		}
 		if step.Action != nil {
-			analysis += fmt.Sprintf("Step %d - Action: %s on %s\n", i, step.Action.Type, step.Action.Target)
+			sb.WriteString("Step ")
+			sb.WriteString(strconv.Itoa(i))
+			sb.WriteString(" - Action: ")
+			sb.WriteString(string(step.Action.Type))
+			sb.WriteString(" on ")
+			sb.WriteString(step.Action.Target)
+			sb.WriteString("\n")
 		}
 		if step.Observation != nil {
 			status := "success"
 			if !step.Observation.Success {
 				status = "failed"
 			}
-			analysis += fmt.Sprintf("Step %d - Observation: %s (%s)\n", i, step.Observation.Content, status)
+			sb.WriteString("Step ")
+			sb.WriteString(strconv.Itoa(i))
+			sb.WriteString(" - Observation: ")
+			sb.WriteString(step.Observation.Content)
+			sb.WriteString(" (")
+			sb.WriteString(status)
+			sb.WriteString(")\n")
 		}
 	}
-	
-	return analysis
+
+	return sb.String()
 }
 
 // generateHeuristic generates a heuristic lesson

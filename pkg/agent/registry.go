@@ -80,30 +80,6 @@ func (r *Registry) Clear() {
 	r.agents = make(map[string]Agent)
 }
 
-// Global registry instance
-var globalRegistry = NewRegistry()
-
-// Register registers an agent to the global registry
-func Register(agent Agent) error {
-	return globalRegistry.Register(agent)
-}
-
-// Unregister unregisters an agent from the global registry
-func Unregister(name string) {
-	globalRegistry.Unregister(name)
-}
-
-// Get retrieves an agent from the global registry
-func Get(name string) (Agent, bool) {
-	return globalRegistry.Get(name)
-}
-
-// List lists all registered agents from the global registry
-func List() []Agent {
-	return globalRegistry.List()
-}
-
-// ListByDomain lists agents by domain from the global registry
-func ListByDomain(domain string) []Agent {
-	return globalRegistry.ListByDomain(domain)
-}
+// Note: Global registry and package-level functions have been removed.
+// Agents should be accessed through Memory's AgentAccessor.
+// See memory/agent.go for the Memory-based approach.

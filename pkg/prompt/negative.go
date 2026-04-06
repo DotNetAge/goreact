@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -138,18 +139,21 @@ func (m *NegativePromptManager) FormatPrompts(prompts []*NegativePrompt) string 
 		return ""
 	}
 
-	result := "# Negative Prompts\n\n"
-	result += "请严格遵守以下约束条件：\n\n"
+	var sb strings.Builder
+	sb.WriteString("# Negative Prompts\n\n")
+	sb.WriteString("请严格遵守以下约束条件：\n\n")
 
 	for _, prompt := range prompts {
-		result += "- " + prompt.Pattern
+		sb.WriteString("- ")
+		sb.WriteString(prompt.Pattern)
 		if prompt.Alternative != "" {
-			result += "。替代方案：" + prompt.Alternative
+			sb.WriteString("。替代方案：")
+			sb.WriteString(prompt.Alternative)
 		}
-		result += "\n"
+		sb.WriteString("\n")
 	}
 
-	return result
+	return sb.String()
 }
 
 // ShouldInjectGroup determines if a group should be injected

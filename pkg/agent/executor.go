@@ -10,45 +10,42 @@ import (
 	goreactcore "github.com/DotNetAge/goreact/pkg/core"
 	"github.com/DotNetAge/goreact/pkg/memory"
 	"github.com/DotNetAge/goreact/pkg/reactor"
-	"github.com/DotNetAge/goreact/pkg/skill"
-	"github.com/DotNetAge/goreact/pkg/tool"
 )
 
-// Executor implements the Agent interface with full functionality
+// Executor implements the Agent interface with full functionality.
+// All resources (Skills, Tools) are accessed through Memory, not held directly.
+// This follows the architecture principle: Memory is the single source of truth for all storage.
 type Executor struct {
 	*BaseAgent
-	llmClient  core.Client
-	reactor    reactor.Engine
-	memory     *memory.Memory
-	skillReg   *skill.Registry
-	toolReg    *tool.Registry
+	llmClient core.Client
+	reactor   reactor.Engine
+	memory    *memory.Memory
 }
 
-// NewExecutor creates a new Agent executor
+// NewExecutor creates a new Agent executor.
+// Memory must be set via WithMemory option - it is the single source for all resources.
 func NewExecutor(config *Config, llm core.Client, opts ...Option) *Executor {
 	if config == nil {
 		config = DefaultConfig()
 	}
-	
+
 	e := &Executor{
-		BaseAgent:  NewBaseAgent(config),
-		llmClient:  llm,
-		memory:     nil, // Memory should be set via WithMemory option
-		skillReg:   skill.NewRegistry(),
-		toolReg:    tool.NewRegistry(),
+		BaseAgent: NewBaseAgent(config),
+		llmClient: llm,
+		memory:    nil, // Memory should be set via WithMemory option
 	}
-	
+
 	for _, opt := range opts {
 		opt(e)
 	}
-	
+
 	return e
 }
 
 // Option is a function that configures the executor
 type Option func(*Executor)
 
-// WithMemory sets the memory
+// WithMemory sets the memory - the single source for all resources (Skills, Tools, Agents)
 func WithMemory(mem *memory.Memory) Option {
 	return func(e *Executor) {
 		e.memory = mem
@@ -59,20 +56,6 @@ func WithMemory(mem *memory.Memory) Option {
 func WithReactor(r reactor.Engine) Option {
 	return func(e *Executor) {
 		e.reactor = r
-	}
-}
-
-// WithSkillRegistry sets the skill registry
-func WithSkillRegistry(r *skill.Registry) Option {
-	return func(e *Executor) {
-		e.skillReg = r
-	}
-}
-
-// WithToolRegistry sets the tool registry
-func WithToolRegistry(r *tool.Registry) Option {
-	return func(e *Executor) {
-		e.toolReg = r
 	}
 }
 
@@ -221,27 +204,27 @@ func (e *Executor) generateSessionName() string {
 	return fmt.Sprintf("%s-%d", e.config.Name, time.Now().UnixNano())
 }
 
-// GetMemory returns the memory instance
+// GetMemory returns the memory instance - the single source for all resources
 func (e *Executor) GetMemory() *memory.Memory {
 	return e.memory
 }
 
-// GetSkillRegistry returns the skill registry
-func (e *Executor) GetSkillRegistry() *skill.Registry {
-	return e.skillReg
+// Skills returns the skill accessor from memory.
+// All skills are stored in Memory, following the architecture principle that
+// Memory is the single source of truth for all storage.
+func (e *Executor) Skills() *memory.SkillAccessor {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.Skills()
 }
 
-// GetToolRegistry returns the tool registry
-func (e *Executor) GetToolRegistry() *tool.Registry {
-	return e.toolReg
-}
-
-// RegisterSkill registers a skill
-func (e *Executor) RegisterSkill(s *skill.Skill) error {
-	return e.skillReg.Register(s)
-}
-
-// RegisterTool registers a tool
-func (e *Executor) RegisterTool(t tool.Tool) error {
-	return e.toolReg.Register(t)
+// Tools returns the tool accessor from memory.
+// All tools are stored in Memory, following the architecture principle that
+// Memory is the single source of truth for all storage.
+func (e *Executor) Tools() *memory.ToolAccessor {
+	if e.memory == nil {
+		return nil
+	}
+	return e.memory.Tools()
 }

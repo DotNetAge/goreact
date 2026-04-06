@@ -35,7 +35,7 @@ func NewSimpleAgent(name string) *SimpleAgent {
 	
 	return &SimpleAgent{
 		BaseAgent: agent.NewBaseAgent(config),
-		memory:    memory.NewMemory(),
+		memory:    memory.NewMemory(memory.NewMockGraphRAG()),
 	}
 }
 
@@ -44,7 +44,7 @@ func (a *SimpleAgent) Ask(ctx context.Context, question string, files ...string)
 	// Create reactor if not exists
 	if a.reactor == nil {
 		a.reactor = reactor.NewReactor()
-		a.reactor.WithPlanner(reactor.NewBasePlanner())
+		a.reactor.WithPlanner(reactor.NewBasePlanner(nil))
 		a.reactor.WithThinker(reactor.NewBaseThinker(nil, nil)) // nil LLM uses fallback
 		a.reactor.WithActor(reactor.NewBaseActor(nil))
 		a.reactor.WithObserver(reactor.NewBaseObserver(nil))
@@ -164,7 +164,7 @@ func main() {
 	
 	// Example 4: Memory operations
 	fmt.Println("\n=== Example 4: Memory Operations ===")
-	mem := memory.NewMemory()
+	mem := memory.NewMemory(memory.NewMockGraphRAG())
 	
 	// Access different memory types
 	sessions := mem.Sessions()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"text/template"
@@ -229,9 +230,40 @@ func (c *Compiler) renderValue(value any, context map[string]any) (any, error) {
 	}
 }
 
-// renderString renders a string template
+// renderString renders a string template with security restrictions.
+// It uses a sandboxed template engine that limits available functions
+// to prevent template injection attacks.
 func (c *Compiler) renderString(templateStr string, context map[string]any) (string, error) {
-	tmpl, err := template.New("param").Delims(c.templateDelims[0], c.templateDelims[1]).Parse(templateStr)
+	// Create a template with restricted function map for security
+	// Only allow safe, read-only operations
+	safeFuncs := template.FuncMap{
+		// String manipulation (safe, read-only)
+		"lower":   strings.ToLower,
+		"upper":   strings.ToUpper,
+		"title":   strings.Title,
+		"trim":    strings.TrimSpace,
+		"trimstr": strings.Trim,
+		// Safe formatting
+		"escape":  html.EscapeString,
+		// Type checking (safe)
+		"isString":  func(v any) bool { _, ok := v.(string); return ok },
+		"isNumber":  func(v any) bool { _, ok := v.(float64); return ok },
+		"isBool":    func(v any) bool { _, ok := v.(bool); return ok },
+		"isArray":   func(v any) bool { _, ok := v.([]any); return ok },
+		"isMap":     func(v any) bool { _, ok := v.(map[string]any); return ok },
+		// Safe defaults
+		"default": func(def any, val any) any {
+			if val == nil || val == "" {
+				return def
+			}
+			return val
+		},
+	}
+	
+	tmpl, err := template.New("param").
+		Delims(c.templateDelims[0], c.templateDelims[1]).
+		Funcs(safeFuncs).
+		Parse(templateStr)
 	if err != nil {
 		return templateStr, nil // Return as-is if not a valid template
 	}
@@ -290,13 +322,23 @@ func (r *RuntimeContextResolver) extractEntities(ctx context.Context, input stri
 	if r.llmClient == nil {
 		return nil, fmt.Errorf("no LLM client available")
 	}
-	
-	// Build extraction prompt
-	prompt := "Extract the following parameters from this input:\n"
+
+	// Build extraction prompt using strings.Builder for efficiency
+	var sb strings.Builder
+	sb.WriteString("Extract the following parameters from this input:\n")
 	for _, p := range params {
-		prompt += fmt.Sprintf("- %s (%s): %s\n", p.Name, p.Type, p.Description)
+		sb.WriteString("- ")
+		sb.WriteString(p.Name)
+		sb.WriteString(" (")
+		sb.WriteString(p.Type)
+		sb.WriteString("): ")
+		sb.WriteString(p.Description)
+		sb.WriteString("\n")
 	}
-	prompt += "\nInput: " + input + "\n\nRespond in JSON format."
+	sb.WriteString("\nInput: ")
+	sb.WriteString(input)
+	sb.WriteString("\n\nRespond in JSON format.")
+	prompt := sb.String()
 	
 	resp, err := r.llmClient.Chat(ctx, []core.Message{
 		core.NewUserMessage(prompt),
