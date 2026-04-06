@@ -1,47 +1,186 @@
+// Package memory provides memory management for the goreact framework.
 package memory
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/DotNetAge/gorag/pkg/core"
+	"github.com/DotNetAge/gorag/pkg/pattern"
+	"github.com/DotNetAge/goreact/pkg/resource"
 )
 
-// WorkingMemory 代表短期会话记忆，用于记录会话经验与临时授权。
-// 支持基于时间衰减的洗牌机制。
-type WorkingMemory interface {
-	// RecallContext 根据当前意图召回短期会话上下文。
-	RecallContext(ctx context.Context, sessionID, intent string) (string, error)
-	// Update 记录或更新一条短期记忆，deltaWeight 用于调整其权重（如随时间衰减或因惩罚降低）。
-	Update(ctx context.Context, sessionID, key string, deltaWeight float64) error
-	// Store 保存具体的键值对（例如白名单授权 whitelist:xxx）。
-	Store(ctx context.Context, sessionID, key string, value any) error
-	// Retrieve 获取具体的键值对。
-	Retrieve(ctx context.Context, sessionID, key string) (any, error)
+// Memory is a facade that holds a GraphRAG instance and all accessors.
+// It does not expose operation methods directly - operations are done through accessors.
+type Memory struct {
+	mu             sync.RWMutex
+	graphRAG       pattern.GraphRAGPattern
+
+	// Accessors
+	sessions       *SessionAccessor
+	shortTerms     *ShortTermAccessor
+	longTerms      *LongTermAccessor
+	agents         *AgentAccessor
+	skills         *SkillAccessor
+	tools          *ToolAccessor
+	reflections    *ReflectionAccessor
+	plans          *PlanAccessor
+	trajectories   *TrajectoryAccessor
+	frozenSessions *FrozenSessionAccessor
 }
 
-// SemanticMemory 代表长期知识库（RAG/GraphRAG），提供只读的知识召回。
-type SemanticMemory interface {
-	// RecallKnowledge 根据当前意图从外部知识库中检索并召回相关背景知识。
-	RecallKnowledge(ctx context.Context, intent string) (string, error)
+// NewMemory creates a new Memory instance with the given GraphRAG.
+// All accessors share the same GraphRAG instance.
+func NewMemory(graphRAG pattern.GraphRAGPattern) *Memory {
+	m := &Memory{
+		graphRAG: graphRAG,
+	}
+
+	// Initialize all accessors with the same GraphRAG instance
+	m.sessions = NewSessionAccessor(graphRAG)
+	m.shortTerms = NewShortTermAccessor(graphRAG)
+	m.longTerms = NewLongTermAccessor(graphRAG)
+	m.agents = NewAgentAccessor(graphRAG)
+	m.skills = NewSkillAccessor(graphRAG)
+	m.tools = NewToolAccessor(graphRAG)
+	m.reflections = NewReflectionAccessor(graphRAG)
+	m.plans = NewPlanAccessor(graphRAG)
+	m.trajectories = NewTrajectoryAccessor(graphRAG)
+	m.frozenSessions = NewFrozenSessionAccessor(graphRAG)
+
+	return m
 }
 
-// MuscleMemory 代表肌肉记忆，用于存储大模型在执行特定 Skill 过程中蒸馏出的成功经验。
-// 它属于 NativeRAG 范畴，通常通过 SkillName 进行直接检索。
-type MuscleMemory[T any] interface {
-	// RecallExperience 召回特定技能的成功经验或避坑指南。
-	RecallExperience(ctx context.Context, skillName string) (string, error)
-	// DistillExperience 提炼并保存特定技能的经验教训。
-	DistillExperience(ctx context.Context, skillName, newAction string) error
-	
-	// LoadCompiledAction 基于“语义化匹配”召回与当前意图最相关的“编译态”执行图（Evo 模式核心）
-	LoadCompiledAction(ctx context.Context, intent string) (T, error)
-	// SaveCompiledAction 将特定意图或技能的“编译态”执行图固化并进行知识索引（Evo 模式核心）
-	SaveCompiledAction(ctx context.Context, intent string, sop T) error
+// Load loads resources from the resource manager into GraphRAG.
+// It indexes all agents, skills, tools, and models as nodes in the graph.
+func (m *Memory) Load(ctx context.Context, rm *resource.ResourceManager) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.graphRAG == nil {
+		return fmt.Errorf("graphRAG is not initialized")
+	}
+
+	// Index all Agents
+	for name, agentAny := range rm.GetAgents() {
+		node, err := anyToAgentNode(name, agentAny)
+		if err != nil {
+			return fmt.Errorf("failed to convert agent %s: %w", name, err)
+		}
+		if err := m.graphRAG.AddNode(ctx, node); err != nil {
+			return fmt.Errorf("failed to index agent %s: %w", name, err)
+		}
+
+		// Add edges for agent's skills (if we can access them)
+		if skills := getAgentSkills(agentAny); len(skills) > 0 {
+			for _, skillName := range skills {
+				edge := &core.Edge{
+					ID:     fmt.Sprintf("agent-%s-skill-%s", name, skillName),
+					Type:   "HAS_SKILL",
+					Source: name,
+					Target: skillName,
+					Properties: map[string]any{
+						"created_at": time.Now().Format(time.RFC3339),
+					},
+				}
+				if err := m.graphRAG.AddEdge(ctx, edge); err != nil {
+					return fmt.Errorf("failed to add skill edge for agent %s: %w", name, err)
+				}
+			}
+		}
+	}
+
+	// Index all Skills
+	for name, skillAny := range rm.GetSkills() {
+		node, err := anyToSkillNode(name, skillAny)
+		if err != nil {
+			return fmt.Errorf("failed to convert skill %s: %w", name, err)
+		}
+		if err := m.graphRAG.AddNode(ctx, node); err != nil {
+			return fmt.Errorf("failed to index skill %s: %w", name, err)
+		}
+	}
+
+	// Index all Tools
+	for name, toolAny := range rm.GetTools() {
+		node, err := anyToToolNode(name, toolAny)
+		if err != nil {
+			return fmt.Errorf("failed to convert tool %s: %w", name, err)
+		}
+		if err := m.graphRAG.AddNode(ctx, node); err != nil {
+			return fmt.Errorf("failed to index tool %s: %w", name, err)
+		}
+	}
+
+	// Index all Models
+	for name, modelAny := range rm.GetModels() {
+		node, err := anyToModelNode(name, modelAny)
+		if err != nil {
+			return fmt.Errorf("failed to convert model %s: %w", name, err)
+		}
+		if err := m.graphRAG.AddNode(ctx, node); err != nil {
+			return fmt.Errorf("failed to index model %s: %w", name, err)
+		}
+	}
+
+	return nil
 }
 
-// MemoryBank 将三种记忆模态组合在一起，成为 Agent 的专属记忆体。
-type MemoryBank interface {
-	Working() WorkingMemory
-	Semantic() SemanticMemory
-	Muscle() MuscleMemory[any] // 默认提供 any，但开发者可以定制
-	// Compress 压缩或修剪旧的、不相关的记忆以节省空间。
-	Compress(ctx context.Context, sessionID string) error
+// Sessions returns the session accessor
+func (m *Memory) Sessions() *SessionAccessor {
+	return m.sessions
+}
+
+// ShortTerms returns the short-term memory accessor
+func (m *Memory) ShortTerms() *ShortTermAccessor {
+	return m.shortTerms
+}
+
+// LongTerms returns the long-term memory accessor
+func (m *Memory) LongTerms() *LongTermAccessor {
+	return m.longTerms
+}
+
+// Agents returns the agent accessor
+func (m *Memory) Agents() *AgentAccessor {
+	return m.agents
+}
+
+// Skills returns the skill accessor
+func (m *Memory) Skills() *SkillAccessor {
+	return m.skills
+}
+
+// Tools returns the tool accessor
+func (m *Memory) Tools() *ToolAccessor {
+	return m.tools
+}
+
+// Reflections returns the reflection accessor
+func (m *Memory) Reflections() *ReflectionAccessor {
+	return m.reflections
+}
+
+// Plans returns the plan accessor
+func (m *Memory) Plans() *PlanAccessor {
+	return m.plans
+}
+
+// Trajectories returns the trajectory accessor
+func (m *Memory) Trajectories() *TrajectoryAccessor {
+	return m.trajectories
+}
+
+// FrozenSessions returns the frozen session accessor
+func (m *Memory) FrozenSessions() *FrozenSessionAccessor {
+	return m.frozenSessions
+}
+
+// GetGraphRAG returns the GraphRAG instance
+func (m *Memory) GetGraphRAG() pattern.GraphRAGPattern {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.graphRAG
 }

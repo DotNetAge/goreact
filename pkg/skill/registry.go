@@ -1,0 +1,252 @@
+package skill
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/DotNetAge/gochat/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/common"
+)
+
+// Registry manages skill registration and retrieval
+type Registry struct {
+	mu     sync.RWMutex
+	skills map[string]*Skill
+	plans  map[string]*SkillExecutionPlan
+}
+
+// NewRegistry creates a new Registry
+func NewRegistry() *Registry {
+	return &Registry{
+		skills: make(map[string]*Skill),
+		plans:  make(map[string]*SkillExecutionPlan),
+	}
+}
+
+// Register registers a skill
+func (r *Registry) Register(skill *Skill) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	
+	if _, exists := r.skills[skill.Name]; exists {
+		return fmt.Errorf("skill %s already registered", skill.Name)
+	}
+	
+	r.skills[skill.Name] = skill
+	return nil
+}
+
+// Unregister unregisters a skill
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	
+	delete(r.skills, name)
+	delete(r.plans, name)
+}
+
+// Get retrieves a skill by name
+func (r *Registry) Get(name string) (*Skill, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	skill, exists := r.skills[name]
+	return skill, exists
+}
+
+// GetPlan retrieves a compiled execution plan
+func (r *Registry) GetPlan(name string) (*SkillExecutionPlan, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	plan, exists := r.plans[name]
+	return plan, exists
+}
+
+// SetPlan sets a compiled execution plan
+func (r *Registry) SetPlan(plan *SkillExecutionPlan) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	
+	r.plans[plan.SkillName] = plan
+}
+
+// List lists all registered skills
+func (r *Registry) List() []*Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	skills := make([]*Skill, 0, len(r.skills))
+	for _, skill := range r.skills {
+		skills = append(skills, skill)
+	}
+	return skills
+}
+
+// ListByAgent lists skills by agent
+func (r *Registry) ListByAgent(agent string) []*Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	skills := []*Skill{}
+	for _, skill := range r.skills {
+		if skill.Agent == agent {
+			skills = append(skills, skill)
+		}
+	}
+	return skills
+}
+
+// Clear clears all registered skills
+func (r *Registry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	
+	r.skills = make(map[string]*Skill)
+	r.plans = make(map[string]*SkillExecutionPlan)
+}
+
+// Global registry instance
+var globalRegistry = NewRegistry()
+
+// Register registers a skill to the global registry
+func Register(skill *Skill) error {
+	return globalRegistry.Register(skill)
+}
+
+// Unregister unregisters a skill from the global registry
+func Unregister(name string) {
+	globalRegistry.Unregister(name)
+}
+
+// Get retrieves a skill from the global registry
+func Get(name string) (*Skill, bool) {
+	return globalRegistry.Get(name)
+}
+
+// GetPlan retrieves a compiled execution plan from the global registry
+func GetPlan(name string) (*SkillExecutionPlan, bool) {
+	return globalRegistry.GetPlan(name)
+}
+
+// SetPlan sets a compiled execution plan in the global registry
+func SetPlan(plan *SkillExecutionPlan) {
+	globalRegistry.SetPlan(plan)
+}
+
+// List lists all registered skills from the global registry
+func List() []*Skill {
+	return globalRegistry.List()
+}
+
+// Executor executes skills
+type Executor struct {
+	registry    *Registry
+	compiler    *Compiler
+	resolver    *RuntimeContextResolver
+	toolExecutor any // Would be tool.Executor
+	llmClient   core.Client
+}
+
+// ExecutorOption is a function that configures the Executor
+type ExecutorOption func(*Executor)
+
+// NewExecutor creates a new Executor
+func NewExecutor(opts ...ExecutorOption) *Executor {
+	e := &Executor{
+		registry: globalRegistry,
+		compiler: NewCompiler(),
+	}
+	
+	for _, opt := range opts {
+		opt(e)
+	}
+	
+	// Initialize resolver with LLM client
+	e.resolver = NewRuntimeContextResolver(e.llmClient)
+	
+	return e
+}
+
+// Execute executes a skill by name
+func (e *Executor) Execute(ctx context.Context, name string, params map[string]any, state map[string]any) (any, error) {
+	// Check for cached plan
+	plan, exists := e.registry.GetPlan(name)
+	if !exists {
+		// Get skill and compile
+		skill, exists := e.registry.Get(name)
+		if !exists {
+			return nil, common.NewError(common.ErrCodeSkillNotFound, fmt.Sprintf("skill %s not found", name), nil)
+		}
+		
+		// Compile skill
+		var err error
+		plan, err = e.compiler.Compile(skill)
+		if err != nil {
+			return nil, common.NewError(common.ErrCodeSkillCompilation, fmt.Sprintf("failed to compile skill %s", name), err)
+		}
+		
+		// Cache the plan
+		e.registry.SetPlan(plan)
+	}
+	
+	// Resolve parameters
+	resolvedParams, err := e.resolver.Resolve(ctx, plan, "", state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve parameters: %w", err)
+	}
+	
+	// Merge with provided params
+	for k, v := range params {
+		resolvedParams[k] = v
+	}
+	
+	// Execute steps
+	results := []any{}
+	context := map[string]any{
+		"params": resolvedParams,
+		"steps":  results,
+	}
+	
+	for _, step := range plan.Steps {
+		// Render parameters
+		renderedParams, err := e.compiler.RenderParams(step.ParamsTemplate, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render step params: %w", err)
+		}
+		
+		// Check condition
+		if step.Condition != "" {
+			// Evaluate condition
+			// Simplified - would use expression evaluator
+		}
+		
+		// Execute tool
+		// result, err := e.toolExecutor.Execute(ctx, step.ToolName, renderedParams)
+		// Simplified - just collect the step
+		results = append(results, map[string]any{
+			"tool":   step.ToolName,
+			"params": renderedParams,
+		})
+	}
+	
+	// Update execution stats
+	plan.IncrementExecution(true)
+	
+	return results, nil
+}
+
+// WithRegistry sets the registry
+func WithRegistry(registry *Registry) ExecutorOption {
+	return func(e *Executor) {
+		e.registry = registry
+	}
+}
+
+// WithLLM sets the LLM client
+func WithLLM(llm core.Client) ExecutorOption {
+	return func(e *Executor) {
+		e.llmClient = llm
+	}
+}

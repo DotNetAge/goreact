@@ -1,96 +1,222 @@
+// Package agent provides agent interfaces and implementations for the goreact framework.
 package agent
 
 import (
 	"context"
-	"fmt"
 	"time"
 
-	"github.com/DotNetAge/goreact/pkg/core"
-	"github.com/DotNetAge/goreact/pkg/engine"
-	"github.com/DotNetAge/goreact/pkg/memory"
-	"github.com/DotNetAge/goreact/pkg/skill"
+	"github.com/DotNetAge/goreact/pkg/common"
 )
 
-// Agent 智能体实体（Rich Domain Model）
-// Agent = 角色设定(Config) + 大脑与身体(Reactor/Engine) + 记忆体系(MemoryBank)
-type Agent struct {
-	// --- 静态配置与描述 (Config & Identity) ---
-	AgentName    string            // 智能体名称
-	AgentDesc    string            // 智能体描述（用于选择匹配）
-	SystemPrompt string            // 系统提示词（定义 Agent 的角色和行为）
-	ModelName    string            // 使用的模型名称（引用 Model 配置）
-	Metadata     map[string]string // 元数据（可选）
-
-	// --- 运行时状态机引擎 (Runtime Engine) ---
-	// 引擎是 Agent 的核心执行器，负责 ReAct 循环流转。
-	reactor *engine.Reactor
-
-	// --- 技能与演化 (Skill & Evolution) ---
-	skillManager skill.Manager
-
-	// --- 记忆体系 (Memory Architecture) ---
-	// 专属记忆体，包含短期工作记忆、语义知识库与肌肉记忆。
-	memoryBank memory.MemoryBank
+// Agent represents an intelligent agent
+type Agent interface {
+	// Name returns the agent name
+	Name() string
+	
+	// Domain returns the agent domain
+	Domain() string
+	
+	// Description returns the agent description
+	Description() string
+	
+	// Model returns the model name
+	Model() string
+	
+	// Skills returns the skill names
+	Skills() []string
+	
+	// PromptTemplate returns the prompt template
+	PromptTemplate() string
+	
+	// Config returns the agent configuration
+	Config() *Config
+	
+	// Ask executes a question
+	Ask(ctx context.Context, question string, files ...string) (*Result, error)
+	
+	// Resume resumes a paused session
+	Resume(ctx context.Context, sessionName string, answer string) (*Result, error)
+	
+	// AskStream executes a question with streaming response
+	AskStream(ctx context.Context, question string, files ...string) (<-chan any, error)
 }
 
-// NewAgent 创建一个新的智能体模版/配置
-func NewAgent(name, description, systemPrompt, modelName string) *Agent {
-	return &Agent{
-		AgentName:    name,
-		AgentDesc:    description,
-		SystemPrompt: systemPrompt,
-		ModelName:    modelName,
-		Metadata:     make(map[string]string),
+// Config represents agent configuration
+type Config struct {
+	// Name is the agent name
+	Name string `json:"name" yaml:"name"`
+	
+	// Domain is the agent domain
+	Domain string `json:"domain" yaml:"domain"`
+	
+	// Description is the agent description
+	Description string `json:"description" yaml:"description"`
+	
+	// Model is the model name
+	Model string `json:"model" yaml:"model"`
+	
+	// PromptTemplate is the prompt template
+	PromptTemplate string `json:"prompt_template" yaml:"prompt_template"`
+	
+	// MaxSteps is the maximum number of steps
+	MaxSteps int `json:"max_steps" yaml:"max_steps"`
+	
+	// MaxRetries is the maximum number of retries
+	MaxRetries int `json:"max_retries" yaml:"max_retries"`
+	
+	// Timeout is the execution timeout
+	Timeout time.Duration `json:"timeout" yaml:"timeout"`
+	
+	// Skills are the skill names
+	Skills []string `json:"skills" yaml:"skills"`
+	
+	// Tools are the tool names
+	Tools []string `json:"tools" yaml:"tools"`
+	
+	// Metadata contains additional metadata
+	Metadata map[string]any `json:"metadata" yaml:"metadata"`
+}
+
+// DefaultConfig returns the default agent configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Name:           common.DefaultAgentName,
+		Domain:         common.DefaultDomain,
+		Model:          common.DefaultModel,
+		MaxSteps:       common.DefaultMaxSteps,
+		MaxRetries:     common.DefaultMaxRetries,
+		Timeout:        common.DefaultTimeout,
+		Skills:         []string{},
+		Tools:          []string{},
+		Metadata:       make(map[string]any),
 	}
 }
 
-// =========================================================================
-// 应用层入口 (Application API)
-// =========================================================================
+// Result represents the result of an agent execution
+type Result struct {
+	// Answer is the final answer
+	Answer string `json:"answer"`
+	
+	// Status is the execution status
+	Status common.Status `json:"status"`
+	
+	// SessionName is the session name
+	SessionName string `json:"session_name"`
+	
+	// Trajectory is the execution trajectory
+	Trajectory any `json:"trajectory"`
+	
+	// Reflections are the reflections
+	Reflections []any `json:"reflections"`
+	
+	// TokenUsage is the token usage
+	TokenUsage *common.TokenUsage `json:"token_usage"`
+	
+	// Duration is the execution duration
+	Duration time.Duration `json:"duration"`
+	
+	// Metadata contains additional metadata
+	Metadata map[string]any `json:"metadata"`
+	
+	// Error is the error message
+	Error string `json:"error,omitempty"`
+	
+	// PendingQuestion is the pending question if paused
+	PendingQuestion *PendingQuestion `json:"pending_question,omitempty"`
+}
 
-// Chat 执行多轮对话流任务，内部启动 ReAct 引擎循环
-func (a *Agent) Chat(ctx context.Context, sessionID, task string, opts ...core.ContextOption) (string, error) {
-	if a.reactor == nil {
-		return "", fmt.Errorf("AgentNotAssembled: The agent has not been assembled by a Builder. Missing reactor engine.")
+// PendingQuestion represents a question that needs user response
+type PendingQuestion struct {
+	// ID is the question ID
+	ID string `json:"id"`
+	
+	// Type is the question type
+	Type common.QuestionType `json:"type"`
+	
+	// Question is the question text
+	Question string `json:"question"`
+	
+	// Options are the available options
+	Options []string `json:"options"`
+	
+	// DefaultAnswer is the default answer
+	DefaultAnswer string `json:"default_answer"`
+}
+
+// BaseAgent provides a base implementation for agents
+type BaseAgent struct {
+	config *Config
+}
+
+// NewBaseAgent creates a new BaseAgent
+func NewBaseAgent(config *Config) *BaseAgent {
+	if config == nil {
+		config = DefaultConfig()
 	}
+	return &BaseAgent{config: config}
+}
 
-	// 调用底层 Reactor 执行 ReAct 循环
-	reactCtx, err := a.reactor.Run(ctx, sessionID, task, opts...)
+// Name returns the agent name
+func (a *BaseAgent) Name() string {
+	return a.config.Name
+}
 
-	// 记录 Skill 执行数据 (如果命中)
-	if a.skillManager != nil && reactCtx != nil {
-		if activeSkill, ok := reactCtx.Get("active_skill"); ok {
-			if skillName, isStr := activeSkill.(string); isStr {
-				success := err == nil && reactCtx.Error == nil
-				tokens := 0
-				if reactCtx.TotalTokens != nil {
-					tokens = reactCtx.TotalTokens.TotalTokens
-				}
+// Domain returns the agent domain
+func (a *BaseAgent) Domain() string {
+	return a.config.Domain
+}
 
-				// 质量打分策略: 成功则给 1.0, 失败给 0.0
-				score := 0.0
-				if success {
-					score = 1.0
-				}
+// Description returns the agent description
+func (a *BaseAgent) Description() string {
+	return a.config.Description
+}
 
-				_ = a.skillManager.RecordExecution(
-					skillName,
-					success,
-					time.Since(reactCtx.StartTime),
-					tokens,
-					score,
-				)
-			}
-		}
+// Model returns the model name
+func (a *BaseAgent) Model() string {
+	return a.config.Model
+}
+
+// Skills returns the skill names
+func (a *BaseAgent) Skills() []string {
+	return a.config.Skills
+}
+
+// PromptTemplate returns the prompt template
+func (a *BaseAgent) PromptTemplate() string {
+	return a.config.PromptTemplate
+}
+
+// Config returns the agent configuration
+func (a *BaseAgent) Config() *Config {
+	return a.config
+}
+
+// Input represents the input for an agent
+type Input struct {
+	// Question is the user question
+	Question string `json:"question"`
+	
+	// Files are the input files
+	Files []string `json:"files"`
+	
+	// Context is additional context
+	Context map[string]any `json:"context"`
+}
+
+// NewInput creates a new Input
+func NewInput(question string, files ...string) *Input {
+	return &Input{
+		Question: question,
+		Files:    files,
+		Context:  make(map[string]any),
 	}
+}
 
-	if err != nil {
-		return "", err
+// WithContext adds context
+func (i *Input) WithContext(key string, value any) *Input {
+	if i.Context == nil {
+		i.Context = make(map[string]any)
 	}
-
-	// 提取最终输出
-	if reactCtx.FinalResult != "" {
-		return reactCtx.FinalResult, nil
-	}
-	return "No final answer produced.", nil
+	i.Context[key] = value
+	return i
 }
