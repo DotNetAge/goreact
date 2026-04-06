@@ -214,7 +214,7 @@ func toolNodeToNode(tool goreacttool.ToolNode) *core.Node {
 			"node_type":      goreactcommon.NodeTypeTool,
 			"description":    tool.Description,
 			"type":           string(tool.Type),
-			"security_level": string(tool.SecurityLevel),
+			"security_level": fmt.Sprintf("%d", tool.SecurityLevel),
 			"is_idempotent":  tool.IsIdempotent,
 			"created_at":     time.Now().Format(time.RFC3339),
 		},

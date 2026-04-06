@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/DotNetAge/gochat/pkg/embedding"
 	goragcore "github.com/DotNetAge/gorag/pkg/core"
-	"github.com/DotNetAge/gorag/pkg/indexing"
+	"github.com/DotNetAge/gorag/pkg/indexer"
 	"github.com/DotNetAge/gorag/pkg/pattern"
 )
 
@@ -30,7 +31,7 @@ func NewMockGraphRAG() *MockGraphRAG {
 }
 
 // Indexer returns a mock indexer
-func (m *MockGraphRAG) Indexer() indexing.Indexer {
+func (m *MockGraphRAG) Indexer() indexer.Indexer {
 	return &mockIndexer{mock: m}
 }
 
@@ -218,6 +219,34 @@ func (m *mockIndexer) GetDocument(ctx context.Context, docID string) (*goragcore
 	m.mock.mu.RLock()
 	defer m.mock.mu.RUnlock()
 	return m.mock.docs[docID], nil
+}
+
+func (m *mockIndexer) Init() error {
+	return nil
+}
+
+func (m *mockIndexer) Start() error {
+	return nil
+}
+
+func (m *mockIndexer) VectorStore() goragcore.VectorStore {
+	return nil
+}
+
+func (m *mockIndexer) DocStore() goragcore.DocStore {
+	return nil
+}
+
+func (m *mockIndexer) GraphStore() goragcore.GraphStore {
+	return nil
+}
+
+func (m *mockIndexer) Embedder() embedding.Provider {
+	return nil
+}
+
+func (m *mockIndexer) Chunker() goragcore.SemanticChunker {
+	return nil
 }
 
 // mockRetriever implements goragcore.Retriever
