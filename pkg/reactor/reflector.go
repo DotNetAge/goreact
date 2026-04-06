@@ -2,10 +2,14 @@ package reactor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
-	"github.com/DotNetAge/goreact/pkg/common"
-	"github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/gochat/pkg/core"
+	goreactcommon "github.com/DotNetAge/goreact/pkg/common"
+	goreactcore "github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
 )
 
 // ReflectorConfig represents reflector configuration
@@ -28,10 +32,10 @@ func DefaultReflectorConfig() *ReflectorConfig {
 
 // BaseReflector provides base reflector functionality
 type BaseReflector struct {
-	llmClient     any // Would be LLM client
-	memory        any // Would be Memory
-	config        *ReflectorConfig
-	reflections   []*core.Reflection
+	llmClient   core.Client
+	memory      *memory.Memory
+	config      *ReflectorConfig
+	reflections []*goreactcore.Reflection
 }
 
 // NewBaseReflector creates a new BaseReflector
@@ -41,29 +45,29 @@ func NewBaseReflector(config *ReflectorConfig) *BaseReflector {
 	}
 	return &BaseReflector{
 		config:      config,
-		reflections: []*core.Reflection{},
+		reflections: []*goreactcore.Reflection{},
 	}
 }
 
 // WithLLMClient sets the LLM client
-func (r *BaseReflector) WithLLMClient(client any) *BaseReflector {
+func (r *BaseReflector) WithLLMClient(client core.Client) *BaseReflector {
 	r.llmClient = client
 	return r
 }
 
 // WithMemory sets the memory
-func (r *BaseReflector) WithMemory(memory any) *BaseReflector {
-	r.memory = memory
+func (r *BaseReflector) WithMemory(mem *memory.Memory) *BaseReflector {
+	r.memory = mem
 	return r
 }
 
 // Reflect performs reflection on a failed execution
-func (r *BaseReflector) Reflect(ctx context.Context, state *core.State) (*core.Reflection, error) {
+func (r *BaseReflector) Reflect(ctx context.Context, state *goreactcore.State) (*goreactcore.Reflection, error) {
 	// Get the trajectory
 	trajectory := state.Trajectory
 	if trajectory == nil {
 		// Build trajectory from state
-		builder := core.NewTrajectoryBuilder(state)
+		builder := goreactcore.NewTrajectoryBuilder(state)
 		trajectory = builder.Build()
 	}
 	
@@ -74,30 +78,66 @@ func (r *BaseReflector) Reflect(ctx context.Context, state *core.State) (*core.R
 		failureContext = trajectory.Steps
 	}
 	
+	// Use LLM for analysis if available
+	if r.llmClient != nil {
+		return r.reflectWithLLM(ctx, failureContext, state)
+	}
+	
+	// Fallback: Analyze failure without LLM
+	return r.analyzeFailureLocally(failureContext, state)
+}
+
+// reflectWithLLM performs reflection using LLM
+func (r *BaseReflector) reflectWithLLM(ctx context.Context, context []*goreactcore.TrajectoryStep, state *goreactcore.State) (*goreactcore.Reflection, error) {
+	// Build reflection prompt
+	prompt := r.buildReflectionPrompt(context, state)
+	
+	// Call LLM
+	resp, err := r.llmClient.Chat(ctx, []core.Message{
+		core.NewUserMessage(prompt),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("LLM call failed: %w", err)
+	}
+	
+	// Parse response
+	reflection, err := r.parseReflectionResponse(resp.Content, state)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse reflection: %w", err)
+	}
+	
+	// Store reflection
+	r.reflections = append(r.reflections, reflection)
+	
+	return reflection, nil
+}
+
+// analyzeFailureLocally analyzes failure without LLM
+func (r *BaseReflector) analyzeFailureLocally(context []*goreactcore.TrajectoryStep, state *goreactcore.State) (*goreactcore.Reflection, error) {
 	// Analyze failure
-	failureReason := r.analyzeFailure(failureContext, state)
+	failureReason := r.analyzeFailure(context, state)
 	
 	// Create reflection
-	reflection := core.NewReflection(
+	reflection := goreactcore.NewReflection(
 		state.SessionName,
-		trajectory.Name,
+		state.Trajectory.Name,
 		failureReason,
 	)
 	
 	// Generate analysis
-	analysis := r.generateAnalysis(failureContext, state)
+	analysis := r.generateAnalysis(context, state)
 	reflection.WithAnalysis(analysis)
 	
 	// Generate heuristic
-	heuristic := r.generateHeuristic(failureContext, state)
+	heuristic := r.generateHeuristic(context, state)
 	reflection.WithHeuristic(heuristic)
 	
 	// Generate suggestions
-	suggestions := r.generateSuggestions(failureContext, state)
+	suggestions := r.generateSuggestions(context, state)
 	reflection.WithSuggestions(suggestions)
 	
 	// Calculate score
-	score := r.calculateScore(failureContext, state)
+	score := r.calculateScore(context, state)
 	reflection.WithScore(score)
 	
 	// Store reflection
@@ -107,7 +147,7 @@ func (r *BaseReflector) Reflect(ctx context.Context, state *core.State) (*core.R
 }
 
 // ReflectFromTrajectory performs reflection from a trajectory
-func (r *BaseReflector) ReflectFromTrajectory(ctx context.Context, trajectory *core.Trajectory, state *core.State) (*core.Reflection, error) {
+func (r *BaseReflector) ReflectFromTrajectory(ctx context.Context, trajectory *goreactcore.Trajectory, state *goreactcore.State) (*goreactcore.Reflection, error) {
 	if trajectory == nil {
 		return nil, fmt.Errorf("trajectory is nil")
 	}
@@ -120,11 +160,105 @@ func (r *BaseReflector) ReflectFromTrajectory(ctx context.Context, trajectory *c
 	return r.Reflect(ctx, state)
 }
 
-// analyzeFailure analyzes the failure
-func (r *BaseReflector) analyzeFailure(context []*core.TrajectoryStep, state *core.State) string {
-	// Would use LLM to analyze
-	// Simplified implementation
+// buildReflectionPrompt builds the prompt for LLM-based reflection
+func (r *BaseReflector) buildReflectionPrompt(context []*goreactcore.TrajectoryStep, state *goreactcore.State) string {
+	var sb strings.Builder
 	
+	sb.WriteString(`Analyze this failed execution and provide reflection.
+
+## Execution Context
+- Session: ` + state.SessionName + `
+- Step: ` + fmt.Sprintf("%d", state.CurrentStep) + ` / ` + fmt.Sprintf("%d", state.MaxSteps) + `
+- Input: ` + state.Input + `
+
+## Trajectory Steps
+`)
+	
+	for i, step := range context {
+		sb.WriteString(fmt.Sprintf("\n### Step %d\n", i+1))
+		if step.Thought != nil {
+			sb.WriteString(fmt.Sprintf("**Thought**: %s\n", step.Thought.Content))
+		}
+		if step.Action != nil {
+			sb.WriteString(fmt.Sprintf("**Action**: %s on %s\n", step.Action.Type, step.Action.Target))
+			if len(step.Action.Params) > 0 {
+				sb.WriteString("**Params**: ")
+				for k, v := range step.Action.Params {
+					sb.WriteString(fmt.Sprintf("%s=%v ", k, v))
+				}
+				sb.WriteString("\n")
+			}
+		}
+		if step.Observation != nil {
+			status := "success"
+			if !step.Observation.Success {
+				status = "failed"
+			}
+			sb.WriteString(fmt.Sprintf("**Observation** (%s): %s\n", status, step.Observation.Content))
+			if step.Observation.Error != "" {
+				sb.WriteString(fmt.Sprintf("**Error**: %s\n", step.Observation.Error))
+			}
+		}
+	}
+	
+	sb.WriteString(`
+## Analysis Required
+1. Identify the root cause of failure
+2. Analyze what went wrong
+3. Generate a heuristic lesson
+4. Provide actionable suggestions
+
+## Output Format (JSON)
+{
+  "failure_reason": "description of what failed",
+  "analysis": "detailed analysis of the failure",
+  "heuristic": "a memorable lesson for future",
+  "suggestions": ["suggestion1", "suggestion2"],
+  "confidence": 0.0-1.0
+}`)
+	
+	return sb.String()
+}
+
+// parseReflectionResponse parses the LLM response into a Reflection
+func (r *BaseReflector) parseReflectionResponse(response string, state *goreactcore.State) (*goreactcore.Reflection, error) {
+	// Extract JSON from response
+	jsonStart := strings.Index(response, "{")
+	jsonEnd := strings.LastIndex(response, "}")
+	
+	if jsonStart == -1 || jsonEnd == -1 {
+		return nil, fmt.Errorf("no JSON found in response")
+	}
+	
+	jsonStr := response[jsonStart : jsonEnd+1]
+	
+	var parsed struct {
+		FailureReason string   `json:"failure_reason"`
+		Analysis      string   `json:"analysis"`
+		Heuristic     string   `json:"heuristic"`
+		Suggestions   []string `json:"suggestions"`
+		Confidence    float64  `json:"confidence"`
+	}
+	
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	
+	reflection := goreactcore.NewReflection(
+		state.SessionName,
+		state.Trajectory.Name,
+		parsed.FailureReason,
+	)
+	reflection.WithAnalysis(parsed.Analysis)
+	reflection.WithHeuristic(parsed.Heuristic)
+	reflection.WithSuggestions(parsed.Suggestions)
+	reflection.WithScore(parsed.Confidence)
+	
+	return reflection, nil
+}
+
+// analyzeFailure analyzes the failure
+func (r *BaseReflector) analyzeFailure(context []*goreactcore.TrajectoryStep, state *goreactcore.State) string {
 	for i, step := range context {
 		if step.Observation != nil && !step.Observation.Success {
 			return fmt.Sprintf("Execution failed at step %d: %s", 
@@ -137,10 +271,7 @@ func (r *BaseReflector) analyzeFailure(context []*core.TrajectoryStep, state *co
 }
 
 // generateAnalysis generates detailed analysis
-func (r *BaseReflector) generateAnalysis(context []*core.TrajectoryStep, state *core.State) string {
-	// Would use LLM to generate
-	// Simplified implementation
-	
+func (r *BaseReflector) generateAnalysis(context []*goreactcore.TrajectoryStep, state *goreactcore.State) string {
 	analysis := "Analysis of execution failure:\n"
 	
 	for i, step := range context {
@@ -163,18 +294,15 @@ func (r *BaseReflector) generateAnalysis(context []*core.TrajectoryStep, state *
 }
 
 // generateHeuristic generates a heuristic lesson
-func (r *BaseReflector) generateHeuristic(context []*core.TrajectoryStep, state *core.State) string {
-	// Would use LLM to generate
-	// Simplified implementation based on failure patterns
-	
+func (r *BaseReflector) generateHeuristic(context []*goreactcore.TrajectoryStep, state *goreactcore.State) string {
 	for _, step := range context {
 		if step.Action != nil && step.Observation != nil && !step.Observation.Success {
 			switch step.Action.Type {
-			case common.ActionTypeToolCall:
+			case goreactcommon.ActionTypeToolCall:
 				return "Verify tool parameters and availability before execution"
-			case common.ActionTypeSkillInvoke:
+			case goreactcommon.ActionTypeSkillInvoke:
 				return "Ensure skill is properly configured and all dependencies are met"
-			case common.ActionTypeSubAgentDelegate:
+			case goreactcommon.ActionTypeSubAgentDelegate:
 				return "Verify sub-agent capabilities before delegation"
 			}
 		}
@@ -184,10 +312,7 @@ func (r *BaseReflector) generateHeuristic(context []*core.TrajectoryStep, state 
 }
 
 // generateSuggestions generates actionable suggestions
-func (r *BaseReflector) generateSuggestions(context []*core.TrajectoryStep, state *core.State) []string {
-	// Would use LLM to generate
-	// Simplified implementation
-	
+func (r *BaseReflector) generateSuggestions(context []*goreactcore.TrajectoryStep, state *goreactcore.State) []string {
 	suggestions := []string{
 		"Review the execution trajectory for potential improvements",
 		"Consider alternative approaches for failed steps",
@@ -206,7 +331,7 @@ func (r *BaseReflector) generateSuggestions(context []*core.TrajectoryStep, stat
 }
 
 // calculateScore calculates the reflection quality score
-func (r *BaseReflector) calculateScore(context []*core.TrajectoryStep, state *core.State) float64 {
+func (r *BaseReflector) calculateScore(context []*goreactcore.TrajectoryStep, state *goreactcore.State) float64 {
 	// Base score
 	score := 0.5
 	
@@ -233,7 +358,7 @@ func (r *BaseReflector) calculateScore(context []*core.TrajectoryStep, state *co
 }
 
 // GenerateHeuristic generates a heuristic from a reflection
-func (r *BaseReflector) GenerateHeuristic(reflection *core.Reflection) string {
+func (r *BaseReflector) GenerateHeuristic(reflection *goreactcore.Reflection) string {
 	if reflection == nil {
 		return ""
 	}
@@ -248,24 +373,57 @@ func (r *BaseReflector) GenerateHeuristic(reflection *core.Reflection) string {
 		reflection.Analysis)
 }
 
-// StoreReflection stores a reflection (would integrate with memory)
-func (r *BaseReflector) StoreReflection(reflection *core.Reflection, state *core.State) error {
+// StoreReflection stores a reflection in memory
+func (r *BaseReflector) StoreReflection(ctx context.Context, reflection *goreactcore.Reflection, state *goreactcore.State) error {
 	if reflection == nil {
 		return fmt.Errorf("reflection is nil")
 	}
 	
-	// Would store in memory
-	// For now, just keep in local cache
+	// Store in local cache
 	r.reflections = append(r.reflections, reflection)
+	
+	// Store in memory if available
+	if r.memory != nil {
+		reflectionNode := goreactcore.NewReflectionNode(state.SessionName, reflection.TrajectoryName, reflection.FailureReason)
+		reflectionNode.Analysis = reflection.Analysis
+		reflectionNode.Heuristic = reflection.Heuristic
+		reflectionNode.Suggestions = reflection.Suggestions
+		reflectionNode.Score = reflection.Score
+		
+		if err := r.memory.Reflections().Add(ctx, reflectionNode); err != nil {
+			return fmt.Errorf("failed to store reflection in memory: %w", err)
+		}
+	}
 	
 	return nil
 }
 
 // RetrieveRelevantReflections retrieves relevant reflections for a query
-func (r *BaseReflector) RetrieveRelevantReflections(ctx context.Context, query string, limit int) ([]*core.Reflection, error) {
-	// Would use semantic search in memory
-	// Simplified implementation - return recent reflections
+func (r *BaseReflector) RetrieveRelevantReflections(ctx context.Context, query string, limit int) ([]*goreactcore.Reflection, error) {
+	// Try to retrieve from memory first
+	if r.memory != nil {
+		reflectionNodes, err := r.memory.Reflections().List(ctx)
+		if err == nil && len(reflectionNodes) > 0 {
+			// Convert nodes to reflections
+			reflections := make([]*goreactcore.Reflection, 0, limit)
+			for i := len(reflectionNodes) - 1; i >= 0 && len(reflections) < limit; i-- {
+				node := reflectionNodes[i]
+				reflection := &goreactcore.Reflection{
+					Name:          node.Name,
+					TrajectoryName: node.TrajectoryName,
+					FailureReason: node.FailureReason,
+					Analysis:      node.Analysis,
+					Heuristic:     node.Heuristic,
+					Suggestions:   node.Suggestions,
+					Score:         node.Score,
+				}
+				reflections = append(reflections, reflection)
+			}
+			return reflections, nil
+		}
+	}
 	
+	// Fallback to local cache
 	if limit <= 0 || limit > len(r.reflections) {
 		limit = len(r.reflections)
 	}
@@ -279,6 +437,6 @@ func (r *BaseReflector) RetrieveRelevantReflections(ctx context.Context, query s
 }
 
 // GetReflections returns all stored reflections
-func (r *BaseReflector) GetReflections() []*core.Reflection {
+func (r *BaseReflector) GetReflections() []*goreactcore.Reflection {
 	return r.reflections
 }

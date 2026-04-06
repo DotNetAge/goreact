@@ -95,6 +95,15 @@ type ExecutionStep struct {
 	
 	// Description is the step description
 	Description string `json:"description" yaml:"description"`
+	
+	// OnError is the error handling strategy (continue, stop, retry)
+	OnError string `json:"on_error" yaml:"on_error"`
+	
+	// MaxRetries is the maximum number of retries when OnError is retry
+	MaxRetries int `json:"max_retries" yaml:"max_retries"`
+	
+	// RetryDelay is the delay between retries
+	RetryDelay time.Duration `json:"retry_delay" yaml:"retry_delay"`
 }
 
 // NewSkill creates a new Skill
@@ -310,6 +319,69 @@ type SkillCompiler interface {
 	
 	// ParseBody parses SKILL.md body into steps
 	ParseBody(body string) ([]ExecutionStep, error)
+}
+
+// ListOption is a functional option for list operations
+type ListOption func(*ListOptions)
+
+// ListOptions contains options for list operations
+type ListOptions struct {
+	Agent   string
+	Tags    []string
+	Limit   int
+	Offset  int
+}
+
+// WithAgent filters by agent
+func WithAgent(agent string) ListOption {
+	return func(opts *ListOptions) {
+		opts.Agent = agent
+	}
+}
+
+// WithTags filters by tags
+func WithTags(tags []string) ListOption {
+	return func(opts *ListOptions) {
+		opts.Tags = tags
+	}
+}
+
+// WithLimit sets the limit
+func WithLimit(limit int) ListOption {
+	return func(opts *ListOptions) {
+		opts.Limit = limit
+	}
+}
+
+// WithOffset sets the offset
+func WithOffset(offset int) ListOption {
+	return func(opts *ListOptions) {
+		opts.Offset = offset
+	}
+}
+
+// SkillAccessor provides access to skills through memory
+type SkillAccessor interface {
+	// Get retrieves a skill by name
+	Get(ctx context.Context, name string) (*Skill, error)
+	
+	// List lists all skills with optional filters
+	List(ctx context.Context, opts ...ListOption) ([]*Skill, error)
+	
+	// Search performs semantic search on skills
+	Search(ctx context.Context, query string, topK int) ([]*Skill, error)
+	
+	// GetExecutionPlan retrieves a compiled execution plan
+	GetExecutionPlan(ctx context.Context, skillName string) (*SkillExecutionPlan, error)
+	
+	// StoreExecutionPlan stores a compiled execution plan
+	StoreExecutionPlan(ctx context.Context, plan *SkillExecutionPlan) error
+	
+	// DeleteExecutionPlan deletes an execution plan
+	DeleteExecutionPlan(ctx context.Context, skillName string) error
+	
+	// UpdateExecutionStats updates execution statistics
+	UpdateExecutionStats(ctx context.Context, skillName string, success bool, duration time.Duration) error
 }
 
 // SkillFrontmatter represents the frontmatter of a SKILL.md file

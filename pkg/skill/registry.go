@@ -84,6 +84,60 @@ func (r *Registry) List() []*Skill {
 	return skills
 }
 
+// Search performs semantic search on skills (simplified implementation)
+func (r *Registry) Search(query string, topK int) []*Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	// Simplified implementation - in production would use vector similarity
+	// For now, return skills matching by name or description
+	skills := make([]*Skill, 0)
+	for _, skill := range r.skills {
+		// Simple keyword matching
+		if containsIgnoreCase(skill.Name, query) || containsIgnoreCase(skill.Description, query) {
+			skills = append(skills, skill)
+			if len(skills) >= topK {
+				break
+			}
+		}
+	}
+	return skills
+}
+
+// containsIgnoreCase checks if s contains substr (case insensitive)
+func containsIgnoreCase(s, substr string) bool {
+	// Simple implementation
+	return len(s) >= len(substr) && 
+		(s == substr || len(substr) == 0 || 
+		 (len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+// findSubstring finds substr in s (case insensitive)
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			sc := s[i+j]
+			subc := substr[j]
+			// Convert to lowercase for comparison
+			if sc >= 'A' && sc <= 'Z' {
+				sc += 32
+			}
+			if subc >= 'A' && subc <= 'Z' {
+				subc += 32
+			}
+			if sc != subc {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // ListByAgent lists skills by agent
 func (r *Registry) ListByAgent(agent string) []*Skill {
 	r.mu.RLock()
@@ -140,6 +194,11 @@ func List() []*Skill {
 	return globalRegistry.List()
 }
 
+// Search performs semantic search on skills from the global registry
+func Search(query string, topK int) []*Skill {
+	return globalRegistry.Search(query, topK)
+}
+
 // Executor executes skills
 type Executor struct {
 	registry    *Registry
@@ -182,7 +241,7 @@ func (e *Executor) Execute(ctx context.Context, name string, params map[string]a
 		
 		// Compile skill
 		var err error
-		plan, err = e.compiler.Compile(skill)
+		plan, err = e.compiler.Compile(ctx, skill)
 		if err != nil {
 			return nil, common.NewError(common.ErrCodeSkillCompilation, fmt.Sprintf("failed to compile skill %s", name), err)
 		}

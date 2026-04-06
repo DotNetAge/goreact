@@ -98,6 +98,11 @@ func (a *ShortTermAccessor) Update(ctx context.Context, item *goreactcore.Memory
 	return a.graphRAG.AddNode(ctx, node)
 }
 
+// Delete deletes a specific memory item by ID
+func (a *ShortTermAccessor) Delete(ctx context.Context, id string) error {
+	return a.BaseAccessor.Delete(ctx, id)
+}
+
 // List lists memory items for a session
 func (a *ShortTermAccessor) List(ctx context.Context, sessionName string) ([]*goreactcore.MemoryItemNode, error) {
 	query := fmt.Sprintf(

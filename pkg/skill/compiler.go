@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 	"text/template"
 	"time"
 
@@ -30,7 +32,7 @@ func (c *Compiler) WithLLM(llm core.Client) *Compiler {
 }
 
 // Compile compiles a skill into an execution plan
-func (c *Compiler) Compile(skill *Skill) (*SkillExecutionPlan, error) {
+func (c *Compiler) Compile(ctx context.Context, skill *Skill) (*SkillExecutionPlan, error) {
 	plan := NewSkillExecutionPlan(skill.Name)
 	
 	// Copy steps
@@ -64,13 +66,120 @@ func (c *Compiler) Compile(skill *Skill) (*SkillExecutionPlan, error) {
 
 // parseTemplate parses a skill template and extracts execution steps
 func (c *Compiler) parseTemplate(templateContent string) ([]ExecutionStep, error) {
-	// Simple template parsing - in real implementation would parse markdown
-	// and extract tool calls and parameters
 	steps := []ExecutionStep{}
 	
 	// Parse the template looking for tool invocations
-	// This is a simplified implementation
-	// A full implementation would parse the SKILL.md format
+	// Support SKILL.md format with steps defined in markdown
+	
+	lines := strings.Split(templateContent, "\n")
+	stepIndex := 0
+	inStepsSection := false
+	
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		
+		// Detect steps section
+		if strings.HasPrefix(trimmedLine, "## Steps") || strings.HasPrefix(trimmedLine, "##步骤") {
+			inStepsSection = true
+			continue
+		}
+		
+		// End steps section at next heading
+		if inStepsSection && strings.HasPrefix(trimmedLine, "##") {
+			inStepsSection = false
+			continue
+		}
+		
+		if !inStepsSection {
+			continue
+		}
+		
+		// Parse numbered steps
+		if matched, _ := regexp.MatchString(`^\d+\.\s+.+`, trimmedLine); matched {
+			// Extract step description
+			re := regexp.MustCompile(`^\d+\.\s+(.+)$`)
+			matches := re.FindStringSubmatch(trimmedLine)
+			if len(matches) > 1 {
+				description := matches[1]
+				
+				// Detect tool invocations in the step
+				toolName := ""
+				paramsTemplate := make(map[string]any)
+				
+				// Check for tool call pattern: tool_name(args)
+				toolPattern := regexp.MustCompile(`(\w+)\s*\(([^)]*)\)`)
+				toolMatches := toolPattern.FindStringSubmatch(description)
+				if len(toolMatches) > 2 {
+					toolName = toolMatches[1]
+					// Parse parameters
+					paramsStr := toolMatches[2]
+					for _, param := range strings.Split(paramsStr, ",") {
+						kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+						if len(kv) == 2 {
+							key := strings.TrimSpace(kv[0])
+							value := strings.TrimSpace(kv[1])
+							// Remove quotes if present
+							value = strings.Trim(value, "\"'")
+							paramsTemplate[key] = value
+						}
+					}
+				}
+				
+				step := ExecutionStep{
+					Index:          stepIndex,
+					ToolName:       toolName,
+					Description:    description,
+					ParamsTemplate: paramsTemplate,
+					Condition:      "",
+					OnError:        "stop",
+				}
+				
+				steps = append(steps, step)
+				stepIndex++
+			}
+		}
+	}
+	
+	// Also look for inline tool calls outside of numbered steps
+	toolCallPattern := regexp.MustCompile("`([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(([^)]*)\\)`")
+	matches := toolCallPattern.FindAllStringSubmatch(templateContent, -1)
+	for i, match := range matches {
+		if len(match) >= 3 {
+			// Check if this tool call is already in steps
+			found := false
+			for _, step := range steps {
+				if step.ToolName == match[1] {
+					found = true
+					break
+				}
+			}
+			
+			if !found && match[1] != "" {
+				paramsTemplate := make(map[string]any)
+				paramsStr := match[2]
+				for _, param := range strings.Split(paramsStr, ",") {
+					kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+					if len(kv) == 2 {
+						key := strings.TrimSpace(kv[0])
+						value := strings.TrimSpace(kv[1])
+						value = strings.Trim(value, "\"'")
+						paramsTemplate[key] = value
+					}
+				}
+				
+				step := ExecutionStep{
+					Index:          len(steps) + i,
+					ToolName:       match[1],
+					Description:    fmt.Sprintf("Execute %s", match[1]),
+					ParamsTemplate: paramsTemplate,
+					Condition:      "",
+					OnError:        "stop",
+				}
+				
+				steps = append(steps, step)
+			}
+		}
+	}
 	
 	return steps, nil
 }

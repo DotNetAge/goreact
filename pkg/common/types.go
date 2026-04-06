@@ -163,6 +163,9 @@ const (
 	MemoryItemTypeConstraint  MemoryItemType = "constraint"
 	MemoryItemTypeCorrection  MemoryItemType = "correction"
 	MemoryItemTypeInstruction MemoryItemType = "instruction"
+	MemoryItemTypeObservation MemoryItemType = "observation"
+	MemoryItemTypeThought     MemoryItemType = "thought"
+	MemoryItemTypeAction      MemoryItemType = "action"
 )
 
 // MemorySource represents the source of a memory item
@@ -173,6 +176,8 @@ const (
 	MemorySourceSystem    MemorySource = "system"
 	MemorySourceInference MemorySource = "inference"
 	MemorySourceEvolution MemorySource = "evolution"
+	MemorySourceAction    MemorySource = "action"
+	MemorySourceTool      MemorySource = "tool"
 )
 
 // EmphasisLevel represents the emphasis level of a memory item
@@ -236,6 +241,28 @@ const (
 	InsightTypeAnomaly        InsightType = "anomaly"
 	InsightTypeTrend          InsightType = "trend"
 	InsightTypeRecommendation InsightType = "recommendation"
+)
+
+// TaskPriority represents the priority of a task
+type TaskPriority string
+
+const (
+	TaskPriorityLow    TaskPriority = "low"
+	TaskPriorityNormal TaskPriority = "normal"
+	TaskPriorityHigh   TaskPriority = "high"
+	TaskPriorityUrgent TaskPriority = "urgent"
+)
+
+// SuspendReason represents why a task was suspended
+type SuspendReason string
+
+const (
+	SuspendReasonUserAuthorization SuspendReason = "user_authorization"
+	SuspendReasonUserConfirmation  SuspendReason = "user_confirmation"
+	SuspendReasonUserClarification SuspendReason = "user_clarification"
+	SuspendReasonUserCustomInput   SuspendReason = "user_custom_input"
+	SuspendReasonToolAuthorization SuspendReason = "tool_authorization"
+	SuspendReasonSystemWait        SuspendReason = "system_wait"
 )
 
 // TerminationReason represents the reason for termination

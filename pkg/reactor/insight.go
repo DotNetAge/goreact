@@ -1,6 +1,7 @@
 package reactor
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -120,21 +121,21 @@ func (e *KeywordExtractor) AddKeyword(keyword, category string) {
 // getDefaultKeywords returns default keywords
 func getDefaultKeywords() map[string]string {
 	return map[string]string{
-		"error":     "error",
-		"warning":   "warning",
-		"success":   "status",
-		"failed":    "error",
-		"timeout":   "error",
-		"created":   "action",
-		"deleted":   "action",
-		"modified":  "action",
-		"found":     "status",
-		"config":    "file",
-		"yaml":      "file",
-		"json":      "file",
-		"test":      "testing",
-		"passed":    "testing",
-		"coverage":  "testing",
+		"error":    "error",
+		"warning":  "warning",
+		"success":  "status",
+		"failed":   "error",
+		"timeout":  "error",
+		"created":  "action",
+		"deleted":  "action",
+		"modified": "action",
+		"found":    "status",
+		"config":   "file",
+		"yaml":     "file",
+		"json":     "file",
+		"test":     "testing",
+		"passed":   "testing",
+		"coverage": "testing",
 	}
 }
 
@@ -208,7 +209,7 @@ func (d *AnomalyDetector) Extract(result any, context *goreactcore.ObservationCo
 
 // CompositeExtractor combines multiple extractors
 type CompositeExtractor struct {
-	extractors []InsightExtractor
+	extractors  []InsightExtractor
 	maxInsights int
 }
 

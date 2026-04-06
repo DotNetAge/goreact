@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/DotNetAge/gochat/pkg/core"
-	goreactcore "github.com/DotNetAge/goreact/pkg/core"
 	goreactcommon "github.com/DotNetAge/goreact/pkg/common"
+	goreactcore "github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
 )
 
 // LLMClient is the LLM client interface from gochat
@@ -31,6 +32,9 @@ type Engine interface {
 	// Resume resumes the execution
 	Resume(ctx context.Context, state *goreactcore.State, answer string) (*Result, error)
 	
+	// ResumeStream resumes the execution with streaming
+	ResumeStream(ctx context.Context, state *goreactcore.State, answer string) (<-chan any, error)
+	
 	// Stop stops the execution
 	Stop() error
 }
@@ -39,22 +43,34 @@ type Engine interface {
 type Result struct {
 	// Answer is the final answer
 	Answer string `json:"answer"`
-	
+
+	// Confidence is the confidence score of the answer (0.0 to 1.0)
+	Confidence float64 `json:"confidence"`
+
 	// Status is the execution status
 	Status goreactcommon.Status `json:"status"`
-	
+
+	// SessionName is the session identifier
+	SessionName string `json:"session_name"`
+
 	// State is the final state
 	State *goreactcore.State `json:"state"`
-	
+
+	// Trajectory is the execution trajectory
+	Trajectory *goreactcore.Trajectory `json:"trajectory"`
+
+	// Reflections is the list of reflections generated during execution
+	Reflections []*goreactcore.Reflection `json:"reflections"`
+
 	// TokenUsage is the token usage
 	TokenUsage *goreactcommon.TokenUsage `json:"token_usage"`
-	
+
 	// Duration is the execution duration
 	Duration time.Duration `json:"duration"`
-	
+
 	// Error is the error message
 	Error string `json:"error,omitempty"`
-	
+
 	// PendingQuestion is the pending question if paused
 	PendingQuestion *goreactcore.PendingQuestionNode `json:"pending_question,omitempty"`
 }
@@ -80,16 +96,19 @@ type Reactor struct {
 	observer   Observer
 	reflector  Reflector
 	terminator Terminator
-	
+
 	// LLM Client
 	llmClient LLMClient
-	
+
+	// Memory
+	memory *memory.Memory
+
 	// State
 	state *goreactcore.State
-	
+
 	// Configuration
 	config *Config
-	
+
 	// Control
 	paused  bool
 	stopped bool
@@ -125,11 +144,11 @@ func NewReactor(opts ...Option) *Reactor {
 	r := &Reactor{
 		config: config,
 	}
-	
+
 	for _, opt := range opts {
 		opt(&Options{})
 	}
-	
+
 	return r
 }
 
@@ -169,10 +188,20 @@ func (r *Reactor) WithTerminator(terminator Terminator) *Reactor {
 	return r
 }
 
+// WithMemory sets the memory
+func (r *Reactor) WithMemory(mem *memory.Memory) *Reactor {
+	r.memory = mem
+	// Also set memory to observer if it has SetMemory method
+	if observer, ok := r.observer.(*BaseObserver); ok {
+		observer.SetMemory(mem)
+	}
+	return r
+}
+
 // Execute executes the ReAct loop
 func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*Result, error) {
 	startTime := time.Now()
-	
+
 	// Apply options
 	options := &Options{
 		MaxSteps:   r.config.MaxSteps,
@@ -181,7 +210,7 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 	for _, opt := range opts {
 		opt(options)
 	}
-	
+
 	// Initialize state
 	r.state = goreactcore.NewState(
 		options.SessionName,
@@ -190,37 +219,137 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 		options.MaxRetries,
 	)
 	r.state.Status = goreactcommon.StatusRunning
-	
+
 	// Create timeout context
 	if r.config.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.config.Timeout)
 		defer cancel()
 	}
-	
-	// Plan phase
-	if r.config.EnablePlan && r.planner != nil {
+
+	// Intent classification phase
+	intent, err := r.thinker.ClassifyIntent(ctx, input, r.state)
+	if err != nil {
+		// If intent classification fails, continue with Task intent
+		intent = &goreactcore.IntentResult{
+			Type:       string(goreactcommon.IntentTask),
+			Confidence: 0.5,
+			Reasoning:  "intent classification failed, defaulting to task",
+		}
+	}
+
+	// Route based on intent type
+	switch intent.Type {
+	case string(goreactcommon.IntentChat):
+		// Generate chat response directly
+		thought := goreactcore.NewThought(input, intent.Reasoning, "answer", intent.Confidence)
+		thought.WithFinalAnswer(intent.Reasoning)
+		return &Result{
+			Answer:      intent.Reasoning,
+			Confidence:  intent.Confidence,
+			Status:      goreactcommon.StatusCompleted,
+			SessionName: r.state.SessionName,
+			State:       r.state,
+			TokenUsage:  r.state.TokenUsage,
+			Duration:    time.Since(startTime),
+		}, nil
+
+	case string(goreactcommon.IntentClarification):
+		// Process clarification response
+		if intent.ExtractedAnswer != "" && r.memory != nil {
+			// Update memory with clarification answer
+			// Create a memory item for the clarification answer
+			answerItem := goreactcore.NewMemoryItemNode(
+				r.state.SessionName,
+				intent.ExtractedAnswer,
+				goreactcommon.MemoryItemTypeFact,
+			)
+			answerItem.Source = goreactcommon.MemorySourceUser
+			answerItem.EmphasisLevel = goreactcommon.EmphasisLevelImportant
+
+			if _, err := r.memory.ShortTerms().Add(ctx, r.state.SessionName, answerItem); err != nil {
+				// Log error but continue
+				r.state.Context["clarification_store_error"] = err.Error()
+			}
+		}
+
+		// Continue with task execution if there's a pending question
+		if r.state.PendingQuestion == nil {
+			// No pending question, treat as new task
+			intent.Type = string(goreactcommon.IntentTask)
+		} else {
+			// Resume from pause with clarification answer
+			r.state.ClearPendingQuestion()
+		}
+
+	case string(goreactcommon.IntentFollowUp):
+		// Load context from related session
+		if intent.RelatedSession != "" && r.memory != nil {
+			// Load session history from memory
+			sessionHistory, err := r.memory.Sessions().GetHistory(ctx, intent.RelatedSession)
+			if err == nil && sessionHistory != nil {
+				// Merge context into current state
+				if r.state.Context == nil {
+					r.state.Context = make(map[string]any)
+				}
+				r.state.Context["related_session"] = intent.RelatedSession
+				r.state.Context["related_history"] = sessionHistory
+			}
+		}
+		// Continue with task execution
+		intent.Type = string(goreactcommon.IntentTask)
+
+	case string(goreactcommon.IntentFeedback):
+		// Process feedback
+		if r.memory != nil {
+			// Store feedback in memory
+			feedbackItem := goreactcore.NewMemoryItemNode(
+				r.state.SessionName,
+				input,
+				goreactcommon.MemoryItemTypeCorrection,
+			)
+			feedbackItem.Source = goreactcommon.MemorySourceUser
+			feedbackItem.EmphasisLevel = goreactcommon.EmphasisLevelImportant
+
+			if _, err := r.memory.ShortTerms().Add(ctx, r.state.SessionName, feedbackItem); err != nil {
+				// Log error but continue
+				r.state.Context["feedback_store_error"] = err.Error()
+			}
+		}
+		// Continue with task execution
+		intent.Type = string(goreactcommon.IntentTask)
+
+	case string(goreactcommon.IntentTask):
+		// Continue to Plan phase
+	}
+
+	// Plan phase (only for Task intent)
+	if intent.Type == string(goreactcommon.IntentTask) && r.config.EnablePlan && r.planner != nil {
 		plan, err := r.planner.Plan(ctx, input, r.state)
 		if err != nil {
 			return nil, fmt.Errorf("planning failed: %w", err)
 		}
 		r.state.Plan = plan
 	}
-	
+
 	// ReAct loop
 	for !r.state.IsComplete() && !r.paused && !r.stopped {
 		select {
 		case <-ctx.Done():
 			r.state.SetStatus(goreactcommon.StatusCanceled)
 			return &Result{
-				Status:   goreactcommon.StatusCanceled,
-				State:    r.state,
-				Duration: time.Since(startTime),
-				Error:    ctx.Err().Error(),
+				Status:      goreactcommon.StatusCanceled,
+				SessionName: r.state.SessionName,
+				State:       r.state,
+				Trajectory:  r.state.Trajectory,
+				Reflections: r.state.Reflections,
+				TokenUsage:  r.state.TokenUsage,
+				Duration:    time.Since(startTime),
+				Error:       ctx.Err().Error(),
 			}, ctx.Err()
 		default:
 		}
-		
+
 		// Think phase
 		thought, err := r.thinker.Think(ctx, r.state)
 		if err != nil {
@@ -228,43 +357,47 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 		}
 		r.state.AddThought(thought)
 		r.state.IncrementStep()
-		
+
 		// Check for final answer
 		if thought.IsAnswer() {
 			r.state.SetStatus(goreactcommon.StatusCompleted)
 			r.state.Trajectory.MarkSuccess(thought.FinalAnswer)
 			return &Result{
-				Answer:    thought.FinalAnswer,
-				Status:    goreactcommon.StatusCompleted,
-				State:     r.state,
-				TokenUsage: r.state.TokenUsage,
-				Duration:  time.Since(startTime),
+				Answer:      thought.FinalAnswer,
+				Confidence:  thought.Confidence,
+				Status:      goreactcommon.StatusCompleted,
+				SessionName: r.state.SessionName,
+				State:       r.state,
+				Trajectory:  r.state.Trajectory,
+				Reflections: r.state.Reflections,
+				TokenUsage:  r.state.TokenUsage,
+				Duration:    time.Since(startTime),
 			}, nil
 		}
-		
+
 		// Act phase
 		action := thought.ToAction()
 		if action == nil {
 			continue
 		}
-		
+
 		actionResult, err := r.actor.Act(ctx, action, r.state)
 		if err != nil {
 			r.state.AddAction(action)
 			continue
 		}
 		r.state.AddAction(action)
-		
+
 		// Observe phase
 		observation, err := r.observer.Observe(ctx, actionResult, r.state)
 		if err != nil {
 			return nil, fmt.Errorf("observation failed: %w", err)
 		}
 		r.state.AddObservation(observation)
-		
+
 		// Update trajectory
 		r.state.Trajectory.AddStep(thought, action, observation)
-		
+
 		// Check for failure and reflection
 		if !observation.Success && r.config.EnableReflection && r.reflector != nil {
 			if r.state.CanRetry() {
@@ -276,38 +409,50 @@ func (r *Reactor) Execute(ctx context.Context, input string, opts ...Option) (*R
 			}
 		}
 	}
-	
+
 	// Check termination conditions
 	if r.paused {
 		return &Result{
 			Status:          goreactcommon.StatusPaused,
+			SessionName:     r.state.SessionName,
 			State:           r.state,
+			Trajectory:      r.state.Trajectory,
+			Reflections:     r.state.Reflections,
+			TokenUsage:      r.state.TokenUsage,
 			Duration:        time.Since(startTime),
 			PendingQuestion: r.state.PendingQuestion,
 		}, nil
 	}
-	
+
 	if r.stopped {
 		return &Result{
-			Status:   goreactcommon.StatusCanceled,
-			State:    r.state,
-			Duration: time.Since(startTime),
+			Status:      goreactcommon.StatusCanceled,
+			SessionName: r.state.SessionName,
+			State:       r.state,
+			Trajectory:  r.state.Trajectory,
+			Reflections: r.state.Reflections,
+			TokenUsage:  r.state.TokenUsage,
+			Duration:    time.Since(startTime),
 		}, nil
 	}
-	
+
 	// Max steps reached without answer
 	return &Result{
-		Status:   goreactcommon.StatusFailed,
-		State:    r.state,
-		Duration: time.Since(startTime),
-		Error:    "max steps reached without answer",
+		Status:      goreactcommon.StatusFailed,
+		SessionName: r.state.SessionName,
+		State:       r.state,
+		Trajectory:  r.state.Trajectory,
+		Reflections: r.state.Reflections,
+		TokenUsage:  r.state.TokenUsage,
+		Duration:    time.Since(startTime),
+		Error:       "max steps reached without answer",
 	}, nil
 }
 
 // ExecuteStream executes with streaming
 func (r *Reactor) ExecuteStream(ctx context.Context, input string, opts ...Option) (<-chan any, error) {
 	ch := make(chan any, 100)
-	
+
 	go func() {
 		defer close(ch)
 		result, err := r.Execute(ctx, input, opts...)
@@ -317,7 +462,7 @@ func (r *Reactor) ExecuteStream(ctx context.Context, input string, opts ...Optio
 			ch <- result
 		}
 	}()
-	
+
 	return ch, nil
 }
 
@@ -338,6 +483,23 @@ func (r *Reactor) Resume(ctx context.Context, state *goreactcore.State, answer s
 	r.state.ClearPendingQuestion()
 	r.paused = false
 	return r.Execute(ctx, state.Input)
+}
+
+// ResumeStream resumes the execution with streaming
+func (r *Reactor) ResumeStream(ctx context.Context, state *goreactcore.State, answer string) (<-chan any, error) {
+	ch := make(chan any, 100)
+	
+	go func() {
+		defer close(ch)
+		result, err := r.Resume(ctx, state, answer)
+		if err != nil {
+			ch <- err
+		} else {
+			ch <- result
+		}
+	}()
+	
+	return ch, nil
 }
 
 // Stop stops the execution
@@ -368,11 +530,15 @@ type Actor interface {
 type Observer interface {
 	Observe(ctx context.Context, result *goreactcore.ActionResult, state *goreactcore.State) (*goreactcore.Observation, error)
 	Process(result any) (string, error)
+	UpdateMemory(ctx context.Context, observation *goreactcore.Observation, state *goreactcore.State) error
 }
 
 // Reflector interface
 type Reflector interface {
 	Reflect(ctx context.Context, state *goreactcore.State) (*goreactcore.Reflection, error)
+	GenerateHeuristic(reflection *goreactcore.Reflection) string
+	StoreReflection(reflection *goreactcore.Reflection, state *goreactcore.State) error
+	RetrieveRelevantReflections(ctx context.Context, query string, limit int) ([]*goreactcore.Reflection, error)
 }
 
 // Terminator interface

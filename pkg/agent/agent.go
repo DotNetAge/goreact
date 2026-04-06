@@ -39,6 +39,9 @@ type Agent interface {
 	
 	// AskStream executes a question with streaming response
 	AskStream(ctx context.Context, question string, files ...string) (<-chan any, error)
+	
+	// ResumeStream resumes a paused session with streaming response
+	ResumeStream(ctx context.Context, sessionName string, answer string) (<-chan any, error)
 }
 
 // Config represents agent configuration
@@ -67,6 +70,12 @@ type Config struct {
 	// Timeout is the execution timeout
 	Timeout time.Duration `json:"timeout" yaml:"timeout"`
 	
+	// EnableReflection enables reflection phase
+	EnableReflection bool `json:"enable_reflection" yaml:"enable_reflection"`
+	
+	// EnablePlanning enables planning phase
+	EnablePlanning bool `json:"enable_planning" yaml:"enable_planning"`
+	
 	// Skills are the skill names
 	Skills []string `json:"skills" yaml:"skills"`
 	
@@ -80,15 +89,17 @@ type Config struct {
 // DefaultConfig returns the default agent configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Name:           common.DefaultAgentName,
-		Domain:         common.DefaultDomain,
-		Model:          common.DefaultModel,
-		MaxSteps:       common.DefaultMaxSteps,
-		MaxRetries:     common.DefaultMaxRetries,
-		Timeout:        common.DefaultTimeout,
-		Skills:         []string{},
-		Tools:          []string{},
-		Metadata:       make(map[string]any),
+		Name:             common.DefaultAgentName,
+		Domain:           common.DefaultDomain,
+		Model:            common.DefaultModel,
+		MaxSteps:         common.DefaultMaxSteps,
+		MaxRetries:       common.DefaultMaxRetries,
+		Timeout:          common.DefaultTimeout,
+		EnableReflection: true,
+		EnablePlanning:   true,
+		Skills:           []string{},
+		Tools:            []string{},
+		Metadata:         make(map[string]any),
 	}
 }
 
@@ -96,6 +107,9 @@ func DefaultConfig() *Config {
 type Result struct {
 	// Answer is the final answer
 	Answer string `json:"answer"`
+	
+	// Confidence is the confidence level of the answer
+	Confidence float64 `json:"confidence"`
 	
 	// Status is the execution status
 	Status common.Status `json:"status"`
@@ -141,6 +155,9 @@ type PendingQuestion struct {
 	
 	// DefaultAnswer is the default answer
 	DefaultAnswer string `json:"default_answer"`
+	
+	// Context is additional context for the question
+	Context map[string]any `json:"context"`
 }
 
 // BaseAgent provides a base implementation for agents

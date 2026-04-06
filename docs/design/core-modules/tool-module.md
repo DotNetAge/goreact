@@ -49,7 +49,7 @@ classDiagram
         +Description() string
         +SecurityLevel() SecurityLevel
         +IsIdempotent() bool
-        +Run(ctx context.Context, param ...any) (any, error)
+        +Run(ctx context.Context, params map[string]any) (any, error)
     }
 
     Tool --> SecurityLevel

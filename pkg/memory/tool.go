@@ -27,50 +27,47 @@ func NewToolAccessor(graphRAG pattern.GraphRAGPattern) *ToolAccessor {
 }
 
 // Get retrieves a tool by name
-func (a *ToolAccessor) Get(ctx context.Context, toolName string) (any, error) {
+func (a *ToolAccessor) Get(ctx context.Context, toolName string) (*goreacttool.ToolNode, error) {
 	node, err := a.BaseAccessor.Get(ctx, toolName)
 	if err != nil {
 		return nil, err
 	}
-	return nodeToTool(node), nil
+	tool := nodeToTool(node)
+	return &tool, nil
 }
 
 // List lists all tools
-func (a *ToolAccessor) List(ctx context.Context) ([]any, error) {
+func (a *ToolAccessor) List(ctx context.Context) ([]*goreacttool.ToolNode, error) {
 	nodes, err := a.BaseAccessor.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	tools := make([]any, 0, len(nodes))
+	tools := make([]*goreacttool.ToolNode, 0, len(nodes))
 	for _, node := range nodes {
-		tools = append(tools, nodeToTool(node))
+		tool := nodeToTool(node)
+		tools = append(tools, &tool)
 	}
 
 	return tools, nil
 }
 
 // Add adds a tool
-func (a *ToolAccessor) Add(ctx context.Context, tool any) error {
-	t, ok := tool.(*goreacttool.ToolNode)
-	if !ok {
-		return fmt.Errorf("invalid tool type")
-	}
-
+func (a *ToolAccessor) Add(ctx context.Context, tool *goreacttool.ToolNode) error {
 	node := &core.Node{
-		ID:   t.Name,
+		ID:   tool.Name,
 		Type: goreactcommon.NodeTypeTool,
 		Properties: map[string]any{
-			"name":            t.Name,
+			"name":            tool.Name,
 			"node_type":       goreactcommon.NodeTypeTool,
-			"description":     t.Description,
-			"type":            string(t.Type),
-			"schema":          t.Schema,
-			"endpoint":        t.Endpoint,
-			"security_level":  t.SecurityLevel.String(),
-			"is_idempotent":   t.IsIdempotent,
-			"execution_count": t.ExecutionCount,
-			"success_rate":    t.SuccessRate,
+			"description":     tool.Description,
+			"type":            string(tool.Type),
+			"schema":          tool.Schema,
+			"endpoint":        tool.Endpoint,
+			"security_level":  tool.SecurityLevel.String(),
+			"is_idempotent":   tool.IsIdempotent,
+			"execution_count": tool.ExecutionCount,
+			"success_rate":    tool.SuccessRate,
 			"created_at":      time.Now().Format(time.RFC3339),
 		},
 	}
@@ -84,26 +81,28 @@ func (a *ToolAccessor) Delete(ctx context.Context, toolName string) error {
 }
 
 // GetGenerated retrieves a generated tool
-func (a *ToolAccessor) GetGenerated(ctx context.Context, toolName string) (any, error) {
+func (a *ToolAccessor) GetGenerated(ctx context.Context, toolName string) (*goreacttool.GeneratedTool, error) {
 	node, err := a.graphRAG.GetNode(ctx, "generated-"+toolName)
 	if err != nil {
 		return nil, err
 	}
-	return nodeToGeneratedTool(node), nil
+	tool := nodeToGeneratedTool(node)
+	return &tool, nil
 }
 
 // ListGenerated lists all generated tools
-func (a *ToolAccessor) ListGenerated(ctx context.Context) ([]any, error) {
+func (a *ToolAccessor) ListGenerated(ctx context.Context) ([]*goreacttool.GeneratedTool, error) {
 	query := fmt.Sprintf("MATCH (n:%s) RETURN n", "GeneratedTool")
 	results, err := a.graphRAG.QueryGraph(ctx, query, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	tools := make([]any, 0, len(results))
+	tools := make([]*goreacttool.GeneratedTool, 0, len(results))
 	for _, result := range results {
 		if nData, ok := result["n"].(map[string]any); ok {
-			tools = append(tools, mapToGeneratedTool(nData))
+			tool := mapToGeneratedTool(nData)
+			tools = append(tools, &tool)
 		}
 	}
 

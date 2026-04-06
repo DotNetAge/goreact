@@ -52,6 +52,24 @@ func (a *FrozenSessionAccessor) List(ctx context.Context, opts ...ListOption) ([
 
 // Freeze freezes a session with a pending question
 func (a *FrozenSessionAccessor) Freeze(ctx context.Context, sessionName string, question *goreactcore.PendingQuestionNode) (*goreactcore.FrozenSessionNode, error) {
+	// Get session to retrieve user and agent information
+	session, err := a.graphRAG.GetNode(ctx, sessionName)
+	if err != nil {
+		// Continue without session info if not found
+		session = nil
+	}
+
+	userName := ""
+	agentName := ""
+	if session != nil {
+		if un, ok := session.Properties["user_name"].(string); ok {
+			userName = un
+		}
+		if an, ok := session.Properties["agent_name"].(string); ok {
+			agentName = an
+		}
+	}
+
 	frozen := &goreactcore.FrozenSessionNode{
 		BaseNode: goreactcore.BaseNode{
 			Name:        sessionName,
@@ -66,6 +84,9 @@ func (a *FrozenSessionAccessor) Freeze(ctx context.Context, sessionName string, 
 		CreatedAt:     time.Now(),
 		ExpiresAt:     time.Now().Add(24 * time.Hour), // Default 24 hour expiry
 		SuspendReason: question.Question,
+		UserName:      userName,
+		AgentName:     agentName,
+		Priority:      goreactcommon.TaskPriorityNormal, // Default priority
 	}
 
 	node := &core.Node{
@@ -81,6 +102,9 @@ func (a *FrozenSessionAccessor) Freeze(ctx context.Context, sessionName string, 
 			"expires_at":     frozen.ExpiresAt.Format(time.RFC3339),
 			"status":         string(frozen.Status),
 			"suspend_reason": frozen.SuspendReason,
+			"user_name":      frozen.UserName,
+			"agent_name":     frozen.AgentName,
+			"priority":       string(frozen.Priority),
 		},
 	}
 

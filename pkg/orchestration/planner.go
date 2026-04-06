@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -306,17 +307,115 @@ func (d *LLMBasedDecomposer) Decompose(task *Task) ([]*SubTask, error) {
 		}}, nil
 	}
 
-	// TODO: Implement LLM-based decomposition
-	// For now, return simple decomposition
-	return []*SubTask{{
-		Name:                fmt.Sprintf("%s-main", task.ID),
-		ParentName:          task.Name,
-		Description:         task.Description,
-		RequiredCapabilities: []string{"general"},
-		Priority:            task.Priority,
-		Timeout:             task.Timeout,
-		Input:               task.Input,
-	}}, nil
+	// Build decomposition prompt
+	prompt := d.buildDecompositionPrompt(task)
+	
+	// Call LLM for decomposition
+	ctx := context.Background()
+	response, err := d.llmClient.Generate(ctx, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("LLM decomposition failed: %w", err)
+	}
+	
+	// Parse LLM response into sub-tasks
+	subTasks, err := d.parseDecompositionResponse(response, task)
+	if err != nil {
+		// Fallback to simple decomposition on parse error
+		return []*SubTask{{
+			Name:                fmt.Sprintf("%s-main", task.ID),
+			ParentName:          task.Name,
+			Description:         task.Description,
+			RequiredCapabilities: []string{"general"},
+			Priority:            task.Priority,
+			Timeout:             task.Timeout,
+			Input:               task.Input,
+		}}, nil
+	}
+	
+	return subTasks, nil
+}
+
+// buildDecompositionPrompt builds the prompt for LLM-based task decomposition
+func (d *LLMBasedDecomposer) buildDecompositionPrompt(task *Task) string {
+	return fmt.Sprintf(`You are a task decomposition expert. Decompose the following task into sub-tasks.
+
+## Task
+- ID: %s
+- Name: %s
+- Description: %s
+- Priority: %d
+
+## Decomposition Requirements
+1. Each sub-task should be independent and executable
+2. Define clear dependencies between sub-tasks
+3. Specify required capabilities for each sub-task
+4. Ensure sub-tasks can be parallelized where possible
+
+## Output Format
+Respond in JSON format:
+{
+  "sub_tasks": [
+    {
+      "name": "sub-task-name",
+      "description": "what this sub-task does",
+      "capabilities": ["capability1", "capability2"],
+      "dependencies": ["dependency-task-name"],
+      "estimated_duration": "duration string"
+    }
+  ]
+}
+`, task.ID, task.Name, task.Description, task.Priority)
+}
+
+// parseDecompositionResponse parses the LLM response into sub-tasks
+func (d *LLMBasedDecomposer) parseDecompositionResponse(response string, task *Task) ([]*SubTask, error) {
+	// Extract JSON from response
+	jsonStart := strings.Index(response, "{")
+	jsonEnd := strings.LastIndex(response, "}")
+	
+	if jsonStart == -1 || jsonEnd == -1 {
+		return nil, fmt.Errorf("no JSON found in response")
+	}
+	
+	jsonStr := response[jsonStart : jsonEnd+1]
+	
+	var parsed struct {
+		SubTasks []struct {
+			Name              string   `json:"name"`
+			Description       string   `json:"description"`
+			Capabilities      []string `json:"capabilities"`
+			Dependencies      []string `json:"dependencies"`
+			EstimatedDuration string   `json:"estimated_duration"`
+		} `json:"sub_tasks"`
+	}
+	
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	
+	// Convert to SubTask slice
+	subTasks := make([]*SubTask, len(parsed.SubTasks))
+	for i, st := range parsed.SubTasks {
+		timeout := task.Timeout
+		if st.EstimatedDuration != "" {
+			if d, err := time.ParseDuration(st.EstimatedDuration); err == nil {
+				timeout = d
+			}
+		}
+		
+		subTasks[i] = &SubTask{
+			Name:                 fmt.Sprintf("%s-%s", task.ID, st.Name),
+			ParentName:           task.Name,
+			Description:          st.Description,
+			RequiredCapabilities: st.Capabilities,
+			Dependencies:         st.Dependencies,
+			Priority:             task.Priority,
+			Timeout:              timeout,
+			Input:                task.Input,
+		}
+	}
+	
+	return subTasks, nil
 }
 
 // Strategy returns the decomposition strategy
@@ -526,7 +625,69 @@ func (o *DefaultOptimizer) Optimize(plan *OrchestrationPlan) (*OrchestrationPlan
 // balanceLoad balances load across execution layers
 func (o *DefaultOptimizer) balanceLoad(plan *OrchestrationPlan) {
 	// Group tasks by capability to enable better parallelization
-	// This is a simple heuristic
+	capabilityGroups := make(map[string][]*SubTask)
+	for _, st := range plan.SubTasks {
+		for _, cap := range st.RequiredCapabilities {
+			capabilityGroups[cap] = append(capabilityGroups[cap], st)
+		}
+	}
+	
+	// Reorder execution order to maximize parallelization
+	// Tasks with the same capability can often be parallelized
+	newOrder := make([][]string, 0)
+	processed := make(map[string]bool)
+	
+	for _, layer := range plan.ExecutionOrder {
+		newLayer := make([]string, 0)
+		for _, taskName := range layer {
+			if !processed[taskName] {
+				newLayer = append(newLayer, taskName)
+				processed[taskName] = true
+			}
+		}
+		if len(newLayer) > 0 {
+			newOrder = append(newOrder, newLayer)
+		}
+	}
+	
+	// Add any unprocessed tasks
+	for _, st := range plan.SubTasks {
+		if !processed[st.Name] {
+			// Find the earliest layer where dependencies are satisfied
+			added := false
+			for i, layer := range newOrder {
+				if o.canAddToLayer(st, layer, processed) {
+					newOrder[i] = append(newOrder[i], st.Name)
+					processed[st.Name] = true
+					added = true
+					break
+				}
+			}
+			if !added {
+				newOrder = append(newOrder, []string{st.Name})
+				processed[st.Name] = true
+			}
+		}
+	}
+	
+	plan.ExecutionOrder = newOrder
+}
+
+// canAddToLayer checks if a task can be added to a layer
+func (o *DefaultOptimizer) canAddToLayer(task *SubTask, layer []string, processed map[string]bool) bool {
+	// Check if all dependencies are satisfied in previous layers
+	for _, dep := range task.Dependencies {
+		if !processed[dep] {
+			return false
+		}
+		// Check that dependency is not in current layer
+		for _, name := range layer {
+			if name == dep {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // optimizeTimeouts adjusts timeouts based on task complexity

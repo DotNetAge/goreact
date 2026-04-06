@@ -156,6 +156,40 @@ func (a *SessionAccessor) AddMessage(ctx context.Context, sessionName string, me
 	return message, nil
 }
 
+// Delete deletes a session and all its associated data
+func (a *SessionAccessor) Delete(ctx context.Context, sessionName string) error {
+	// First, delete all associated messages
+	query := fmt.Sprintf(
+		"MATCH (s:%s {id: $sessionId})-[r:HAS_MESSAGE]->(m:%s) RETURN m.id as messageId",
+		goreactcommon.NodeTypeSession, goreactcommon.NodeTypeMessage,
+	)
+
+	results, err := a.graphRAG.QueryGraph(ctx, query, map[string]any{"sessionId": sessionName})
+	if err != nil {
+		return fmt.Errorf("failed to query session messages: %w", err)
+	}
+
+	// Delete all messages
+	for _, result := range results {
+		if messageId, ok := result["messageId"].(string); ok {
+			if err := a.graphRAG.DeleteNode(ctx, messageId); err != nil {
+				// Log error but continue
+				continue
+			}
+		}
+	}
+
+	// Delete all edges associated with the session
+	edgeQuery := fmt.Sprintf(
+		"MATCH (s:%s {id: $sessionId})-[r]->() DELETE r",
+		goreactcommon.NodeTypeSession,
+	)
+	_, _ = a.graphRAG.QueryGraph(ctx, edgeQuery, map[string]any{"sessionId": sessionName})
+
+	// Finally, delete the session node itself
+	return a.BaseAccessor.Delete(ctx, sessionName)
+}
+
 // SessionHistory represents session history with messages
 type SessionHistory struct {
 	SessionName string

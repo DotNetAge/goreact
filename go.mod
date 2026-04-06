@@ -2,9 +2,15 @@ module github.com/DotNetAge/goreact
 
 go 1.25.1
 
+// replace (
+// 	github.com/DotNetAge/gochat => ../gochat
+// 	github.com/DotNetAge/gograph => ../gograph
+// 	github.com/DotNetAge/gorag => ../gorag
+// )
+
 require (
 	github.com/DotNetAge/gochat v0.1.10
-	github.com/DotNetAge/gorag v0.0.0
+	github.com/DotNetAge/gorag v1.1.6
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -120,10 +126,4 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.47.0 // indirect
-)
-
-replace (
-	github.com/DotNetAge/gochat => ../gochat
-	github.com/DotNetAge/gograph => ../gograph
-	github.com/DotNetAge/gorag => ../gorag
 )

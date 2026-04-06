@@ -19,14 +19,14 @@ type Config struct {
 
 // SessionConfig contains session-related configuration
 type SessionConfig struct {
-	MaxHistoryTurns  int           `json:"max_history_turns" yaml:"max_history_turns"`
-	ContextWindow    int           `json:"context_window" yaml:"context_window"`
-	EnableAutoSave   bool          `json:"enable_auto_save" yaml:"enable_auto_save"`
-	SaveInterval     time.Duration `json:"save_interval" yaml:"save_interval"`
-	DefaultTurns     int           `json:"default_turns" yaml:"default_turns"`
-	MinTurns         int           `json:"min_turns" yaml:"min_turns"`
-	MaxTurns         int           `json:"max_turns" yaml:"max_turns"`
-	TimeWindow       time.Duration `json:"time_window" yaml:"time_window"`
+	MaxHistoryTurns int           `json:"max_history_turns" yaml:"max_history_turns"`
+	ContextWindow   int           `json:"context_window" yaml:"context_window"`
+	EnableAutoSave  bool          `json:"enable_auto_save" yaml:"enable_auto_save"`
+	SaveInterval    time.Duration `json:"save_interval" yaml:"save_interval"`
+	DefaultTurns    int           `json:"default_turns" yaml:"default_turns"`
+	MinTurns        int           `json:"min_turns" yaml:"min_turns"`
+	MaxTurns        int           `json:"max_turns" yaml:"max_turns"`
+	TimeWindow      time.Duration `json:"time_window" yaml:"time_window"`
 }
 
 // DefaultSessionConfig returns default session configuration
@@ -43,22 +43,54 @@ func DefaultSessionConfig() *SessionConfig {
 	}
 }
 
+// EvolutionConfig contains evolution configuration
+type EvolutionConfig struct {
+	EnableAutoEvolution       bool                           `json:"enable_auto_evolution" yaml:"enable_auto_evolution"`
+	EvolutionTrigger          goreactcommon.EvolutionTrigger `json:"evolution_trigger" yaml:"evolution_trigger"`
+	SkillThreshold            int                            `json:"skill_threshold" yaml:"skill_threshold"`
+	ToolThreshold             int                            `json:"tool_threshold" yaml:"tool_threshold"`
+	MemoryImportanceThreshold float64                        `json:"memory_importance_threshold" yaml:"memory_importance_threshold"`
+	MaxSkillsPerSession       int                            `json:"max_skills_per_session" yaml:"max_skills_per_session"`
+	MaxToolsPerSession        int                            `json:"max_tools_per_session" yaml:"max_tools_per_session"`
+	ReviewGeneratedCode       bool                           `json:"review_generated_code" yaml:"review_generated_code"`
+	AllowedToolTypes          []string                       `json:"allowed_tool_types" yaml:"allowed_tool_types"`
+	SkillOutputPath           string                         `json:"skill_output_path" yaml:"skill_output_path"`
+	ToolOutputPath            string                         `json:"tool_output_path" yaml:"tool_output_path"`
+}
+
+// DefaultEvolutionConfig returns default evolution config
+func DefaultEvolutionConfig() *EvolutionConfig {
+	return &EvolutionConfig{
+		EnableAutoEvolution:       true,
+		EvolutionTrigger:          goreactcommon.EvolutionTriggerOnSessionEnd,
+		SkillThreshold:            goreactcommon.DefaultSkillThreshold,
+		ToolThreshold:             goreactcommon.DefaultToolThreshold,
+		MemoryImportanceThreshold: goreactcommon.DefaultMemoryImportanceThreshold,
+		MaxSkillsPerSession:       goreactcommon.DefaultMaxSkillsPerSession,
+		MaxToolsPerSession:        goreactcommon.DefaultMaxToolsPerSession,
+		ReviewGeneratedCode:       true,
+		AllowedToolTypes:          []string{"python", "cli", "bash"},
+		SkillOutputPath:           "./skills",
+		ToolOutputPath:            "./tools",
+	}
+}
+
 // ReflectionConfig contains reflection-related configuration
 type ReflectionConfig struct {
-	Enabled            bool    `json:"enabled" yaml:"enabled"`
-	MinScoreThreshold  float64 `json:"min_score_threshold" yaml:"min_score_threshold"`
-	MaxPerDay          int     `json:"max_per_day" yaml:"max_per_day"`
-	RetentionDays      int     `json:"retention_days" yaml:"retention_days"`
-	EnableAutoReflection bool   `json:"enable_auto_reflection" yaml:"enable_auto_reflection"`
+	Enabled              bool    `json:"enabled" yaml:"enabled"`
+	MinScoreThreshold    float64 `json:"min_score_threshold" yaml:"min_score_threshold"`
+	MaxPerDay            int     `json:"max_per_day" yaml:"max_per_day"`
+	RetentionDays        int     `json:"retention_days" yaml:"retention_days"`
+	EnableAutoReflection bool    `json:"enable_auto_reflection" yaml:"enable_auto_reflection"`
 }
 
 // DefaultReflectionConfig returns default reflection configuration
 func DefaultReflectionConfig() *ReflectionConfig {
 	return &ReflectionConfig{
-		Enabled:            true,
-		MinScoreThreshold:  0.6,
-		MaxPerDay:          100,
-		RetentionDays:      30,
+		Enabled:              true,
+		MinScoreThreshold:    0.6,
+		MaxPerDay:            100,
+		RetentionDays:        30,
 		EnableAutoReflection: true,
 	}
 }
@@ -83,13 +115,13 @@ func DefaultPlanConfig() *PlanConfig {
 
 // ShortTermConfig contains short-term memory configuration
 type ShortTermConfig struct {
-	Enabled               bool    `json:"enabled" yaml:"enabled"`
-	MaxItems              int     `json:"max_items" yaml:"max_items"`
-	ImportanceThreshold   float64 `json:"importance_threshold" yaml:"importance_threshold"`
-	EnableAutoExtraction  bool    `json:"enable_auto_extraction" yaml:"enable_auto_extraction"`
-	MaxItemsPerSession    int     `json:"max_items_per_session" yaml:"max_items_per_session"`
-	DefaultExpiration     time.Duration `json:"default_expiration" yaml:"default_expiration"`
-	EnableSemanticSearch  bool    `json:"enable_semantic_search" yaml:"enable_semantic_search"`
+	Enabled              bool          `json:"enabled" yaml:"enabled"`
+	MaxItems             int           `json:"max_items" yaml:"max_items"`
+	ImportanceThreshold  float64       `json:"importance_threshold" yaml:"importance_threshold"`
+	EnableAutoExtraction bool          `json:"enable_auto_extraction" yaml:"enable_auto_extraction"`
+	MaxItemsPerSession   int           `json:"max_items_per_session" yaml:"max_items_per_session"`
+	DefaultExpiration    time.Duration `json:"default_expiration" yaml:"default_expiration"`
+	EnableSemanticSearch bool          `json:"enable_semantic_search" yaml:"enable_semantic_search"`
 }
 
 // DefaultShortTermConfig returns default short-term memory configuration
@@ -151,15 +183,36 @@ func DefaultTrajectoryConfig() *TrajectoryConfig {
 	}
 }
 
+// ConsolidationTrigger defines when consolidation happens
+type ConsolidationTrigger string
+
+const (
+	ConsolidationTriggerOnSessionEnd ConsolidationTrigger = "session_end"
+	ConsolidationTriggerOnThreshold  ConsolidationTrigger = "threshold"
+	ConsolidationTriggerOnSchedule   ConsolidationTrigger = "schedule"
+	ConsolidationTriggerManual       ConsolidationTrigger = "manual"
+)
+
+// CategoryClassifier defines content categories
+type CategoryClassifier string
+
+const (
+	CategoryRule      CategoryClassifier = "rule"
+	CategoryKnowledge CategoryClassifier = "knowledge"
+	CategoryChat      CategoryClassifier = "chat"
+	CategoryFact      CategoryClassifier = "fact"
+	CategoryTask      CategoryClassifier = "task"
+)
+
 // ConsolidationConfig contains consolidation configuration
 type ConsolidationConfig struct {
-	EnableAutoConsolidation  bool                `json:"enable_auto_consolidation" yaml:"enable_auto_consolidation"`
+	EnableAutoConsolidation  bool                 `json:"enable_auto_consolidation" yaml:"enable_auto_consolidation"`
 	Trigger                  ConsolidationTrigger `json:"trigger" yaml:"trigger"`
-	ImportanceThreshold      float64             `json:"importance_threshold" yaml:"importance_threshold"`
-	MaxItemsPerConsolidation int                 `json:"max_items_per_consolidation" yaml:"max_items_per_consolidation"`
-	CategoryClassifier       CategoryClassifier  `json:"category_classifier" yaml:"category_classifier"`
-	DocumentPathTemplate     string              `json:"document_path_template" yaml:"document_path_template"`
-	ScheduleInterval         time.Duration       `json:"schedule_interval" yaml:"schedule_interval"`
+	ImportanceThreshold      float64              `json:"importance_threshold" yaml:"importance_threshold"`
+	MaxItemsPerConsolidation int                  `json:"max_items_per_consolidation" yaml:"max_items_per_consolidation"`
+	CategoryClassifier       CategoryClassifier   `json:"category_classifier" yaml:"category_classifier"`
+	DocumentPathTemplate     string               `json:"document_path_template" yaml:"document_path_template"`
+	ScheduleInterval         time.Duration        `json:"schedule_interval" yaml:"schedule_interval"`
 }
 
 // DefaultConsolidationConfig returns default consolidation configuration
@@ -216,7 +269,7 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "session.context_window", Message: "must be non-negative"}
 		}
 	}
-	
+
 	if c.Evolution != nil {
 		if c.Evolution.SkillThreshold < 1 {
 			return &ConfigError{Field: "evolution.skill_threshold", Message: "must be at least 1"}
@@ -228,7 +281,7 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "evolution.memory_importance_threshold", Message: "must be between 0 and 1"}
 		}
 	}
-	
+
 	if c.Reflection != nil {
 		if c.Reflection.MinScoreThreshold < 0 || c.Reflection.MinScoreThreshold > 1 {
 			return &ConfigError{Field: "reflection.min_score_threshold", Message: "must be between 0 and 1"}
@@ -237,7 +290,7 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "reflection.retention_days", Message: "must be non-negative"}
 		}
 	}
-	
+
 	if c.Plan != nil {
 		if c.Plan.SimilarityThreshold < 0 || c.Plan.SimilarityThreshold > 1 {
 			return &ConfigError{Field: "plan.similarity_threshold", Message: "must be between 0 and 1"}
@@ -246,7 +299,7 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "plan.max_steps", Message: "must be at least 1"}
 		}
 	}
-	
+
 	if c.ShortTerm != nil {
 		if c.ShortTerm.MaxItems < 0 {
 			return &ConfigError{Field: "short_term.max_items", Message: "must be non-negative"}
@@ -255,7 +308,7 @@ func (c *Config) Validate() error {
 			return &ConfigError{Field: "short_term.importance_threshold", Message: "must be between 0 and 1"}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -264,7 +317,7 @@ func (c *Config) Merge(other *Config) *Config {
 	if other == nil {
 		return c
 	}
-	
+
 	if other.Session != nil {
 		c.Session = other.Session
 	}
@@ -286,7 +339,7 @@ func (c *Config) Merge(other *Config) *Config {
 	if other.Security != nil {
 		c.Security = other.Security
 	}
-	
+
 	return c
 }
 

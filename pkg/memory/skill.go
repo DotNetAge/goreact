@@ -27,48 +27,45 @@ func NewSkillAccessor(graphRAG pattern.GraphRAGPattern) *SkillAccessor {
 }
 
 // Get retrieves a skill by name
-func (a *SkillAccessor) Get(ctx context.Context, skillName string) (any, error) {
+func (a *SkillAccessor) Get(ctx context.Context, skillName string) (*goreactskill.Skill, error) {
 	node, err := a.BaseAccessor.Get(ctx, skillName)
 	if err != nil {
 		return nil, err
 	}
-	return nodeToSkill(node), nil
+	skill := nodeToSkill(node)
+	return &skill, nil
 }
 
 // List lists all skills
-func (a *SkillAccessor) List(ctx context.Context) ([]any, error) {
+func (a *SkillAccessor) List(ctx context.Context) ([]*goreactskill.Skill, error) {
 	nodes, err := a.BaseAccessor.List(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	skills := make([]any, 0, len(nodes))
+	skills := make([]*goreactskill.Skill, 0, len(nodes))
 	for _, node := range nodes {
-		skills = append(skills, nodeToSkill(node))
+		skill := nodeToSkill(node)
+		skills = append(skills, &skill)
 	}
 
 	return skills, nil
 }
 
 // Add adds a skill
-func (a *SkillAccessor) Add(ctx context.Context, skill any) error {
-	s, ok := skill.(*goreactskill.SkillNode)
-	if !ok {
-		return fmt.Errorf("invalid skill type")
-	}
-
+func (a *SkillAccessor) Add(ctx context.Context, skill *goreactskill.SkillNode) error {
 	node := &core.Node{
-		ID:   s.Name,
+		ID:   skill.Name,
 		Type: goreactcommon.NodeTypeSkill,
 		Properties: map[string]any{
-			"name":          s.Name,
+			"name":          skill.Name,
 			"node_type":     goreactcommon.NodeTypeSkill,
-			"description":   s.Description,
-			"agent":         s.Agent,
-			"intent":        s.Intent,
-			"template":      s.Template,
-			"parameters":    s.Parameters,
-			"allowed_tools": s.AllowedTools,
+			"description":   skill.Description,
+			"agent":         skill.Agent,
+			"intent":        skill.Intent,
+			"template":      skill.Template,
+			"parameters":    skill.Parameters,
+			"allowed_tools": skill.AllowedTools,
 			"created_at":    time.Now().Format(time.RFC3339),
 		},
 	}
@@ -82,7 +79,7 @@ func (a *SkillAccessor) Delete(ctx context.Context, skillName string) error {
 }
 
 // GetExecutionPlan retrieves a compiled skill execution plan
-func (a *SkillAccessor) GetExecutionPlan(ctx context.Context, skillName string) (any, error) {
+func (a *SkillAccessor) GetExecutionPlan(ctx context.Context, skillName string) (*goreactskill.SkillExecutionPlan, error) {
 	planID := "plan-" + skillName
 	node, err := a.graphRAG.GetNode(ctx, planID)
 	if err != nil {
@@ -92,24 +89,19 @@ func (a *SkillAccessor) GetExecutionPlan(ctx context.Context, skillName string) 
 }
 
 // StoreExecutionPlan stores a compiled skill execution plan
-func (a *SkillAccessor) StoreExecutionPlan(ctx context.Context, plan any) error {
-	p, ok := plan.(*goreactskill.SkillExecutionPlan)
-	if !ok {
-		return fmt.Errorf("invalid plan type")
-	}
-
+func (a *SkillAccessor) StoreExecutionPlan(ctx context.Context, plan *goreactskill.SkillExecutionPlan) error {
 	node := &core.Node{
-		ID:   p.Name,
+		ID:   plan.Name,
 		Type: goreactcommon.NodeTypeSkillExecutionPlan,
 		Properties: map[string]any{
-			"name":            p.Name,
+			"name":            plan.Name,
 			"node_type":       goreactcommon.NodeTypeSkillExecutionPlan,
-			"skill_name":      p.SkillName,
-			"steps":           p.Steps,
-			"parameters":      p.Parameters,
-			"compiled_at":     p.CompiledAt.Format(time.RFC3339),
-			"execution_count": p.ExecutionCount,
-			"success_rate":    p.SuccessRate,
+			"skill_name":      plan.SkillName,
+			"steps":           plan.Steps,
+			"parameters":      plan.Parameters,
+			"compiled_at":     plan.CompiledAt.Format(time.RFC3339),
+			"execution_count": plan.ExecutionCount,
+			"success_rate":    plan.SuccessRate,
 		},
 	}
 
@@ -129,40 +121,38 @@ func (a *SkillAccessor) UpdateExecutionStats(ctx context.Context, skillName stri
 		return err
 	}
 
-	if p, ok := plan.(*goreactskill.SkillExecutionPlan); ok {
-		p.ExecutionCount++
-		if success {
-			p.SuccessRate = p.SuccessRate*0.9 + 0.1
-		} else {
-			p.SuccessRate = p.SuccessRate * 0.9
-		}
-		return a.StoreExecutionPlan(ctx, p)
+	plan.ExecutionCount++
+	if success {
+		plan.SuccessRate = plan.SuccessRate*0.9 + 0.1
+	} else {
+		plan.SuccessRate = plan.SuccessRate * 0.9
 	}
-
-	return nil
+	return a.StoreExecutionPlan(ctx, plan)
 }
 
 // GetGenerated retrieves a generated skill
-func (a *SkillAccessor) GetGenerated(ctx context.Context, skillName string) (any, error) {
+func (a *SkillAccessor) GetGenerated(ctx context.Context, skillName string) (*goreactskill.GeneratedSkill, error) {
 	node, err := a.graphRAG.GetNode(ctx, "generated-"+skillName)
 	if err != nil {
 		return nil, err
 	}
-	return nodeToGeneratedSkill(node), nil
+	skill := nodeToGeneratedSkill(node)
+	return &skill, nil
 }
 
 // ListGenerated lists all generated skills
-func (a *SkillAccessor) ListGenerated(ctx context.Context) ([]any, error) {
+func (a *SkillAccessor) ListGenerated(ctx context.Context) ([]*goreactskill.GeneratedSkill, error) {
 	query := fmt.Sprintf("MATCH (n:%s) RETURN n", "GeneratedSkill")
 	results, err := a.graphRAG.QueryGraph(ctx, query, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	skills := make([]any, 0, len(results))
+	skills := make([]*goreactskill.GeneratedSkill, 0, len(results))
 	for _, result := range results {
 		if nData, ok := result["n"].(map[string]any); ok {
-			skills = append(skills, mapToGeneratedSkill(nData))
+			skill := mapToGeneratedSkill(nData)
+			skills = append(skills, &skill)
 		}
 	}
 
@@ -181,7 +171,7 @@ func (a *SkillAccessor) ApproveGenerated(ctx context.Context, skillName string) 
 }
 
 // Search performs semantic search on skills by description
-func (a *SkillAccessor) Search(ctx context.Context, query string, topK int) ([]any, error) {
+func (a *SkillAccessor) Search(ctx context.Context, query string, topK int) ([]*goreactskill.Skill, error) {
 	// Use GraphRAG's retrieve capability for semantic search
 	// Retrieve takes queries and topK
 	results, err := a.graphRAG.Retrieve(ctx, []string{query}, topK)
@@ -189,11 +179,11 @@ func (a *SkillAccessor) Search(ctx context.Context, query string, topK int) ([]a
 		return nil, err
 	}
 
-	skills := make([]any, 0)
+	skills := make([]*goreactskill.Skill, 0)
 	for _, result := range results {
 		// Convert RetrievalResult chunks to Skills
 		for _, chunk := range result.Chunks {
-			skill := goreactskill.Skill{
+			skill := &goreactskill.Skill{
 				Name:        chunk.ID,
 				Description: chunk.Content,
 			}
@@ -211,10 +201,8 @@ func (a *SkillAccessor) GetByHash(ctx context.Context, skillName string, hash st
 		return nil, err
 	}
 
-	if s, ok := skill.(goreactskill.Skill); ok {
-		if s.ContentHash == hash {
-			return &s, nil
-		}
+	if skill.ContentHash == hash {
+		return skill, nil
 	}
 
 	return nil, fmt.Errorf("skill hash mismatch")
@@ -233,11 +221,7 @@ func (a *SkillAccessor) CheckCacheValidity(ctx context.Context, skillName string
 		return false, nil // No cache = invalid
 	}
 
-	if p, ok := plan.(*goreactskill.SkillExecutionPlan); ok {
-		// Check if the skill's hash matches (would need to store hash in plan)
-		_ = p
-		return true, nil
-	}
-
-	return false, nil
+	// Check if the skill's hash matches (would need to store hash in plan)
+	_ = plan
+	return true, nil
 }

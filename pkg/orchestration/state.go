@@ -31,7 +31,7 @@ func (m *StateManager) CreateState(sessionName string, plan *OrchestrationPlan) 
 		SessionName:       sessionName,
 		Plan:              plan,
 		AgentStates:       make(map[string]*AgentState),
-		ExecutionPhase:    PhasePlanning,
+		ExecutionPhase:    PhaseIdle,
 		PendingQuestions:  make([]*PendingQuestion, 0),
 		CompletedSubTasks: make([]string, 0),
 		FailedSubTasks:    make([]string, 0),
@@ -212,15 +212,17 @@ type StateMachine struct {
 // NewStateMachine creates a new state machine
 func NewStateMachine() *StateMachine {
 	return &StateMachine{
-		currentPhase: PhasePlanning,
+		currentPhase: PhaseIdle,
 		transitions: map[ExecutionPhase][]ExecutionPhase{
+			PhaseIdle:        {PhasePlanning},
 			PhasePlanning:    {PhaseSelecting, PhaseFailed},
 			PhaseSelecting:   {PhaseExecuting, PhaseFailed},
 			PhaseExecuting:   {PhaseAggregating, PhaseSuspended, PhaseFailed},
 			PhaseSuspended:   {PhaseExecuting, PhaseFailed},
 			PhaseAggregating: {PhaseCompleted, PhaseFailed},
+			PhaseRetrying:    {PhasePlanning, PhaseFailed},
 			PhaseCompleted:   {},
-			PhaseFailed:      {PhasePlanning}, // Allow retry
+			PhaseFailed:      {PhaseRetrying}, // Allow retry
 		},
 	}
 }
@@ -274,7 +276,7 @@ func (sm *StateMachine) CanTransition(newPhase ExecutionPhase) bool {
 func (sm *StateMachine) Reset() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.currentPhase = PhasePlanning
+	sm.currentPhase = PhaseIdle
 }
 
 // =============================================================================
@@ -382,7 +384,7 @@ func IsTerminal(phase ExecutionPhase) bool {
 // IsRunning checks if the phase is running
 func IsRunning(phase ExecutionPhase) bool {
 	return phase == PhasePlanning || phase == PhaseSelecting || 
-		phase == PhaseExecuting || phase == PhaseAggregating
+		phase == PhaseExecuting || phase == PhaseAggregating || phase == PhaseRetrying
 }
 
 // IsSuspended checks if the phase is suspended

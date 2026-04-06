@@ -3,22 +3,71 @@ package resource
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	goreactskill "github.com/DotNetAge/goreact/pkg/skill"
 )
 
+// ModelFeatures represents model capabilities
+type ModelFeatures struct {
+	// Vision indicates if the model supports vision/image input
+	Vision bool `json:"vision" yaml:"vision"`
+	
+	// ToolCall indicates if the model supports tool calling
+	ToolCall bool `json:"tool_call" yaml:"tool_call"`
+	
+	// Streaming indicates if the model supports streaming output
+	Streaming bool `json:"streaming" yaml:"streaming"`
+}
+
+// Model represents a LLM model configuration
+type Model struct {
+	// Name is the internal name used by GoReAct
+	Name string `json:"name" yaml:"name"`
+	
+	// Provider is the model provider (openai, anthropic, ollama, etc.)
+	Provider string `json:"provider" yaml:"provider"`
+	
+	// ProviderModelName is the model identifier used by the provider
+	ProviderModelName string `json:"provider_model_name" yaml:"provider_model_name"`
+	
+	// BaseURL is the API base URL
+	BaseURL string `json:"base_url" yaml:"base_url"`
+	
+	// APIKey is the API key for authentication
+	APIKey string `json:"api_key" yaml:"api_key"`
+	
+	// Temperature is the model temperature
+	Temperature float64 `json:"temperature" yaml:"temperature"`
+	
+	// MaxTokens is the maximum tokens for the model
+	MaxTokens int `json:"max_tokens" yaml:"max_tokens"`
+	
+	// Timeout is the request timeout
+	Timeout time.Duration `json:"timeout" yaml:"timeout"`
+	
+	// Features contains model capabilities
+	Features ModelFeatures `json:"features" yaml:"features"`
+}
+
 // ResourceManager manages all resources (agents, tools, skills, models)
 type ResourceManager struct {
 	mu      sync.RWMutex
-	agents  map[string]any // Would be map[string]*agent.Agent
-	tools   map[string]any // Would be map[string]*tool.Tool
-	skills  map[string]any // Would be map[string]*skill.Skill
-	models  map[string]any // Would be map[string]*llm.Model
+	agents  map[string]any // Agent configurations
+	tools   map[string]any // Tool configurations
+	skills  map[string]any // Skill configurations
+	models  map[string]any // Model configurations
+	
+	// Agent-Tool and Agent-Skill mappings
+	agentTools  map[string][]string // agent name -> tool names
+	agentSkills map[string][]string // agent name -> skill names
+	
+	// Plan cache for skill execution
+	planCache map[string]*goreactskill.SkillExecutionPlan
 	
 	// Paths
 	DocumentPath string
@@ -29,10 +78,13 @@ type ResourceManager struct {
 // NewResourceManager creates a new ResourceManager
 func NewResourceManager() *ResourceManager {
 	return &ResourceManager{
-		agents: make(map[string]any),
-		tools:  make(map[string]any),
-		skills: make(map[string]any),
-		models: make(map[string]any),
+		agents:      make(map[string]any),
+		tools:       make(map[string]any),
+		skills:      make(map[string]any),
+		models:      make(map[string]any),
+		agentTools:  make(map[string][]string),
+		agentSkills: make(map[string][]string),
+		planCache:   make(map[string]*goreactskill.SkillExecutionPlan),
 	}
 }
 
@@ -121,8 +173,31 @@ func (rm *ResourceManager) GetToolsByAgent(agentName string) []string {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	
-	// Would filter tools by agent
+	if tools, exists := rm.agentTools[agentName]; exists {
+		return tools
+	}
 	return []string{}
+}
+
+// RegisterAgentTools associates tools with an agent
+func (rm *ResourceManager) RegisterAgentTools(agentName string, toolNames []string) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	
+	// Verify agent exists
+	if _, exists := rm.agents[agentName]; !exists {
+		return fmt.Errorf("agent %s not registered", agentName)
+	}
+	
+	// Verify all tools exist
+	for _, toolName := range toolNames {
+		if _, exists := rm.tools[toolName]; !exists {
+			return fmt.Errorf("tool %s not registered", toolName)
+		}
+	}
+	
+	rm.agentTools[agentName] = toolNames
+	return nil
 }
 
 // RegisterSkill registers a skill
@@ -170,8 +245,31 @@ func (rm *ResourceManager) GetSkillsByAgent(agentName string) []string {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	
-	// Would filter skills by agent
+	if skills, exists := rm.agentSkills[agentName]; exists {
+		return skills
+	}
 	return []string{}
+}
+
+// RegisterAgentSkills associates skills with an agent
+func (rm *ResourceManager) RegisterAgentSkills(agentName string, skillNames []string) error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	
+	// Verify agent exists
+	if _, exists := rm.agents[agentName]; !exists {
+		return fmt.Errorf("agent %s not registered", agentName)
+	}
+	
+	// Verify all skills exist
+	for _, skillName := range skillNames {
+		if _, exists := rm.skills[skillName]; !exists {
+			return fmt.Errorf("skill %s not registered", skillName)
+		}
+	}
+	
+	rm.agentSkills[agentName] = skillNames
+	return nil
 }
 
 // RegisterModel registers a model
@@ -244,6 +342,32 @@ func (rm *ResourceManager) Clear() {
 	rm.tools = make(map[string]any)
 	rm.skills = make(map[string]any)
 	rm.models = make(map[string]any)
+}
+
+// Load loads all resources into memory for indexing
+// This is called by Memory to index resources into GraphDB and VectorDB
+func (rm *ResourceManager) Load() error {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	
+	// Resources are already loaded through registration
+	// This method returns all resources for Memory to index
+	// Memory will call GetAgents, GetTools, GetSkills, GetModels
+	// to retrieve all registered resources for indexing
+	return nil
+}
+
+// GetAllResources returns all resources for Memory indexing
+func (rm *ResourceManager) GetAllResources() map[string]map[string]any {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	
+	return map[string]map[string]any{
+		"agents": rm.agents,
+		"tools":  rm.tools,
+		"skills": rm.skills,
+		"models": rm.models,
+	}
 }
 
 // Global resource manager instance
@@ -348,7 +472,7 @@ func (rm *ResourceManager) ScanSkills(skillPath string) error {
 			skillName := filepath.Base(skillDir)
 
 			// Read and parse SKILL.md
-			content, err := ioutil.ReadFile(path)
+			content, err := os.ReadFile(path)
 			if err != nil {
 				return nil // Skip files we can't read
 			}
@@ -378,8 +502,92 @@ func (rm *ResourceManager) ScanTools(toolPath string) error {
 
 	rm.ToolPath = toolPath
 
-	// Similar to ScanSkills - would scan for TOOL.md or tool definitions
-	return nil
+	// Check if directory exists
+	if _, err := os.Stat(toolPath); os.IsNotExist(err) {
+		return fmt.Errorf("tool path does not exist: %s", toolPath)
+	}
+
+	// Walk the tool directory looking for tool definitions
+	return filepath.Walk(toolPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+
+		// Look for TOOL.md files or executable scripts
+		if !info.IsDir() {
+			fileName := info.Name()
+			
+			// Check for TOOL.md
+			if strings.EqualFold(fileName, "TOOL.md") {
+				toolDir := filepath.Dir(path)
+				toolName := filepath.Base(toolDir)
+				
+				// Read and parse TOOL.md
+				content, err := os.ReadFile(path)
+				if err != nil {
+					return nil // Skip files we can't read
+				}
+				
+				// Parse tool definition
+				tool := rm.parseToolDefinition(string(content), toolName)
+				if tool != nil {
+					rm.tools[toolName] = tool
+				}
+			}
+			
+			// Check for executable scripts
+			if strings.HasSuffix(fileName, ".py") || strings.HasSuffix(fileName, ".sh") {
+				toolName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+				
+				// Create tool entry for script
+				rm.tools[toolName] = map[string]any{
+					"name":        toolName,
+					"path":        path,
+					"type":        strings.TrimPrefix(filepath.Ext(fileName), "."),
+					"description": fmt.Sprintf("Auto-detected tool: %s", toolName),
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+// parseToolDefinition parses a TOOL.md file and returns a tool configuration
+func (rm *ResourceManager) parseToolDefinition(content, toolName string) map[string]any {
+	// Parse frontmatter and content
+	tool := map[string]any{
+		"name": toolName,
+	}
+	
+	// Check for frontmatter
+	if strings.HasPrefix(content, "---") {
+		parts := strings.SplitN(content, "---", 3)
+		if len(parts) >= 3 {
+			// Parse frontmatter
+			frontmatter := parts[1]
+			for _, line := range strings.Split(frontmatter, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				
+				kv := strings.SplitN(line, ":", 2)
+				if len(kv) == 2 {
+					key := strings.TrimSpace(kv[0])
+					value := strings.TrimSpace(kv[1])
+					tool[key] = value
+				}
+			}
+			
+			// Store body content
+			tool["content"] = strings.TrimSpace(parts[2])
+		}
+	} else {
+		tool["content"] = content
+	}
+	
+	return tool
 }
 
 // ScanAgents scans a directory for agent definitions
@@ -387,8 +595,80 @@ func (rm *ResourceManager) ScanAgents(agentPath string) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// Similar to ScanSkills - would scan for AGENT.md definitions
-	return nil
+	// Check if directory exists
+	if _, err := os.Stat(agentPath); os.IsNotExist(err) {
+		return fmt.Errorf("agent path does not exist: %s", agentPath)
+	}
+
+	// Walk the agent directory looking for agent definitions
+	return filepath.Walk(agentPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+
+		// Look for AGENT.md files
+		if !info.IsDir() && strings.EqualFold(info.Name(), "AGENT.md") {
+			agentDir := filepath.Dir(path)
+			agentName := filepath.Base(agentDir)
+			
+			// Read and parse AGENT.md
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return nil // Skip files we can't read
+			}
+			
+			// Parse agent definition
+			agent := rm.parseAgentDefinition(string(content), agentName)
+			if agent != nil {
+				rm.agents[agentName] = agent
+			}
+		}
+
+		return nil
+	})
+}
+
+// parseAgentDefinition parses an AGENT.md file and returns an agent configuration
+func (rm *ResourceManager) parseAgentDefinition(content, agentName string) map[string]any {
+	agent := map[string]any{
+		"name": agentName,
+	}
+	
+	// Check for frontmatter
+	if strings.HasPrefix(content, "---") {
+		parts := strings.SplitN(content, "---", 3)
+		if len(parts) >= 3 {
+			// Parse frontmatter
+			frontmatter := parts[1]
+			for _, line := range strings.Split(frontmatter, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				
+				kv := strings.SplitN(line, ":", 2)
+				if len(kv) == 2 {
+					key := strings.TrimSpace(kv[0])
+					value := strings.TrimSpace(kv[1])
+					
+					// Handle array fields
+					if key == "tools" || key == "skills" {
+						items := strings.Fields(value)
+						agent[key] = items
+					} else {
+						agent[key] = value
+					}
+				}
+			}
+			
+			// Store system prompt from body
+			agent["system_prompt"] = strings.TrimSpace(parts[2])
+		}
+	} else {
+		agent["system_prompt"] = content
+	}
+	
+	return agent
 }
 
 // ScanAll scans all resource directories
@@ -436,8 +716,8 @@ func (rm *ResourceManager) GetSkillExecutionPlan(skillName string) (*goreactskil
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
-	// Would retrieve from plan cache
-	return nil, false
+	plan, exists := rm.planCache[skillName]
+	return plan, exists
 }
 
 // SetSkillExecutionPlan caches an execution plan for a skill
@@ -445,5 +725,15 @@ func (rm *ResourceManager) SetSkillExecutionPlan(plan *goreactskill.SkillExecuti
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// Would store in plan cache
+	if plan != nil && plan.SkillName != "" {
+		rm.planCache[plan.SkillName] = plan
+	}
+}
+
+// ClearPlanCache clears the skill execution plan cache
+func (rm *ResourceManager) ClearPlanCache() {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	rm.planCache = make(map[string]*goreactskill.SkillExecutionPlan)
 }

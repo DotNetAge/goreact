@@ -105,6 +105,7 @@ type PromptBuilder interface {
     BuildPlanPrompt(ctx context.Context, req *PlanPromptRequest) (*Prompt, error)
     BuildThinkPrompt(ctx context.Context, req *ThinkPromptRequest) (*Prompt, error)
     BuildReflectionPrompt(ctx context.Context, req *ReflectionPromptRequest) (*Prompt, error)
+    BuildReplanPrompt(ctx context.Context, req *ReplanPromptRequest) (*Prompt, error)
 }
 
 type BuildRequest struct {
@@ -137,6 +138,15 @@ type ReflectionPromptRequest struct {
     Error      error
     Session    *Session
 }
+
+type ReplanPromptRequest struct {
+    OriginalGoal   string
+    OriginalPlan   *Plan
+    CurrentStep    int
+    FailureReason  string
+    CompletedSteps []*PlanStep
+    Reflections    []*Reflection
+}
 ```
 
 ### 4.2 接口方法说明
@@ -147,6 +157,7 @@ type ReflectionPromptRequest struct {
 | `BuildPlanPrompt`       | 构建规划 Prompt | Planner 规划阶段   |
 | `BuildThinkPrompt`      | 构建思考 Prompt | Thinker 推理阶段   |
 | `BuildReflectionPrompt` | 构建反思 Prompt | Reflector 反思阶段 |
+| `BuildReplanPrompt`     | 构建重规划 Prompt | Planner 重规划阶段 |
 
 ## 5. 核心能力
 

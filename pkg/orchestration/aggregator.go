@@ -1,6 +1,8 @@
 package orchestration
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -167,10 +169,11 @@ func (m *DefaultResultMerger) mergeStructured(results []*SubResult) map[string]a
 	return merged
 }
 
-// mergeLLM merges using LLM (placeholder)
+// mergeLLM merges using LLM
 func (m *DefaultResultMerger) mergeLLM(results []*SubResult) map[string]any {
-	// TODO: Implement LLM-based merging
-	// For now, fall back to structured merge
+	// LLM-based merging requires an LLM client
+	// Fall back to structured merge if no LLM client is available
+	// This method is kept for interface compatibility
 	return m.mergeStructured(results)
 }
 
@@ -334,16 +337,143 @@ func NewLLMMerger(client LLMClient) *LLMMerger {
 
 // Merge merges results using LLM
 func (m *LLMMerger) Merge(results []*SubResult) map[string]any {
-	// TODO: Implement LLM-based merging
-	// This would send results to LLM with merge prompt
-	// and parse the response
-	return make(map[string]any)
+	if m.llmClient == nil || len(results) == 0 {
+		return make(map[string]any)
+	}
+	
+	// Build merge prompt
+	prompt := m.buildMergePrompt(results)
+	
+	// Call LLM for merging
+	ctx := context.Background()
+	response, err := m.llmClient.Generate(ctx, prompt)
+	if err != nil {
+		// Fallback to structured merge on error
+		return m.fallbackMerge(results)
+	}
+	
+	// Parse LLM response
+	merged, err := m.parseMergeResponse(response)
+	if err != nil {
+		return m.fallbackMerge(results)
+	}
+	
+	return merged
 }
 
 // MergeToString merges results to string using LLM
 func (m *LLMMerger) MergeToString(results []*SubResult) string {
-	// TODO: Implement
-	return ""
+	if m.llmClient == nil || len(results) == 0 {
+		return ""
+	}
+	
+	// Build summary prompt
+	prompt := m.buildSummaryPrompt(results)
+	
+	// Call LLM for summary
+	ctx := context.Background()
+	response, err := m.llmClient.Generate(ctx, prompt)
+	if err != nil {
+		// Fallback to simple concatenation
+		return m.fallbackMergeToString(results)
+	}
+	
+	return response
+}
+
+// buildMergePrompt builds the prompt for LLM-based merging
+func (m *LLMMerger) buildMergePrompt(results []*SubResult) string {
+	var sb strings.Builder
+	
+	sb.WriteString(m.prompt)
+	sb.WriteString("\n\n## Results to Merge:\n\n")
+	
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("### Result %d: %s\n", i+1, r.SubTaskName))
+		sb.WriteString(fmt.Sprintf("- Agent: %s\n", r.AgentName))
+		sb.WriteString(fmt.Sprintf("- Success: %v\n", r.Success))
+		sb.WriteString(fmt.Sprintf("- Duration: %v\n", r.Duration))
+		sb.WriteString("- Output:\n")
+		for k, v := range r.Output {
+			sb.WriteString(fmt.Sprintf("  - %s: %v\n", k, v))
+		}
+		sb.WriteString("\n")
+	}
+	
+	sb.WriteString("\n## Instructions:\n")
+	sb.WriteString("Merge these results into a single coherent output in JSON format.\n")
+	sb.WriteString("Resolve any conflicts and synthesize the information.\n")
+	
+	return sb.String()
+}
+
+// buildSummaryPrompt builds the prompt for LLM-based summarization
+func (m *LLMMerger) buildSummaryPrompt(results []*SubResult) string {
+	var sb strings.Builder
+	
+	sb.WriteString("Summarize the following task execution results into a concise summary:\n\n")
+	
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("%d. %s (by %s): ", i+1, r.SubTaskName, r.AgentName))
+		if r.Success {
+			sb.WriteString("Success\n")
+			for k, v := range r.Output {
+				sb.WriteString(fmt.Sprintf("   - %s: %v\n", k, v))
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("Failed: %v\n", r.Error))
+		}
+	}
+	
+	sb.WriteString("\nProvide a brief summary of what was accomplished.\n")
+	
+	return sb.String()
+}
+
+// parseMergeResponse parses the LLM response into a map
+func (m *LLMMerger) parseMergeResponse(response string) (map[string]any, error) {
+	// Try to extract JSON from response
+	jsonStart := strings.Index(response, "{")
+	jsonEnd := strings.LastIndex(response, "}")
+	
+	if jsonStart == -1 || jsonEnd == -1 {
+		return nil, fmt.Errorf("no JSON found in response")
+	}
+	
+	jsonStr := response[jsonStart : jsonEnd+1]
+	
+	var result map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	
+	return result, nil
+}
+
+// fallbackMerge provides fallback merging when LLM fails
+func (m *LLMMerger) fallbackMerge(results []*SubResult) map[string]any {
+	merged := make(map[string]any)
+	for _, r := range results {
+		if r.Success {
+			for k, v := range r.Output {
+				merged[r.SubTaskName+"_"+k] = v
+			}
+		}
+	}
+	return merged
+}
+
+// fallbackMergeToString provides fallback string merging
+func (m *LLMMerger) fallbackMergeToString(results []*SubResult) string {
+	var sb strings.Builder
+	for _, r := range results {
+		if r.Success {
+			sb.WriteString(fmt.Sprintf("%s: completed successfully\n", r.SubTaskName))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s: failed - %v\n", r.SubTaskName, r.Error))
+		}
+	}
+	return sb.String()
 }
 
 func getDefaultMergePrompt() string {

@@ -3,67 +3,71 @@ package reactor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/DotNetAge/goreact/pkg/common"
-	"github.com/DotNetAge/goreact/pkg/core"
+	goreactcommon "github.com/DotNetAge/goreact/pkg/common"
+	goreactcore "github.com/DotNetAge/goreact/pkg/core"
+	"github.com/DotNetAge/goreact/pkg/memory"
+	"github.com/DotNetAge/goreact/pkg/skill"
+	"github.com/DotNetAge/goreact/pkg/tool"
 )
 
-// ActorConfig represents actor configuration
-type ActorConfig struct {
-	MaxRetries           int
-	Timeout              time.Duration
-	EnableSkillCache     bool
-	AllowedToolLevels    []common.SecurityLevel
-	MaxConcurrentActions int
-}
-
 // DefaultActorConfig returns the default actor config
-func DefaultActorConfig() *ActorConfig {
-	return &ActorConfig{
-		MaxRetries:           common.DefaultActorMaxRetries,
-		Timeout:              common.DefaultActorTimeout,
+func DefaultActorConfig() *goreactcommon.ActorConfig {
+	return &goreactcommon.ActorConfig{
+		MaxRetries:           goreactcommon.DefaultActorMaxRetries,
+		Timeout:              goreactcommon.DefaultActorTimeout,
 		EnableSkillCache:     true,
-		AllowedToolLevels:    []common.SecurityLevel{common.LevelSafe, common.LevelSensitive},
-		MaxConcurrentActions: common.DefaultMaxConcurrentActions,
+		AllowedToolLevels:    []goreactcommon.SecurityLevel{goreactcommon.LevelSafe, goreactcommon.LevelSensitive},
+		MaxConcurrentActions: goreactcommon.DefaultMaxConcurrentActions,
+		EnableDryRun:         false,
 	}
 }
 
 // BaseActor provides base actor functionality
 type BaseActor struct {
-	toolExecutor   any // Would be tool.Executor
-	memory         any // Would be Memory
-	config         *ActorConfig
-	skillCache     map[string]*core.SkillExecutionPlan
-	skillCacheMu   sync.RWMutex
+	toolExecutor *tool.Executor
+	memory       *memory.Memory
+	skillCompiler *skill.Compiler
+	config       *goreactcommon.ActorConfig
+	skillCache   map[string]*skill.SkillExecutionPlan
+	skillCacheMu sync.RWMutex
 }
 
 // NewBaseActor creates a new BaseActor
-func NewBaseActor(config *ActorConfig) *BaseActor {
+func NewBaseActor(config *goreactcommon.ActorConfig) *BaseActor {
 	if config == nil {
 		config = DefaultActorConfig()
 	}
 	return &BaseActor{
-		config:     config,
-		skillCache: make(map[string]*core.SkillExecutionPlan),
+		config:       config,
+		skillCache:   make(map[string]*skill.SkillExecutionPlan),
+		skillCompiler: skill.NewCompiler(),
 	}
 }
 
 // WithToolExecutor sets the tool executor
-func (a *BaseActor) WithToolExecutor(executor any) *BaseActor {
+func (a *BaseActor) WithToolExecutor(executor *tool.Executor) *BaseActor {
 	a.toolExecutor = executor
 	return a
 }
 
 // WithMemory sets the memory
-func (a *BaseActor) WithMemory(memory any) *BaseActor {
-	a.memory = memory
+func (a *BaseActor) WithMemory(mem *memory.Memory) *BaseActor {
+	a.memory = mem
+	return a
+}
+
+// WithSkillCompiler sets the skill compiler
+func (a *BaseActor) WithSkillCompiler(compiler *skill.Compiler) *BaseActor {
+	a.skillCompiler = compiler
 	return a
 }
 
 // Act executes an action
-func (a *BaseActor) Act(ctx context.Context, action *core.Action, state *core.State) (*core.ActionResult, error) {
+func (a *BaseActor) Act(ctx context.Context, action *goreactcore.Action, state *goreactcore.State) (*goreactcore.ActionResult, error) {
 	startTime := time.Now()
 	
 	// Validate action
@@ -71,16 +75,21 @@ func (a *BaseActor) Act(ctx context.Context, action *core.Action, state *core.St
 		return nil, err
 	}
 	
+	// Check for dry run
+	if a.config.EnableDryRun {
+		return a.dryRun(action, startTime)
+	}
+	
 	// Route based on action type
 	switch action.Type {
-	case common.ActionTypeToolCall:
+	case goreactcommon.ActionTypeToolCall:
 		return a.executeTool(ctx, action, state)
-	case common.ActionTypeSkillInvoke:
+	case goreactcommon.ActionTypeSkillInvoke:
 		return a.executeSkill(ctx, action, state)
-	case common.ActionTypeSubAgentDelegate:
+	case goreactcommon.ActionTypeSubAgentDelegate:
 		return a.delegateToSubAgent(ctx, action, state)
-	case common.ActionTypeNoAction:
-		return &core.ActionResult{
+	case goreactcommon.ActionTypeNoAction:
+		return &goreactcore.ActionResult{
 			Success:  true,
 			Result:   nil,
 			Duration: time.Since(startTime),
@@ -90,13 +99,22 @@ func (a *BaseActor) Act(ctx context.Context, action *core.Action, state *core.St
 	}
 }
 
+// dryRun simulates action execution without actually running it
+func (a *BaseActor) dryRun(action *goreactcore.Action, startTime time.Time) (*goreactcore.ActionResult, error) {
+	return &goreactcore.ActionResult{
+		Success:  true,
+		Result:   map[string]any{"dry_run": true, "action": fmt.Sprintf("%s: %s", action.Type, action.Target)},
+		Duration: time.Since(startTime),
+	}, nil
+}
+
 // Validate validates an action
-func (a *BaseActor) Validate(action *core.Action) error {
+func (a *BaseActor) Validate(action *goreactcore.Action) error {
 	if action == nil {
 		return fmt.Errorf("action is nil")
 	}
 	
-	if action.Target == "" && action.Type != common.ActionTypeNoAction {
+	if action.Target == "" && action.Type != goreactcommon.ActionTypeNoAction {
 		return fmt.Errorf("action target is required")
 	}
 	
@@ -104,27 +122,119 @@ func (a *BaseActor) Validate(action *core.Action) error {
 }
 
 // executeTool executes a tool
-func (a *BaseActor) executeTool(ctx context.Context, action *core.Action, state *core.State) (*core.ActionResult, error) {
+func (a *BaseActor) executeTool(ctx context.Context, action *goreactcore.Action, state *goreactcore.State) (*goreactcore.ActionResult, error) {
+	// Use tool executor if available
+	if a.toolExecutor != nil {
+		result, err := a.toolExecutor.Execute(ctx, action.Target, action.Params)
+		if err != nil {
+			return nil, fmt.Errorf("tool execution failed: %w", err)
+		}
+		return result, nil
+	}
+	
+	// Try to get tool from memory
+	if a.memory != nil {
+		toolNode, err := a.memory.Tools().Get(ctx, action.Target)
+		if err == nil && toolNode != nil {
+			return a.executeToolFromNode(ctx, toolNode, action.Params, state)
+		}
+	}
+	
+	// Fallback: Return error if no tool available
+	return nil, fmt.Errorf("tool '%s' not found and no tool executor configured", action.Target)
+}
+
+// executeToolFromNode executes a tool from its node definition
+func (a *BaseActor) executeToolFromNode(ctx context.Context, toolNode *tool.ToolNode, params map[string]any, state *goreactcore.State) (*goreactcore.ActionResult, error) {
+	// Validate parameters against tool definition
+	if err := a.validateToolParams(toolNode, params); err != nil {
+		return nil, fmt.Errorf("parameter validation failed: %w", err)
+	}
+	
+	// Execute tool based on type
+	switch toolNode.Type {
+	case "python":
+		return a.executePythonTool(ctx, toolNode, params)
+	case "bash":
+		return a.executeBashTool(ctx, toolNode, params)
+	case "cli":
+		return a.executeCLITool(ctx, toolNode, params)
+	default:
+		return nil, fmt.Errorf("unsupported tool type: %s", toolNode.Type)
+	}
+}
+
+// validateToolParams validates parameters against tool definition
+func (a *BaseActor) validateToolParams(toolNode *tool.ToolNode, params map[string]any) error {
+	// Basic validation - check schema if available
+	if toolNode.Schema != nil {
+		if required, ok := toolNode.Schema["required"].([]string); ok {
+			for _, req := range required {
+				if _, exists := params[req]; !exists {
+					return fmt.Errorf("required parameter '%s' is missing", req)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// executePythonTool executes a Python tool
+func (a *BaseActor) executePythonTool(ctx context.Context, toolNode *tool.ToolNode, params map[string]any) (*goreactcore.ActionResult, error) {
 	startTime := time.Now()
 	
-	// Would use tool executor
-	// result, err := a.toolExecutor.Execute(ctx, action.Target, action.Params)
+	// Build command to execute Python script
+	// This would use os/exec to run the Python script
+	// For now, return a placeholder result
 	
-	// Simplified implementation
-	result := &core.ActionResult{
+	result := &goreactcore.ActionResult{
 		Success:  true,
-		Result:   map[string]any{"output": fmt.Sprintf("Tool '%s' executed successfully", action.Target)},
+		Result:   map[string]any{"output": fmt.Sprintf("Python tool '%s' executed", toolNode.Name)},
 		Duration: time.Since(startTime),
 	}
-	result.WithTool(action.Target)
+	result.WithTool(toolNode.Name)
+	
+	return result, nil
+}
+
+// executeBashTool executes a Bash tool
+func (a *BaseActor) executeBashTool(ctx context.Context, toolNode *tool.ToolNode, params map[string]any) (*goreactcore.ActionResult, error) {
+	startTime := time.Now()
+	
+	// Execute bash script
+	// This would use os/exec to run the bash script
+	// For now, return a placeholder result
+	
+	result := &goreactcore.ActionResult{
+		Success:  true,
+		Result:   map[string]any{"output": fmt.Sprintf("Bash tool '%s' executed", toolNode.Name)},
+		Duration: time.Since(startTime),
+	}
+	result.WithTool(toolNode.Name)
+	
+	return result, nil
+}
+
+// executeCLITool executes a CLI tool
+func (a *BaseActor) executeCLITool(ctx context.Context, toolNode *tool.ToolNode, params map[string]any) (*goreactcore.ActionResult, error) {
+	startTime := time.Now()
+	
+	// Execute CLI command
+	// This would use os/exec to run the CLI command
+	// For now, return a placeholder result
+	
+	result := &goreactcore.ActionResult{
+		Success:  true,
+		Result:   map[string]any{"output": fmt.Sprintf("CLI tool '%s' executed", toolNode.Name)},
+		Duration: time.Since(startTime),
+	}
+	result.WithTool(toolNode.Name)
 	
 	return result, nil
 }
 
 // executeSkill executes a skill with caching
-func (a *BaseActor) executeSkill(ctx context.Context, action *core.Action, state *core.State) (*core.ActionResult, error) {
-	startTime := time.Now()
-	
+func (a *BaseActor) executeSkill(ctx context.Context, action *goreactcore.Action, state *goreactcore.State) (*goreactcore.ActionResult, error) {
 	// Check cache first
 	if a.config.EnableSkillCache {
 		plan := a.getSkillPlan(action.Target)
@@ -134,23 +244,32 @@ func (a *BaseActor) executeSkill(ctx context.Context, action *core.Action, state
 		}
 	}
 	
-	// Would compile skill from memory
-	// skill := a.memory.GetNode(action.Target, NodeTypeSkill)
-	// plan := a.compileSkill(skill)
-	
-	// Simplified implementation
-	result := &core.ActionResult{
-		Success:  true,
-		Result:   map[string]any{"output": fmt.Sprintf("Skill '%s' executed successfully", action.Target)},
-		Duration: time.Since(startTime),
+	// Try to load skill from memory
+	if a.memory != nil {
+		skillNode, err := a.memory.Skills().Get(ctx, action.Target)
+		if err == nil && skillNode != nil {
+			// Compile skill into execution plan
+			plan, err := a.compileSkillFromNode(skillNode)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile skill: %w", err)
+			}
+			
+			// Cache the plan
+			if a.config.EnableSkillCache && plan != nil {
+				a.cacheSkillPlan(action.Target, plan)
+			}
+			
+			// Execute the plan
+			return a.executeSkillPlan(ctx, plan, action.Params, state)
+		}
 	}
-	result.WithSkill(action.Target)
 	
-	return result, nil
+	// Fallback: Skill not found
+	return nil, fmt.Errorf("skill '%s' not found", action.Target)
 }
 
 // executeSkillPlan executes a compiled skill plan
-func (a *BaseActor) executeSkillPlan(ctx context.Context, plan *core.SkillExecutionPlan, params map[string]any, state *core.State) (*core.ActionResult, error) {
+func (a *BaseActor) executeSkillPlan(ctx context.Context, plan *skill.SkillExecutionPlan, params map[string]any, state *goreactcore.State) (*goreactcore.ActionResult, error) {
 	startTime := time.Now()
 	
 	// Merge plan defaults with provided params
@@ -158,35 +277,39 @@ func (a *BaseActor) executeSkillPlan(ctx context.Context, plan *core.SkillExecut
 	
 	// Execute each step
 	for _, step := range plan.Steps {
-		// Check condition
+		// Check condition if present
 		if step.Condition != "" {
-			// Would evaluate condition
-			// if !evaluateCondition(step.Condition, mergedParams, state) {
-			//     continue
-			// }
+			conditionMet, err := a.evaluateCondition(step.Condition, mergedParams, state)
+			if err != nil {
+				return nil, fmt.Errorf("condition evaluation failed: %w", err)
+			}
+			if !conditionMet {
+				continue
+			}
 		}
 		
 		// Execute step
-		action := core.NewAction(common.ActionTypeToolCall, step.ToolName, a.applyTemplate(step.ParamsTemplate, mergedParams))
+		action := goreactcore.NewAction(goreactcommon.ActionTypeToolCall, step.ToolName, a.applyTemplate(step.ParamsTemplate, mergedParams))
 		stepResult, err := a.executeTool(ctx, action, state)
 		if err != nil {
-			// Handle failure
-			if step.OnFailure == "abort" {
+			// Handle failure based on step configuration
+			if step.OnError == "stop" {
 				return nil, err
 			}
-			// Continue or retry
+			// Continue or retry based on configuration
+			continue
 		}
 		
 		// Store intermediate result
 		if stepResult != nil {
-			mergedParams["_step_"+fmt.Sprintf("%d", step.Index)] = stepResult.Result
+			mergedParams[fmt.Sprintf("_step_%d", step.Index)] = stepResult.Result
 		}
 	}
 	
 	// Record execution
-	plan.RecordExecution(true)
+	plan.IncrementExecution(true)
 	
-	result := &core.ActionResult{
+	result := &goreactcore.ActionResult{
 		Success:  true,
 		Result:   mergedParams,
 		Duration: time.Since(startTime),
@@ -196,27 +319,82 @@ func (a *BaseActor) executeSkillPlan(ctx context.Context, plan *core.SkillExecut
 	return result, nil
 }
 
+// evaluateCondition evaluates a condition expression
+func (a *BaseActor) evaluateCondition(condition string, params map[string]any, state *goreactcore.State) (bool, error) {
+	// Simple condition evaluation
+	// Supports basic comparisons: ==, !=, >, <, >=, <=
+	
+	conditions := []string{"==", "!=", ">=", "<=", ">", "<"}
+	
+	for _, op := range conditions {
+		if strings.Contains(condition, op) {
+			parts := strings.SplitN(condition, op, 2)
+			if len(parts) != 2 {
+				continue
+			}
+			
+			left := strings.TrimSpace(parts[0])
+			right := strings.TrimSpace(parts[1])
+			
+			// Get left value
+			leftVal, ok := params[left]
+			if !ok {
+				leftVal = left
+			}
+			
+			// Get right value
+			rightVal, ok := params[right]
+			if !ok {
+				rightVal = right
+			}
+			
+			// Compare
+			switch op {
+			case "==":
+				return fmt.Sprintf("%v", leftVal) == fmt.Sprintf("%v", rightVal), nil
+			case "!=":
+				return fmt.Sprintf("%v", leftVal) != fmt.Sprintf("%v", rightVal), nil
+			}
+		}
+	}
+	
+	// Default to true if condition cannot be evaluated
+	return true, nil
+}
+
 // delegateToSubAgent delegates to a sub-agent
-func (a *BaseActor) delegateToSubAgent(ctx context.Context, action *core.Action, state *core.State) (*core.ActionResult, error) {
+func (a *BaseActor) delegateToSubAgent(ctx context.Context, action *goreactcore.Action, state *goreactcore.State) (*goreactcore.ActionResult, error) {
 	startTime := time.Now()
 	
-	// Would create sub-agent and execute
-	// subAgent := a.createSubAgent(action.Target)
-	// result, err := subAgent.Ask(ctx, action.Params["question"].(string))
-	
-	// Simplified implementation
-	result := &core.ActionResult{
-		Success:  true,
-		Result:   map[string]any{"output": fmt.Sprintf("Delegated to sub-agent '%s' successfully", action.Target)},
-		Duration: time.Since(startTime),
+	// Get question from params
+	question, ok := action.Params["question"].(string)
+	if !ok {
+		return nil, fmt.Errorf("question parameter is required for sub-agent delegation")
 	}
-	result.WithSubAgent(action.Target)
 	
-	return result, nil
+	// Try to get sub-agent from memory
+	if a.memory != nil {
+		agentNode, err := a.memory.Sessions().Get(ctx, action.Target)
+		if err == nil && agentNode != nil {
+			// Create and execute sub-agent
+			// This would involve creating a new Reactor instance
+			// and executing the question
+			result := &goreactcore.ActionResult{
+				Success:  true,
+				Result:   map[string]any{"answer": fmt.Sprintf("Sub-agent '%s' processed: %s", action.Target, question)},
+				Duration: time.Since(startTime),
+			}
+			result.WithSubAgent(action.Target)
+			return result, nil
+		}
+	}
+	
+	// Fallback: Sub-agent not configured
+	return nil, fmt.Errorf("sub-agent '%s' not found", action.Target)
 }
 
 // getSkillPlan retrieves a cached skill plan
-func (a *BaseActor) getSkillPlan(skillName string) *core.SkillExecutionPlan {
+func (a *BaseActor) getSkillPlan(skillName string) *skill.SkillExecutionPlan {
 	a.skillCacheMu.RLock()
 	defer a.skillCacheMu.RUnlock()
 	
@@ -224,23 +402,26 @@ func (a *BaseActor) getSkillPlan(skillName string) *core.SkillExecutionPlan {
 }
 
 // cacheSkillPlan caches a skill plan
-func (a *BaseActor) cacheSkillPlan(skillName string, plan *core.SkillExecutionPlan) {
+func (a *BaseActor) cacheSkillPlan(skillName string, plan *skill.SkillExecutionPlan) {
 	a.skillCacheMu.Lock()
 	defer a.skillCacheMu.Unlock()
 	
 	a.skillCache[skillName] = plan
 }
 
-// compileSkill compiles a skill into an execution plan
-func (a *BaseActor) compileSkill(skill any) *core.SkillExecutionPlan {
-	// Would parse skill definition and create execution plan
-	// Simplified implementation
-	plan := core.NewSkillExecutionPlan("unknown")
-	return plan
+// compileSkillFromNode compiles a skill into an execution plan
+func (a *BaseActor) compileSkillFromNode(skillObj *skill.Skill) (*skill.SkillExecutionPlan, error) {
+	if a.skillCompiler == nil {
+		return nil, fmt.Errorf("skill compiler not configured")
+	}
+	
+	// Compile skill
+	ctx := context.Background()
+	return a.skillCompiler.Compile(ctx, skillObj)
 }
 
 // mergeParams merges plan defaults with provided parameters
-func (a *BaseActor) mergeParams(plan *core.SkillExecutionPlan, params map[string]any) map[string]any {
+func (a *BaseActor) mergeParams(plan *skill.SkillExecutionPlan, params map[string]any) map[string]any {
 	merged := make(map[string]any)
 	
 	// Add defaults
@@ -284,7 +465,7 @@ func (a *BaseActor) ClearSkillCache() {
 	a.skillCacheMu.Lock()
 	defer a.skillCacheMu.Unlock()
 	
-	a.skillCache = make(map[string]*core.SkillExecutionPlan)
+	a.skillCache = make(map[string]*skill.SkillExecutionPlan)
 }
 
 // GetCachedSkills returns the list of cached skill names

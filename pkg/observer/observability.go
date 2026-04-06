@@ -3,6 +3,9 @@ package observer
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -236,8 +239,46 @@ func NewLogger(level string) *Logger {
 
 // Log logs a message
 func (l *Logger) Log(level, message string, fields map[string]any) {
-	// Would implement actual logging
-	// Simplified - just format and print
+	// Format log entry
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	
+	// Build log line
+	var logLine string
+	if len(fields) > 0 {
+		fieldStrs := make([]string, 0, len(fields))
+		for k, v := range fields {
+			fieldStrs = append(fieldStrs, fmt.Sprintf("%s=%v", k, v))
+		}
+		logLine = fmt.Sprintf("[%s] [%s] %s %s\n", timestamp, strings.ToUpper(level), message, strings.Join(fieldStrs, " "))
+	} else {
+		logLine = fmt.Sprintf("[%s] [%s] %s\n", timestamp, strings.ToUpper(level), message)
+	}
+	
+	// Add logger fields
+	if len(l.fields) > 0 {
+		for k, v := range l.fields {
+			logLine = strings.TrimSuffix(logLine, "\n") + fmt.Sprintf(" %s=%v", k, v) + "\n"
+		}
+	}
+	
+	// Output based on level
+	switch strings.ToLower(level) {
+	case "debug", "trace":
+		if l.level == "debug" || l.level == "trace" {
+			fmt.Print(logLine)
+		}
+	case "info":
+		fmt.Print(logLine)
+	case "warn", "warning":
+		fmt.Print(logLine)
+	case "error":
+		fmt.Fprint(os.Stderr, logLine)
+	case "fatal":
+		fmt.Fprint(os.Stderr, logLine)
+		os.Exit(1)
+	default:
+		fmt.Print(logLine)
+	}
 }
 
 // WithFields adds fields to the logger

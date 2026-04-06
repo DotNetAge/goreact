@@ -202,6 +202,7 @@ type FrozenSessionNode struct {
 	UserName      string                `json:"user_name" yaml:"user_name"`
 	AgentName     string                `json:"agent_name" yaml:"agent_name"`
 	SuspendReason string                `json:"suspend_reason" yaml:"suspend_reason"`
+	Priority      common.TaskPriority   `json:"priority" yaml:"priority"`
 }
 
 // PendingQuestionNode represents a PendingQuestion in the memory graph

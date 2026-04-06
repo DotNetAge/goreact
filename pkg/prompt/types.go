@@ -156,6 +156,24 @@ type GraphContext struct {
 	
 	// Paths are graph paths
 	Paths []*Path `json:"paths" yaml:"paths"`
+	
+	// SubGraph is a subgraph extracted from the knowledge graph
+	SubGraph *SubGraph `json:"sub_graph" yaml:"sub_graph"`
+}
+
+// SubGraph represents a subgraph extracted from the knowledge graph
+type SubGraph struct {
+	// Nodes are the nodes in the subgraph
+	Nodes []*GraphNode `json:"nodes" yaml:"nodes"`
+	
+	// Edges are the edges in the subgraph
+	Edges []*Edge `json:"edges" yaml:"edges"`
+	
+	// Root is the root node of the subgraph
+	Root string `json:"root" yaml:"root"`
+	
+	// Depth is the depth of the subgraph extraction
+	Depth int `json:"depth" yaml:"depth"`
 }
 
 // GraphNode represents a node in the knowledge graph
@@ -390,6 +408,57 @@ type Reflection struct {
 	
 	// Suggestions are improvement suggestions
 	Suggestions []string `json:"suggestions" yaml:"suggestions"`
+}
+
+// Trajectory represents the execution trajectory
+type Trajectory struct {
+	// Steps are the execution steps
+	Steps []*TrajectoryStep `json:"steps" yaml:"steps"`
+	
+	// Success indicates if the execution was successful
+	Success bool `json:"success" yaml:"success"`
+	
+	// FailurePoint is the step where execution failed
+	FailurePoint int `json:"failure_point" yaml:"failure_point"`
+}
+
+// TrajectoryStep represents a single step in the execution trajectory
+type TrajectoryStep struct {
+	// Thought is the reasoning at this step
+	Thought string `json:"thought" yaml:"thought"`
+	
+	// Action is the action taken
+	Action string `json:"action" yaml:"action"`
+	
+	// Observation is the result observed
+	Observation string `json:"observation" yaml:"observation"`
+}
+
+// Plan represents an execution plan
+type Plan struct {
+	// Goal is the plan goal
+	Goal string `json:"goal" yaml:"goal"`
+	
+	// Steps are the plan steps
+	Steps []*PlanStep `json:"steps" yaml:"steps"`
+	
+	// Success indicates if the plan was successful
+	Success bool `json:"success" yaml:"success"`
+}
+
+// PlanStep represents a single step in the plan
+type PlanStep struct {
+	// Description is the step description
+	Description string `json:"description" yaml:"description"`
+	
+	// Tool is the tool to use
+	Tool string `json:"tool" yaml:"tool"`
+	
+	// Dependencies are the step dependencies
+	Dependencies []string `json:"dependencies" yaml:"dependencies"`
+	
+	// Status is the step status
+	Status string `json:"status" yaml:"status"`
 }
 
 // InjectionStrategy determines how to inject content

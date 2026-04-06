@@ -6,6 +6,12 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg6
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/DataDog/zstd v1.4.5 h1:EndNeuB0l9syBZhut0wns3gV1hL8zX8LIu6ZiVHWLIQ=
 github.com/DataDog/zstd v1.4.5/go.mod h1:1jcaCB/ufaK+sKp1NBhlGmpz41jOoPQ35bpF36t7BBo=
+github.com/DotNetAge/gochat v0.1.10 h1:3nphILIDs9yGk5uznEJ92yqMtZWJgwT28OlrrskQCqY=
+github.com/DotNetAge/gochat v0.1.10/go.mod h1:w7m36rMZoDwmReJNTLUGHhok6DSqnIidg9wFKwYM1dM=
+github.com/DotNetAge/gograph v0.1.0 h1:BYUQEkBBH4fqynFCTQ6ddi/h6/XEbRvykhhdp8uQT7U=
+github.com/DotNetAge/gograph v0.1.0/go.mod h1:HJSO2ZRLZ3GADUhreRvTKUsScegnjl8/Te/+scBV3hg=
+github.com/DotNetAge/gorag v1.1.6 h1:J0jaP1ocKJX+qDKLIpxOt4SlKvPMvZG6n6pcK/Wtd4Q=
+github.com/DotNetAge/gorag v1.1.6/go.mod h1:84IcjXPRaSUpTPS7zx6TcUEKM0qqlyIhx4NPUfFNTlE=
 github.com/DotNetAge/govector v0.1.3 h1:TB+lXdkZV0tjuhtZnwuwvoq0Bbr43xlzsvoxuULc3tE=
 github.com/DotNetAge/govector v0.1.3/go.mod h1:0/jnt1Xnghs6V7zr8iZ22QDO0a0ulpkn2cl8orXt6DY=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=

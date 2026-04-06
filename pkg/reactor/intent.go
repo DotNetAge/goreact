@@ -61,8 +61,7 @@ func (r *IntentRecognizer) Classify(ctx context.Context, input string, state *go
 
 // buildIntentPrompt builds the intent classification prompt
 func (r *IntentRecognizer) buildIntentPrompt(input string, state *goreactcore.State) string {
-	return fmt.Sprintf(`
-You are an intent classifier. Analyze the user input and return the most matching intent type.
+	return fmt.Sprintf(`You are an intent classifier. Analyze the user input and return the most matching intent type.
 
 ## Input Analysis
 - User input: %s
@@ -83,14 +82,12 @@ You are an intent classifier. Analyze the user input and return the most matchin
 - If input is greeting or no clear purpose, lean towards Chat
 
 ## Output Format (strict compliance)
-```json
+Return JSON in this format:
 {
   "intent": "<intent_type>",
   "confidence": <0.0-1.0>,
   "reasoning": "<reasoning>"
-}
-```
-`, input, state.Context)
+}`, input, state.Context)
 }
 
 // parseIntentResponse parses the LLM response

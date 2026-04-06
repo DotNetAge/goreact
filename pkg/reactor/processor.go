@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	goreactcore "github.com/DotNetAge/goreact/pkg/core"
 )
 
 // ResultProcessor processes action results into string content

@@ -145,11 +145,13 @@ type AgentResult struct {
 type ExecutionPhase string
 
 const (
+	PhaseIdle       ExecutionPhase = "idle"        // Initial state
 	PhasePlanning   ExecutionPhase = "planning"
 	PhaseSelecting  ExecutionPhase = "selecting"
 	PhaseExecuting  ExecutionPhase = "executing"
 	PhaseAggregating ExecutionPhase = "aggregating"
 	PhaseSuspended  ExecutionPhase = "suspended"
+	PhaseRetrying   ExecutionPhase = "retrying"    // Retry after failure
 	PhaseCompleted  ExecutionPhase = "completed"
 	PhaseFailed     ExecutionPhase = "failed"
 )

@@ -499,6 +499,9 @@ func nodeToFrozenSessionNode(node *core.Node) *goreactcore.FrozenSessionNode {
 		StateData:     []byte(getString(node.Properties["state_data"])),
 		Status:        goreactcommon.FrozenStatus(getString(node.Properties["status"])),
 		SuspendReason: getString(node.Properties["suspend_reason"]),
+		UserName:      getString(node.Properties["user_name"]),
+		AgentName:     getString(node.Properties["agent_name"]),
+		Priority:      goreactcommon.TaskPriority(getString(node.Properties["priority"])),
 	}
 }
 
