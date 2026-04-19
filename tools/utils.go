@@ -2,7 +2,9 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ValidateRequired 验证必需参数
@@ -26,17 +28,29 @@ func ValidateRequiredString(params map[string]any, key string) (string, error) {
 	return str, nil
 }
 
-// ValidateFileSafety 验证文件安全性
+// ValidateFileSafety 验证文件安全性，采用路径锚定模式
 func ValidateFileSafety(path string) error {
-	// 清理路径
-	cleanPath := filepath.Clean(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
 
-	// 检查是否是特殊文件
-	baseName := filepath.Base(cleanPath)
-	specialFiles := []string{"passwd", "shadow", "sudoers"}
-	for _, special := range specialFiles {
-		if baseName == special {
-			return fmt.Errorf("access to %s is restricted for security reasons", special)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// 确保路径在当前工作目录内
+	if !strings.HasPrefix(absPath, cwd) {
+		return fmt.Errorf("access denied: path %q is outside the workspace %q", path, cwd)
+	}
+
+	// 检查是否是敏感系统文件
+	baseName := filepath.Base(absPath)
+	restrictedFiles := []string{".env", "id_rsa", "passwd", "shadow"}
+	for _, restricted := range restrictedFiles {
+		if strings.Contains(baseName, restricted) {
+			return fmt.Errorf("access to %s is restricted for security reasons", baseName)
 		}
 	}
 

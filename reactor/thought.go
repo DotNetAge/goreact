@@ -38,8 +38,8 @@ type Thought struct {
 }
 
 // BuildThinkPrompt constructs the Think phase prompt.
-// It includes the classified intent, available tools, and user input.
-func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo) string {
+// It includes the classified intent, available tools, applicable skills, and user input.
+func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skills []*core.Skill) string {
 	intentSection := "(no intent)"
 	if intent != nil {
 		b, _ := json.Marshal(intent)
@@ -47,6 +47,15 @@ func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo) strin
 	}
 
 	toolSection := FormatToolDescriptions(tools)
+
+	skillSection := ""
+	if len(skills) > 0 {
+		skillSection = "\n<activated_skills>\n"
+		for _, s := range skills {
+			skillSection += fmt.Sprintf("## Skill: %s\n%s\n", s.Name, s.Instructions)
+		}
+		skillSection += "</activated_skills>\n"
+	}
 
 	return fmt.Sprintf(`You are the Thinker in a T-A-O (Think-Act-Observe) agent system.
 
@@ -69,7 +78,7 @@ Your decision must be one of:
 7. Set is_final to true ONLY when you have a complete, satisfactory answer to return to the user.
 8. Always provide reasoning in the same language as the user input.
 </rules>
-
+%s
 <intent>
 %s
 </intent>
@@ -85,7 +94,7 @@ User input: %s
 <output_format>
 Return ONLY a valid JSON object, no markdown, no code blocks, no explanation:
 {"decision":"act|answer|clarify","reasoning":"<reasoning process>","confidence":<0.0-1.0>,"action_target":"<tool_name or empty>","action_params":{...},"final_answer":"<answer or empty>","clarification_question":"<question or empty>","is_final":<bool>}
-</output_format>`, intentSection, toolSection, input)
+</output_format>`, skillSection, intentSection, toolSection, input)
 }
 
 // jsonBlockRegex matches ```json ... ``` code blocks.

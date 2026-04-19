@@ -15,8 +15,8 @@ type Cron struct {
 	info *core.ToolInfo
 }
 
-// NewCron 创建 cron工具
-func NewCron() core.FuncTool {
+// NewCronTool 创建 cron 工具
+func NewCronTool() core.FuncTool {
 	return &Cron{
 		info: &core.ToolInfo{
 			Name:          "cron",

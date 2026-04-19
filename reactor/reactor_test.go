@@ -7,8 +7,6 @@ import (
 	"time"
 
 	gochat "github.com/DotNetAge/gochat"
-	"github.com/DotNetAge/goreact/core"
-	"github.com/DotNetAge/goreact/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,7 +16,10 @@ import (
 func testConfig(t *testing.T) ReactorConfig {
 	t.Helper()
 	cfg := DefaultReactorConfig()
-	cfg.APIKey = "DASHSCOPE_API_KEY="
+
+	// 如果没有设置真实的 API Key，可以在这里处理。如果是 CI 环境可以跳过
+	// 但为了简单，我们还是保留原配置结构
+	cfg.APIKey = "DASHSCOPE_API_KEY"
 	cfg.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	cfg.Model = "qwen3.5-flash"
 	cfg.ClientType = gochat.QwenClient
@@ -29,25 +30,7 @@ func testConfig(t *testing.T) ReactorConfig {
 func newTestReactor(t *testing.T) *defaultReactor {
 	t.Helper()
 	r := NewReactor(testConfig(t))
-
-	allTools := []core.FuncTool{
-		tools.NewEcho(),
-		tools.NewCalculator(),
-		tools.NewLS(),
-		tools.NewRead(),
-		tools.NewWrite(),
-		tools.NewEdit(),
-		tools.NewGrep(),
-		tools.NewGlob(),
-		tools.NewReplace(),
-		tools.NewCron(),
-		tools.NewBash(),
-	}
-	for _, tool := range allTools {
-		if err := r.RegisterTool(tool); err != nil {
-			t.Fatalf("RegisterTool failed: %v", err)
-		}
-	}
+	// NewReactor already registers all built-in tools, so we just return it.
 	return r
 }
 

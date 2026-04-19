@@ -11,7 +11,7 @@ import (
 
 func TestCalculator(t *testing.T) {
 	// 创建计算器工具
-	calculator := NewCalculator()
+	calculator := NewCalculatorTool()
 
 	// 测试加法
 	_, err := calculator.Execute(context.Background(), map[string]any{"operation": "add", "a": 10, "b": 5})
@@ -52,7 +52,7 @@ func TestCalculator(t *testing.T) {
 
 func TestEcho(t *testing.T) {
 	// 创建echo工具
-	echo := NewEcho()
+	echo := NewEchoTool()
 
 	// 测试echo
 	result, err := echo.Execute(context.Background(), map[string]any{"message": "Hello, World!"})
@@ -66,7 +66,7 @@ func TestEcho(t *testing.T) {
 
 func TestGrep(t *testing.T) {
 	// 创建 Grep 工具
-	grep := NewGrep()
+	grep := NewGrepTool()
 
 	// 测试在当前文件中查找模式
 	result, err := grep.Execute(context.Background(), map[string]any{"pattern": "TestGrep", "path": "./builtin_test.go"})
@@ -80,7 +80,7 @@ func TestGrep(t *testing.T) {
 
 func TestReplace(t *testing.T) {
 	// 创建 Replace 工具
-	replace := NewReplace()
+	replace := NewReplaceTool()
 
 	// 创建一个临时测试文件
 	testFile := "/tmp/test_replace.txt"
@@ -169,7 +169,7 @@ func TestReplace(t *testing.T) {
 
 func TestCron(t *testing.T) {
 	// 创建 Cron工具
-	cron := NewCron()
+	cron := NewCronTool()
 
 	t.Run("validate valid expression", func(t *testing.T) {
 		result, err := cron.Execute(context.Background(), map[string]any{
@@ -288,7 +288,7 @@ func TestCron(t *testing.T) {
 }
 
 func TestBash(t *testing.T) {
-	bash := NewBash()
+	bash := NewBashTool()
 
 	t.Run("basic command execution", func(t *testing.T) {
 		result, err := bash.Execute(context.Background(), map[string]any{"command": "echo hello"})
@@ -337,7 +337,7 @@ func TestBash(t *testing.T) {
 }
 
 func TestLS(t *testing.T) {
-	ls := NewLS()
+	ls := NewLSTool()
 
 	t.Run("list current directory", func(t *testing.T) {
 		result, err := ls.Execute(context.Background(), map[string]any{"path": "."})
@@ -402,7 +402,7 @@ func TestLS(t *testing.T) {
 }
 
 func TestGlob(t *testing.T) {
-	glob := NewGlob()
+	glob := NewGlobTool()
 
 	t.Run("find go files", func(t *testing.T) {
 		result, err := glob.Execute(context.Background(), map[string]any{"pattern": "*.go", "path": "."})
@@ -453,7 +453,7 @@ func TestGlob(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
-	read := NewRead()
+	read := NewReadTool()
 
 	t.Run("read this test file", func(t *testing.T) {
 		result, err := read.Execute(context.Background(), map[string]any{"path": "builtin_test.go"})
@@ -519,7 +519,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestWrite(t *testing.T) {
-	write := NewWrite()
+	write := NewWriteTool()
 
 	t.Run("write to temp file", func(t *testing.T) {
 		testFile := "/tmp/goreact_test_write.txt"

@@ -46,8 +46,8 @@ type IMAPConfig struct {
 	TLS      bool
 }
 
-// NewEmail 创建邮件工具
-func NewEmail(config EmailConfig) core.FuncTool {
+// NewEmailTool 创建邮件工具
+func NewEmailTool(config EmailConfig) core.FuncTool {
 	return &Email{config: config,
 		info: &core.ToolInfo{
 			Name:        "email",

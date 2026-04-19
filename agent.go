@@ -46,19 +46,23 @@ func (a *Agent) Ask(question string) (string, error) {
 	return "", nil
 }
 
-func (a *Agent) Recognize(text string) (core.Intent, error) {
+func (a *Agent) Recognize(text string) (*reactor.Intent, error) {
 	// 识别用户意图
 	recognizedPrompt := ""
 
 	_, err := gochat.Client().
-		Init(*a.model.Config()).
+		Config(
+			gochat.WithAPIKey(a.model.APIKey),
+			gochat.WithBaseURL(a.model.BaseURL),
+			gochat.WithModel(a.model.Name),
+		).
 		SystemMessage(recognizedPrompt).
 		UserMessage(text).
-		GetResponse(gochat.OpenAIClient)
+		GetResponseFor(gochat.OpenAIClient)
 
 	if err != nil {
-		return core.Intent{}, err
+		return nil, err
 	}
 
-	return core.Intent{}, nil
+	return nil, nil
 }

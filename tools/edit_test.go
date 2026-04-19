@@ -3,9 +3,8 @@ package tools
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
-
-	"github.com/DotNetAge/goreact/core"
 )
 
 var ctx = context.Background()
@@ -65,34 +64,29 @@ func TestCalculator_toFloat64(t *testing.T) {
 }
 
 func TestEdit(t *testing.T) {
-	edit := NewEdit()
+	edit := NewFileEditTool()
 
 	t.Run("basic edit", func(t *testing.T) {
-		testFile := "/tmp/goreact_test_edit.txt"
+		testFile := "goreact_test_edit.txt"
 		os.WriteFile(testFile, []byte("Hello World"), 0644)
 
 		result, err := edit.Execute(ctx, map[string]any{
-			"path": testFile,
-			"edits": []any{
-				map[string]any{"old_text": "World", "new_text": "Go"},
-			},
+			"file_path": testFile,
+			"old_string": "World",
+			"new_string": "Go",
 		})
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
-		resultMap := result.(map[string]any)
-		if resultMap["success"] != true {
-			t.Error("Expected success to be true")
-		}
-		if resultMap["edits_applied"] != 1 {
-			t.Errorf("Expected 1 edit, got %v", resultMap["edits_applied"])
+		if !strings.Contains(result.(string), "updated successfully") {
+			t.Error("Expected success message")
 		}
 		os.Remove(testFile)
 	})
 
 	t.Run("missing path", func(t *testing.T) {
 		_, err := edit.Execute(ctx, map[string]any{
-			"edits": []any{map[string]any{"old_text": "a", "new_text": "b"}},
+			"old_string": "a", "new_string": "b",
 		})
 		if err == nil {
 			t.Error("Expected error for missing path")
@@ -100,21 +94,20 @@ func TestEdit(t *testing.T) {
 	})
 
 	t.Run("missing edits", func(t *testing.T) {
-		_, err := edit.Execute(ctx, map[string]any{"path": "/tmp/test.txt"})
+		_, err := edit.Execute(ctx, map[string]any{"file_path": "/tmp/test.txt"})
 		if err == nil {
 			t.Error("Expected error for missing edits")
 		}
 	})
 
 	t.Run("text not found", func(t *testing.T) {
-		testFile := "/tmp/goreact_test_edit2.txt"
+		testFile := "goreact_test_edit2.txt"
 		os.WriteFile(testFile, []byte("Hello World"), 0644)
 
 		_, err := edit.Execute(ctx, map[string]any{
-			"path": testFile,
-			"edits": []any{
-				map[string]any{"old_text": "NotFound", "new_text": "X"},
-			},
+			"file_path": testFile,
+			"old_string": "NotFound",
+			"new_string": "X",
 		})
 		if err == nil {
 			t.Error("Expected error when text not found")
@@ -123,14 +116,12 @@ func TestEdit(t *testing.T) {
 	})
 
 	t.Run("invalid edit format", func(t *testing.T) {
-		testFile := "/tmp/goreact_test_edit3.txt"
+		testFile := "goreact_test_edit3.txt"
 		os.WriteFile(testFile, []byte("Hello"), 0644)
 
 		_, err := edit.Execute(ctx, map[string]any{
-			"path": testFile,
-			"edits": []any{
-				map[string]any{"wrong_key": "value"},
-			},
+			"file_path": testFile,
+			"wrong_key": "value",
 		})
 		if err == nil {
 			t.Error("Expected error for invalid edit format")
@@ -139,35 +130,32 @@ func TestEdit(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if edit.Info().Name != "edit" {
-			t.Errorf("Expected 'edit', got %q", edit.Info().Name)
+		if edit.Info().Name != "file_edit" {
+			t.Errorf("Expected 'file_edit', got %q", edit.Info().Name)
 		}
 		if edit.Info().Description == "" {
 			t.Error("Expected non-empty description")
-		}
-		if edit.Info().SecurityLevel != core.LevelSensitive {
-			t.Errorf("Expected LevelSensitive, got %v", edit.Info().SecurityLevel)
 		}
 	})
 }
 
 func TestTruncateString(t *testing.T) {
 	t.Run("short string", func(t *testing.T) {
-		result := truncateString("short", 10)
+		result := TruncateString("short", 10)
 		if result != "short" {
 			t.Errorf("Expected 'short', got %q", result)
 		}
 	})
 
 	t.Run("long string", func(t *testing.T) {
-		result := truncateString("this is a long string", 10)
-		if result != "this is a ... (truncated)" {
+		result := TruncateString("this is a long string", 10)
+		if result != "this is..." {
 			t.Errorf("Expected truncated string, got %q", result)
 		}
 	})
 
 	t.Run("exact length", func(t *testing.T) {
-		result := truncateString("abc", 3)
+		result := TruncateString("abc", 3)
 		if result != "abc" {
 			t.Errorf("Expected 'abc', got %q", result)
 		}

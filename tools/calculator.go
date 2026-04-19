@@ -10,8 +10,8 @@ import (
 // Calculator 计算器工具
 type Calculator struct{}
 
-// NewCalculator 创建计算器工具
-func NewCalculator() core.FuncTool {
+// NewCalculatorTool 创建计算器工具
+func NewCalculatorTool() core.FuncTool {
 	return &Calculator{}
 }
 

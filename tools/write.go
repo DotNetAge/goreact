@@ -14,12 +14,20 @@ type Write struct {
 	info *core.ToolInfo
 }
 
-// NewWrite 创建文件写入工具
-func NewWrite() core.FuncTool {
+const writeDescription = `Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path unless append mode is true.
+- If this is an existing file, you should normally use the read tool first to get the current contents.
+- ALWAYS prefer editing existing files using file_edit tool in the codebase. NEVER write new files unless explicitly required.
+- The path parameter must be an absolute path, not a relative path.`
+
+// NewWriteTool 创建文件写入工具
+func NewWriteTool() core.FuncTool {
 	return &Write{
 		info: &core.ToolInfo{
 			Name:          "write",
-			Description:   "写入文件内容。自动创建目录、权限控制。Params: {path: '文件路径', content: '文件内容', append?: false}",
+			Description:   writeDescription,
 			SecurityLevel: core.LevelSensitive,
 		},
 	}

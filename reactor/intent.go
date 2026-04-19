@@ -134,7 +134,7 @@ type Intent struct {
 	Confidence float64 `json:"confidence" yaml:"confidence"`
 
 	// 实体与槽位提取
-	Entities map[string]string `json:"entities" yaml:"entities"`
+	Entities map[string]any `json:"entities" yaml:"entities"`
 
 	// 语义理解
 	Summary string `json:"summary" yaml:"summary"`

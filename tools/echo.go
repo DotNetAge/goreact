@@ -12,8 +12,8 @@ type Echo struct {
 	info *core.ToolInfo
 }
 
-// NewEcho 创建回显工具
-func NewEcho() core.FuncTool {
+// NewEchoTool 创建回显工具
+func NewEchoTool() core.FuncTool {
 	return &Echo{
 		info: &core.ToolInfo{
 			Name:          "echo",

@@ -5,119 +5,123 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Edit 文件编辑工具（支持多位置精确编辑）
-type Edit struct {
-	info *core.ToolInfo
+// FileEditTool implements a tool for editing files with staleness checks.
+type FileEditTool struct{}
+
+func NewFileEditTool() *FileEditTool {
+	return &FileEditTool{}
 }
 
-// NewEdit 创建文件编辑工具
-func NewEdit() core.FuncTool {
-	return &Edit{
-		info: &core.ToolInfo{
-			Name:          "edit",
-			Description:   "精确编辑文件内容。支持多位置、diff 式修改。Params: {path: '文件路径', edits: [{old_text: '原文本', new_text: '新文本'}, ...]}",
-			SecurityLevel: core.LevelSensitive,
+const editDescription = `Performs exact string replacements in files.
+
+Usage:
+- You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. 
+- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance.
+- Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`
+
+func (t *FileEditTool) Info() *core.ToolInfo {
+	return &core.ToolInfo{
+		Name:        "file_edit",
+		Description: editDescription,
+		Parameters: []core.Parameter{
+			{
+				Name:        "file_path",
+				Type:        "string",
+				Description: "Path to the file to edit.",
+				Required:    true,
+			},
+			{
+				Name:        "old_string",
+				Type:        "string",
+				Description: "The exact string to replace.",
+				Required:    true,
+			},
+			{
+				Name:        "new_string",
+				Type:        "string",
+				Description: "The new string to insert.",
+				Required:    true,
+			},
+			{
+				Name:        "replace_all",
+				Type:        "boolean",
+				Description: "Whether to replace all occurrences.",
+				Required:    false,
+			},
+			{
+				Name:        "last_read_time",
+				Type:        "string",
+				Description: "Optional: The timestamp of when the file was last read (to prevent stale writes).",
+				Required:    false,
+			},
 		},
 	}
 }
 
-func (e *Edit) Info() *core.ToolInfo {
-	return e.info
-}
-
-func (e *Edit) Execute(ctx context.Context, params map[string]any) (any, error) {
-	path, err := ValidateRequiredString(params, "path")
+func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any, error) {
+	filePath, err := ValidateRequiredString(params, "file_path")
 	if err != nil {
 		return nil, err
 	}
 
-	// 读取原始内容
-	content, err := os.ReadFile(path)
+	// 安全检查
+	if err := ValidateFileSafety(filePath); err != nil {
+		return nil, err
+	}
+
+	oldStr, err := ValidateRequiredString(params, "old_string")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file does not exist: %s", path)
+		return nil, err
+	}
+
+	newStr, err := ValidateRequiredString(params, "new_string")
+	if err != nil {
+		return nil, err
+	}
+
+	replaceAll, _ := params["replace_all"].(bool)
+	lastReadTimeStr, _ := params["last_read_time"].(string)
+
+	// Staleness check
+	if lastReadTimeStr != "" {
+		info, err := os.Stat(filePath)
+		if err == nil {
+			lastReadTime, parseErr := time.Parse(time.RFC3339, lastReadTimeStr)
+			if parseErr == nil && info.ModTime().After(lastReadTime) {
+				return nil, fmt.Errorf("file has been modified since it was last read. please read it again before editing")
+			}
 		}
-		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	originalContent := string(content)
-	currentContent := originalContent
-
-	// 获取编辑列表
-	editsRaw, ok := params["edits"]
-	if !ok {
-		return nil, fmt.Errorf("missing required parameter: edits")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
 	}
 
-	edits, ok := editsRaw.([]any)
-	if !ok || len(edits) == 0 {
-		return nil, fmt.Errorf("edits must be a non-empty array")
+	fileContent := string(content)
+	if !strings.Contains(fileContent, oldStr) && oldStr != "" {
+		return nil, fmt.Errorf("old_string not found in file")
 	}
 
-	// 应用所有编辑
-	editedRegions := make([]map[string]any, 0)
-	for i, editRaw := range edits {
-		edit, ok := editRaw.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("edit[%d] must be an object with old_text and new_text", i)
-		}
-
-		oldText, ok1 := edit["old_text"].(string)
-		newText, ok2 := edit["new_text"].(string)
-		if !ok1 || !ok2 {
-			return nil, fmt.Errorf("edit[%d] must have 'old_text' and 'new_text' string fields", i)
-		}
-
-		// 查找并替换
-		if !strings.Contains(currentContent, oldText) {
-			return nil, fmt.Errorf("edit[%d]: text not found in file:\n%s", i, truncateString(oldText, 200))
-		}
-
-		// 执行替换
-		currentContent = strings.Replace(currentContent, oldText, newText, 1)
-
-		// 记录编辑区域
-		editedRegions = append(editedRegions, map[string]any{
-			"index":      i,
-			"old_length": len(oldText),
-			"new_length": len(newText),
-			"delta":      len(newText) - len(oldText),
-		})
+	var updatedContent string
+	if replaceAll {
+		updatedContent = strings.ReplaceAll(fileContent, oldStr, newStr)
+	} else {
+		updatedContent = strings.Replace(fileContent, oldStr, newStr, 1)
 	}
 
-	// 写入修改后的内容
-	if err := os.WriteFile(path, []byte(currentContent), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write edited file: %w", err)
+	err = os.WriteFile(filePath, []byte(updatedContent), 0644)
+	if err != nil {
+		return nil, err
 	}
 
-	// 计算统计信息
-	totalOldLength := 0
-	totalNewLength := 0
-	for _, region := range editedRegions {
-		totalOldLength += int(region["old_length"].(int))
-		totalNewLength += int(region["new_length"].(int))
-	}
-
-	return map[string]any{
-		"success":        true,
-		"path":           path,
-		"edits_applied":  len(editedRegions),
-		"original_size":  len(originalContent),
-		"new_size":       len(currentContent),
-		"size_delta":     len(currentContent) - len(originalContent),
-		"edited_regions": editedRegions,
-		"message":        fmt.Sprintf("Successfully applied %d edit(s)", len(editedRegions)),
-	}, nil
-}
-
-// truncateString 截断字符串（用于错误消息）
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "... (truncated)"
+	return fmt.Sprintf("File %s updated successfully.", filePath), nil
 }

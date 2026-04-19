@@ -15,12 +15,23 @@ type Read struct {
 	info *core.ToolInfo
 }
 
-// NewRead 创建文件读取工具
-func NewRead() core.FuncTool {
+const readDescription = `Reads a file from the local filesystem. You can access any file directly by using this tool.
+Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+
+Usage:
+- The path parameter must be an absolute path, not a relative path.
+- By default, it reads up to 2000 lines starting from the beginning of the file.
+- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters.
+- When you already know which part of the file you need, only read that part. This can be important for larger files.
+- Results are returned using cat -n format, with line numbers starting at 1.
+- This tool can only read files, not directories. To read a directory, use an ls command via the bash tool.`
+
+// NewReadTool 创建文件读取工具
+func NewReadTool() core.FuncTool {
 	return &Read{
 		info: &core.ToolInfo{
 			Name:          "read",
-			Description:   "读取文件内容。支持指定行范围、自动检测编码。Params: {path: '文件路径', start_line?: 起始行，end_line?: 结束行}",
+			Description:   readDescription,
 			SecurityLevel: core.LevelSafe,
 		},
 	}
@@ -33,6 +44,11 @@ func (r *Read) Info() *core.ToolInfo {
 func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) {
 	path, err := ValidateRequiredString(params, "path")
 	if err != nil {
+		return nil, err
+	}
+
+	// 安全检查
+	if err := ValidateFileSafety(path); err != nil {
 		return nil, err
 	}
 
@@ -94,11 +110,7 @@ func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) 
 		}
 
 		// 添加行号和内容
-		if linesRead == 0 {
-			content.WriteString(fmt.Sprintf("%d\t%s\n", lineNum, scanner.Text()))
-		} else {
-			content.WriteString(fmt.Sprintf("%d\t%s\n", lineNum-startLine+1, scanner.Text()))
-		}
+		content.WriteString(fmt.Sprintf("%d\t%s\n", lineNum, scanner.Text()))
 		linesRead++
 	}
 

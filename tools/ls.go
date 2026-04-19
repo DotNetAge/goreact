@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,8 +15,8 @@ type LS struct {
 	info *core.ToolInfo
 }
 
-// NewLS 创建 LS 工具
-func NewLS() core.FuncTool {
+// NewLSTool 创建 LS 工具
+func NewLSTool() core.FuncTool {
 	return &LS{
 		info: &core.ToolInfo{
 			Name:          "ls",
@@ -36,6 +35,11 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 	dirPath := "."
 	if path, ok := params["path"].(string); ok && path != "" {
 		dirPath = path
+	}
+
+	// 安全检查
+	if err := ValidateFileSafety(dirPath); err != nil {
+		return nil, err
 	}
 
 	// 检查路径是否存在
@@ -63,7 +67,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 	}
 
 	// 读取目录内容
-	entries, err := ioutil.ReadDir(dirPath)
+	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
@@ -77,6 +81,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 			continue
 		}
 
+		finfo, _ := entry.Info()
 		item := map[string]any{
 			"name": entry.Name(),
 			"type": func() string {
@@ -86,21 +91,22 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 					return "file"
 				}
 			}(),
-			"size":    entry.Size(),
-			"modTime": entry.ModTime().Format("2006-01-02 15:04:05"),
-			"mode":    entry.Mode().String(),
+			"size":    finfo.Size(),
+			"modTime": finfo.ModTime().Format("2006-01-02 15:04:05"),
+			"mode":    finfo.Mode().String(),
 		}
 
 		// 如果是递归模式且是目录，继续读取
 		if recursive && entry.IsDir() {
 			subDir := filepath.Join(dirPath, entry.Name())
-			subEntries, err := ioutil.ReadDir(subDir)
+			subEntries, err := os.ReadDir(subDir)
 			if err == nil {
 				children := make([]map[string]any, 0)
 				for _, subEntry := range subEntries {
 					if !showHidden && strings.HasPrefix(subEntry.Name(), ".") {
 						continue
 					}
+					subFinfo, _ := subEntry.Info()
 					child := map[string]any{
 						"name": subEntry.Name(),
 						"type": func() string {
@@ -110,8 +116,8 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 								return "file"
 							}
 						}(),
-						"size":    subEntry.Size(),
-						"modTime": subEntry.ModTime().Format("2006-01-02 15:04:05"),
+						"size":    subFinfo.Size(),
+						"modTime": subFinfo.ModTime().Format("2006-01-02 15:04:05"),
 					}
 					children = append(children, child)
 				}

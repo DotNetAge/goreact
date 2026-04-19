@@ -10,6 +10,7 @@ import (
 	gochat "github.com/DotNetAge/gochat"
 	gochatcore "github.com/DotNetAge/gochat/core"
 	"github.com/DotNetAge/goreact/core"
+	"github.com/DotNetAge/goreact/tools"
 )
 
 // MaxHistoryTurns limits conversation history turns sent to LLM.
@@ -44,16 +45,6 @@ func DefaultReactorConfig() ReactorConfig {
 	}
 }
 
-// gochatConfig converts ReactorConfig to gochat's core.Config.
-func (c ReactorConfig) gochatConfig() gochatcore.Config {
-	return gochatcore.Config{
-		APIKey:    c.APIKey,
-		BaseURL:   c.BaseURL,
-		Model:     c.Model,
-		MaxTokens: c.MaxTokens,
-	}
-}
-
 // RunResult holds the complete output of a Run invocation.
 type RunResult struct {
 	Answer                string  `json:"answer" yaml:"answer"`
@@ -80,6 +71,8 @@ type defaultReactor struct {
 	config         ReactorConfig
 	intentRegistry *IntentRegistry
 	toolRegistry   *ToolRegistry
+	skillRegistry  core.SkillRegistry
+	taskManager    core.TaskManager
 }
 
 // NewReactor creates a new Reactor with the given configuration.
@@ -93,11 +86,42 @@ func NewReactor(config ReactorConfig) *defaultReactor {
 	if config.MaxTokens <= 0 {
 		config.MaxTokens = core.DefaultMaxTokens
 	}
-	return &defaultReactor{
+	r := &defaultReactor{
 		config:         config,
 		intentRegistry: NewIntentRegistry(),
 		toolRegistry:   NewToolRegistry(),
+		skillRegistry:  NewSkillRegistry(),
+		taskManager:    core.NewInMemoryTaskManager(),
 	}
+	// Register bundled skills
+	RegisterBundledSkills(r.skillRegistry)
+	
+	// Register orchestration tools
+	_ = r.RegisterTool(NewTaskCreateTool(r))
+
+	// Register built-in core tools from CludeCode transcription
+	_ = r.RegisterTool(tools.NewGrepTool())
+	_ = r.RegisterTool(tools.NewGlobTool())
+	_ = r.RegisterTool(tools.NewBashTool())
+	_ = r.RegisterTool(tools.NewWebFetchTool())
+	_ = r.RegisterTool(tools.NewTodoWriteTool())
+	_ = r.RegisterTool(tools.NewFileEditTool())
+	_ = r.RegisterTool(tools.NewLSPTool())
+	_ = r.RegisterTool(tools.NewREPLTool())
+	_ = r.RegisterTool(tools.NewReadTool())
+	_ = r.RegisterTool(tools.NewWriteTool())
+	_ = r.RegisterTool(tools.NewLSTool())
+	_ = r.RegisterTool(tools.NewEchoTool())
+	_ = r.RegisterTool(tools.NewCalculatorTool())
+	_ = r.RegisterTool(tools.NewReplaceTool())
+	_ = r.RegisterTool(tools.NewCronTool())
+
+	return r
+}
+
+// SkillRegistry returns the reactor's skill registry.
+func (r *defaultReactor) SkillRegistry() core.SkillRegistry {
+	return r.skillRegistry
 }
 
 // IntentRegistry returns the reactor's intent registry for dynamic intent management.
@@ -189,7 +213,11 @@ func parseIntentResponse(content string) (*Intent, error) {
 // Think asks the LLM to decide the next action based on the current context.
 func (r *defaultReactor) Think(ctx *ReactContext) (int, error) {
 	tools := r.toolRegistry.ToToolInfos()
-	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, tools)
+
+	// Discover applicable skills based on current context/intent
+	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
+	
+	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, tools, skills)
 
 	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns)
 	if err != nil {
@@ -406,6 +434,12 @@ func (r *defaultReactor) Run(ctx context.Context, input string, history Conversa
 			break
 		}
 
+		// CludeCode-style context pruning: 
+		// If the result is very large, mark it for snip in history but keep insights.
+		if len(reactCtx.LastObservation.Result) > 2000 {
+			reactCtx.LastObservation.Result = reactCtx.LastObservation.Result[:1000] + "... [truncated due to context budget] ..."
+		}
+
 		// Record step
 		step := Step{
 			Iteration:   reactCtx.CurrentIteration + 1,
@@ -416,6 +450,20 @@ func (r *defaultReactor) Run(ctx context.Context, input string, history Conversa
 			Duration:    time.Since(cycleStart),
 		}
 		reactCtx.AppendHistory(step)
+
+		// Feed back to conversation history to maintain context
+		thoughtSummary := fmt.Sprintf("Thought: %s", reactCtx.LastThought.Reasoning)
+		if reactCtx.LastThought.Decision == DecisionAct {
+			thoughtSummary += fmt.Sprintf("\nAction: %s(%v)", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
+		}
+		reactCtx.AddMessage("assistant", thoughtSummary)
+
+		obsContent := reactCtx.LastObservation.Result
+		if reactCtx.LastObservation.Error != "" {
+			obsContent = fmt.Sprintf("Error: %s", reactCtx.LastObservation.Error)
+		}
+		reactCtx.AddMessage("user", fmt.Sprintf("Observation: %s", obsContent))
+
 		reactCtx.CurrentIteration++
 	}
 

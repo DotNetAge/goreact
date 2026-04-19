@@ -14,8 +14,8 @@ type Replace struct {
 	info *core.ToolInfo
 }
 
-// NewReplace 创建替换工具
-func NewReplace() core.FuncTool {
+// NewReplaceTool 创建替换工具
+func NewReplaceTool() core.FuncTool {
 	return &Replace{
 		info: &core.ToolInfo{
 			Name:          "replace",

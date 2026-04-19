@@ -1,147 +1,79 @@
 package tools
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
+	"os/exec"
 	"strings"
-
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Grep 文本内容搜索工具
-type Grep struct {
-	info *core.ToolInfo
+// GrepTool implements a high-performance search using ripgrep (rg).
+// It mimics ClaudeCode's GrepTool with output budget management.
+type GrepTool struct {
+	MaxResults int
 }
 
-// NewGrep 创建 Grep 工具
-func NewGrep() core.FuncTool {
-	return &Grep{
-		info: &core.ToolInfo{
-			Name:          "grep",
-			Description:   "文本内容搜索。支持正则表达式、上下文显示。Params: {pattern: '搜索模式', path?: '搜索路径', include?: '*.go'}",
-			SecurityLevel: core.LevelSafe,
+// NewGrepTool 创建 Grep 工具
+func NewGrepTool() core.FuncTool {
+	return &GrepTool{MaxResults: 100}
+}
+
+const grepDescription = `A powerful search tool built on ripgrep
+
+Usage:
+- ALWAYS use grep tool for search tasks. NEVER invoke grep or rg as a bash command. The Grep tool has been optimized for correct permissions and access.
+- Supports full regex syntax (e.g., "log.*Error", "function\s+\w+")
+- Filter files with include parameter (e.g., "*.js", "**/*.tsx")
+- Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use interface\{\} to find interface{} in Go code)
+- Multiline matching: By default patterns match within single lines only. For cross-line patterns use multiline: true (if implemented).`
+
+func (t *GrepTool) Info() *core.ToolInfo {
+	return &core.ToolInfo{
+		Name:        "grep",
+		Description: grepDescription,
+		Parameters: []core.Parameter{
+			{
+				Name:        "pattern",
+				Type:        "string",
+				Description: "The regex pattern to search for.",
+				Required:    true,
+			},
+			{
+				Name:        "include",
+				Type:        "string",
+				Description: "File glob pattern to include (e.g., '*.go').",
+				Required:    false,
+			},
 		},
 	}
 }
 
-func (g *Grep) Info() *core.ToolInfo {
-	return g.info
-}
+func (t *GrepTool) Execute(ctx context.Context, params map[string]any) (any, error) {
+	pattern, _ := params["pattern"].(string)
+	include, _ := params["include"].(string)
 
-func (gr *Grep) Execute(ctx context.Context, params map[string]any) (any, error) {
-	pattern, err := ValidateRequiredString(params, "pattern")
+	args := []string{"--column", "--line-number", "--no-heading", "--color", "never", "--smart-case"}
+	if include != "" {
+		args = append(args, "-g", include)
+	}
+	args = append(args, pattern, ".")
+
+	cmd := exec.CommandContext(ctx, "rg", args...)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, err
+		// If rg returns 1, it means no matches found
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "No matches found.", nil
+		}
+		return nil, fmt.Errorf("grep failed: %s", string(output))
 	}
 
-	// 获取搜索路径（默认为当前目录）
-	searchPath := "."
-	if path, ok := params["path"].(string); ok && path != "" {
-		searchPath = path
+	lines := strings.Split(string(output), "\n")
+	if len(lines) > t.MaxResults {
+		return fmt.Sprintf("%s\n... (too many results, showing first %d matches) ...", 
+			strings.Join(lines[:t.MaxResults], "\n"), t.MaxResults), nil
 	}
 
-	// 获取文件过滤模式（可选）
-	includePattern := ""
-	if include, ok := params["include"].(string); ok {
-		includePattern = include
-	}
-
-	// 编译正则表达式
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid regex pattern '%s': %w", pattern, err)
-	}
-
-	// 搜索结果
-	matches := make([]map[string]any, 0)
-	filesSearched := 0
-	totalMatches := 0
-
-	err = filepath.Walk(searchPath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-
-		// 跳过目录和隐藏文件
-		if info.IsDir() {
-			baseName := filepath.Base(path)
-			if strings.HasPrefix(baseName, ".") || baseName == "node_modules" || baseName == "__pycache__" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// 检查文件扩展名过滤
-		if includePattern != "" {
-			matched, _ := filepath.Match(includePattern, info.Name())
-			if !matched {
-				return nil
-			}
-		}
-
-		// 跳过二进制文件和大文件（>5MB）
-		const maxFileSize = 5 * 1024 * 1024
-		if info.Size() > maxFileSize {
-			return nil
-		}
-
-		filesSearched++
-
-		// 打开文件
-		file, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer file.Close()
-
-		// 逐行搜索
-		scanner := bufio.NewScanner(file)
-		lineNum := 0
-
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-
-			// 查找匹配
-			loc := re.FindStringIndex(line)
-			if loc != nil {
-				// 记录匹配
-				match := map[string]any{
-					"file":      path,
-					"line":      lineNum,
-					"content":   strings.TrimSpace(line),
-					"match":     line[loc[0]:loc[1]],
-					"start_col": loc[0],
-					"end_col":   loc[1],
-				}
-				matches = append(matches, match)
-				totalMatches++
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			// 忽略读取错误，继续处理其他文件
-			return nil
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk directory: %w", err)
-	}
-
-	return map[string]any{
-		"success":        true,
-		"pattern":        pattern,
-		"search_path":    searchPath,
-		"files_searched": filesSearched,
-		"matches_found":  totalMatches,
-		"matches":        matches,
-		"message":        fmt.Sprintf("Found %d match(es) in %d file(s)", totalMatches, filesSearched),
-	}, nil
+	return string(output), nil
 }
