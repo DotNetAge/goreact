@@ -37,6 +37,11 @@ func (h ConversationHistory) Format(maxTurns int) string {
 // ReactContext holds the shared state for a single Run invocation.
 // It is created at the start of Run and mutated throughout the T-A-O loop.
 type ReactContext struct {
+	// Identity
+	SessionID string // identifies the conversation session
+	TaskID    string // "main" for primary reactor, "task_N" for subagents
+	ParentID  string // parent task ID, empty for "main"
+
 	// Lifecycle
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -58,13 +63,31 @@ type ReactContext struct {
 	IsTerminated      bool
 	TerminationReason string
 
+	// Event callback — set by the Reactor before Run.
+	// If non-nil, called after each T-A-O phase to emit events.
+	emitEvent func(event core.ReactEvent)
+
 	// Thread safety for concurrent read access
 	mu sync.RWMutex
+}
+
+// EmitEvent publishes a ReactEvent through the context's event callback.
+// It is a no-op if no event bus is configured.
+func (c *ReactContext) EmitEvent(eventType core.ReactEventType, data any) {
+	if c.emitEvent == nil {
+		return
+	}
+	c.emitEvent(core.NewReactEvent(c.SessionID, c.TaskID, c.ParentID, eventType, data))
 }
 
 // NewReactContext creates a new ReactContext for a Run invocation.
 // If ctx is nil, context.Background() is used.
 func NewReactContext(ctx context.Context, input string, history ConversationHistory, maxIter int) *ReactContext {
+	return NewReactContextWithIDs(ctx, "main", "", input, history, maxIter)
+}
+
+// NewReactContextWithIDs creates a ReactContext with explicit task identity.
+func NewReactContextWithIDs(ctx context.Context, taskID, parentID, input string, history ConversationHistory, maxIter int) *ReactContext {
 	if maxIter <= 0 {
 		maxIter = core.DefaultMaxSteps
 	}
@@ -75,6 +98,8 @@ func NewReactContext(ctx context.Context, input string, history ConversationHist
 	return &ReactContext{
 		ctx:                 ctx,
 		cancel:              cancel,
+		TaskID:              taskID,
+		ParentID:            parentID,
 		Input:               input,
 		ConversationHistory: history,
 		MaxIterations:       maxIter,

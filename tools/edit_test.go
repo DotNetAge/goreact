@@ -71,7 +71,7 @@ func TestEdit(t *testing.T) {
 		os.WriteFile(testFile, []byte("Hello World"), 0644)
 
 		result, err := edit.Execute(ctx, map[string]any{
-			"file_path": testFile,
+			"path":       testFile,
 			"old_string": "World",
 			"new_string": "Go",
 		})
@@ -94,7 +94,7 @@ func TestEdit(t *testing.T) {
 	})
 
 	t.Run("missing edits", func(t *testing.T) {
-		_, err := edit.Execute(ctx, map[string]any{"file_path": "/tmp/test.txt"})
+		_, err := edit.Execute(ctx, map[string]any{"path": "/tmp/test.txt"})
 		if err == nil {
 			t.Error("Expected error for missing edits")
 		}
@@ -105,7 +105,7 @@ func TestEdit(t *testing.T) {
 		os.WriteFile(testFile, []byte("Hello World"), 0644)
 
 		_, err := edit.Execute(ctx, map[string]any{
-			"file_path": testFile,
+			"path":       testFile,
 			"old_string": "NotFound",
 			"new_string": "X",
 		})
@@ -120,7 +120,7 @@ func TestEdit(t *testing.T) {
 		os.WriteFile(testFile, []byte("Hello"), 0644)
 
 		_, err := edit.Execute(ctx, map[string]any{
-			"file_path": testFile,
+			"path":      testFile,
 			"wrong_key": "value",
 		})
 		if err == nil {

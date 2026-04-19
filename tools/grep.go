@@ -11,12 +11,16 @@ import (
 // GrepTool implements a high-performance search using ripgrep (rg).
 // It mimics ClaudeCode's GrepTool with output budget management.
 type GrepTool struct {
-	MaxResults int
+	MaxResults     int
+	MaxOutputChars int // Maximum characters in output (second layer defense)
 }
 
 // NewGrepTool 创建 Grep 工具
 func NewGrepTool() core.FuncTool {
-	return &GrepTool{MaxResults: 100}
+	return &GrepTool{
+		MaxResults:     100,
+		MaxOutputChars: 50000, // ~16K tokens, generous but bounded
+	}
 }
 
 const grepDescription = `A powerful search tool built on ripgrep
@@ -71,9 +75,17 @@ func (t *GrepTool) Execute(ctx context.Context, params map[string]any) (any, err
 
 	lines := strings.Split(string(output), "\n")
 	if len(lines) > t.MaxResults {
-		return fmt.Sprintf("%s\n... (too many results, showing first %d matches) ...", 
-			strings.Join(lines[:t.MaxResults], "\n"), t.MaxResults), nil
+		output = []byte(strings.Join(lines[:t.MaxResults], "\n"))
 	}
 
-	return string(output), nil
+	// Second layer defense: limit total output characters
+	resultStr := string(output)
+	if t.MaxOutputChars > 0 && len(resultStr) > t.MaxOutputChars {
+		runes := []rune(resultStr)
+		resultStr = string(runes[:t.MaxOutputChars]) +
+			fmt.Sprintf("\n... (output truncated at %d chars, showing first %d of %d matches) ...",
+				t.MaxOutputChars, t.MaxResults, len(lines))
+	}
+
+	return resultStr, nil
 }

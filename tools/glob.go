@@ -10,11 +10,13 @@ import (
 )
 
 // GlobTool implements file path discovery using 'find' or 'fd'.
-type GlobTool struct{}
+type GlobTool struct {
+	MaxResults int
+}
 
 // NewGlobTool 创建 Glob 工具
 func NewGlobTool() core.FuncTool {
-	return &GlobTool{}
+	return &GlobTool{MaxResults: 200}
 }
 
 const globDescription = `- Fast file pattern matching tool that works with any codebase size
@@ -80,6 +82,11 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]any) (any, err
 			"matches_found": 0,
 			"files":         []string{},
 		}, nil
+	}
+
+	// Limit the number of results to prevent context explosion
+	if t.MaxResults > 0 && len(files) > t.MaxResults {
+		files = files[:t.MaxResults]
 	}
 
 	return map[string]any{

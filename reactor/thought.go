@@ -37,7 +37,7 @@ type Thought struct {
 	Timestamp time.Time `json:"timestamp" yaml:"timestamp"`
 }
 
-// BuildThinkPrompt constructs the Think phase prompt.
+// BuildThinkPrompt constructs the Think phase prompt using Go template.
 // It includes the classified intent, available tools, applicable skills, and user input.
 func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skills []*core.Skill) string {
 	intentSection := "(no intent)"
@@ -48,53 +48,17 @@ func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skill
 
 	toolSection := FormatToolDescriptions(tools)
 
-	skillSection := ""
-	if len(skills) > 0 {
-		skillSection = "\n<activated_skills>\n"
-		for _, s := range skills {
-			skillSection += fmt.Sprintf("## Skill: %s\n%s\n", s.Name, s.Instructions)
-		}
-		skillSection += "</activated_skills>\n"
+	result, err := renderThinkPrompt(thinkPromptData{
+		IntentSection: intentSection,
+		ToolSection:   toolSection,
+		Skills:        skills,
+		Input:         input,
+	})
+	if err != nil {
+		// Fallback: should never happen since template is parsed at init
+		return fmt.Sprintf("think prompt render error: %v", err)
 	}
-
-	return fmt.Sprintf(`You are the Thinker in a T-A-O (Think-Act-Observe) agent system.
-
-<role>
-Based on the user's input, classified intent, and available tools, decide the next action.
-CRITICAL: Your output content (reasoning, final_answer, clarification_question) MUST be in the same language as the user input.
-Your decision must be one of:
-- "act": Invoke a tool to fulfill the user's request
-- "answer": Provide a direct answer from your knowledge
-- "clarify": Ask the user for missing information
-</role>
-
-<rules>
-1. If the intent is "chat" or "feedback", prefer "answer" unless tools would significantly enhance the response.
-2. If the intent is "task", check if any tool can fulfill it -> "act", otherwise -> "answer".
-3. If the intent is "clarification", extract the user's answer and -> "act" with the previously pending task.
-4. If the intent is "follow_up", refer to conversation history and -> "act" or "answer" as appropriate.
-5. Extract specific, well-typed parameters for tool calls from the user's input. Do NOT hallucinate parameters.
-6. If required parameters are missing, -> "clarify" with specific questions about what's needed.
-7. Set is_final to true ONLY when you have a complete, satisfactory answer to return to the user.
-8. Always provide reasoning in the same language as the user input.
-</rules>
-%s
-<intent>
-%s
-</intent>
-
-<available_tools>
-%s
-</available_tools>
-
-<current_input>
-User input: %s
-</current_input>
-
-<output_format>
-Return ONLY a valid JSON object, no markdown, no code blocks, no explanation:
-{"decision":"act|answer|clarify","reasoning":"<reasoning process>","confidence":<0.0-1.0>,"action_target":"<tool_name or empty>","action_params":{...},"final_answer":"<answer or empty>","clarification_question":"<question or empty>","is_final":<bool>}
-</output_format>`, skillSection, intentSection, toolSection, input)
+	return result
 }
 
 // jsonBlockRegex matches ```json ... ``` code blocks.
@@ -134,10 +98,11 @@ func ParseThinkResponse(content string) (*Thought, error) {
 	return &thought, nil
 }
 
-// truncate shortens a string to maxLen characters for error messages.
+// truncate shortens a string to maxLen runes for error messages.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }

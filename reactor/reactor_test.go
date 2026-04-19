@@ -27,7 +27,7 @@ func testConfig(t *testing.T) ReactorConfig {
 }
 
 // newTestReactor creates a reactor pre-loaded with all built-in tools.
-func newTestReactor(t *testing.T) *defaultReactor {
+func newTestReactor(t *testing.T) *Reactor {
 	t.Helper()
 	r := NewReactor(testConfig(t))
 	// NewReactor already registers all built-in tools, so we just return it.

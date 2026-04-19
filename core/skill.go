@@ -15,5 +15,9 @@ type Skill struct {
 type SkillRegistry interface {
 	RegisterSkill(skill *Skill) error
 	GetSkill(name string) (*Skill, error)
+
+	// FindApplicableSkills finds skills matching the given context.
+	// The context should be an *Intent from the reactor package.
+	// Deprecated: Use domain-specific matching methods instead.
 	FindApplicableSkills(context any) ([]*Skill, error)
 }

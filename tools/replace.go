@@ -46,6 +46,11 @@ func (r *Replace) Execute(ctx context.Context, params map[string]any) (any, erro
 		return nil, err
 	}
 
+	// 安全检查
+	if err := ValidateFileSafety(path); err != nil {
+		return nil, err
+	}
+
 	// 获取可选的替换次数限制
 	limit := -1 // 默认全部替换
 	if limitVal, ok := params["limit"]; ok {

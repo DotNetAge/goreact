@@ -57,15 +57,16 @@ func ValidateFileSafety(path string) error {
 	return nil
 }
 
-// TruncateString 截断字符串，超过 maxLen 时用 "..." 省略
+// TruncateString 截断字符串，超过 maxLen 时用 "..." 省略（按 rune 计数，安全处理多字节字符）
 func TruncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 // ToFloat64 将 any 转换为 float64

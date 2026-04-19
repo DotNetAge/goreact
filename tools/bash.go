@@ -91,9 +91,12 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 
 	err := cmd.Run()
 
+	stdoutStr := stdout.String()
+	stderrStr := stderr.String()
+
 	result := map[string]any{
-		"stdout":      stdout.String(),
-		"stderr":      stderr.String(),
+		"stdout":      stdoutStr,
+		"stderr":      stderrStr,
 		"exit_code":   0,
 		"interrupted": false,
 	}
@@ -103,19 +106,23 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 			result["exit_code"] = exitError.ExitCode()
 		} else if timeoutCtx.Err() == context.DeadlineExceeded {
 			result["interrupted"] = true
-			result["stderr"] = result["stderr"].(string) + "\nCommand timed out."
+			stderrStr += "\nCommand timed out."
+			result["stderr"] = stderrStr
 		} else {
 			return nil, err
 		}
 	}
 
 	// Truncate output if too large (CludeCode style)
+	// Use rune-aware truncation for safe multi-byte character handling
 	const maxOutputSize = 30000
-	if len(result["stdout"].(string)) > maxOutputSize {
-		result["stdout"] = result["stdout"].(string)[:maxOutputSize] + "\n... [output truncated due to size] ..."
+	if len([]rune(stdoutStr)) > maxOutputSize {
+		runes := []rune(stdoutStr)
+		result["stdout"] = string(runes[:maxOutputSize]) + "\n... [output truncated due to size] ..."
 	}
-	if len(result["stderr"].(string)) > maxOutputSize {
-		result["stderr"] = result["stderr"].(string)[:maxOutputSize] + "\n... [output truncated due to size] ..."
+	if len([]rune(stderrStr)) > maxOutputSize {
+		runes := []rune(stderrStr)
+		result["stderr"] = string(runes[:maxOutputSize]) + "\n... [output truncated due to size] ..."
 	}
 
 	// Map exit_code == 0 to success for tests

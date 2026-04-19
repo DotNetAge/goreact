@@ -12,27 +12,61 @@ import (
 
 // Read 文件读取工具
 type Read struct {
-	info *core.ToolInfo
+	info   *core.ToolInfo
+	limits core.FileReadingLimits
 }
 
 const readDescription = `Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
 - The path parameter must be an absolute path, not a relative path.
-- By default, it reads up to 2000 lines starting from the beginning of the file.
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters.
+- By default, it reads up to 500 lines starting from the beginning of the file.
+- You can optionally specify offset and limit parameters (especially handy for long files), but it's recommended to read the whole file by not providing these parameters.
 - When you already know which part of the file you need, only read that part. This can be important for larger files.
 - Results are returned using cat -n format, with line numbers starting at 1.
-- This tool can only read files, not directories. To read a directory, use an ls command via the bash tool.`
+- This tool can only read files, not directories. To read a directory, use an ls command via the bash tool.
+- CRITICAL: filePath must be returned before other fields.
+
+IMPORTANT: Large files may be truncated for context budget. Use offset and limit to read specific sections.`
 
 // NewReadTool 创建文件读取工具
 func NewReadTool() core.FuncTool {
+	return NewReadToolWithLimits(core.DefaultFileReadingLimits())
+}
+
+// NewReadToolWithLimits creates a read tool with custom limits.
+func NewReadToolWithLimits(limits core.FileReadingLimits) core.FuncTool {
 	return &Read{
+		limits: limits,
 		info: &core.ToolInfo{
 			Name:          "read",
 			Description:   readDescription,
 			SecurityLevel: core.LevelSafe,
+			IsReadOnly:    true,
+			// Read tool gets special treatment: MaxResultSizeChars = -1 means
+			// never persist to disk (the tool already supports offset/limit pagination).
+			// Instead, we enforce size limits at read time.
+			MaxResultSizeChars: -1,
+			Parameters: []core.Parameter{
+				{
+					Name:        "path",
+					Type:        "string",
+					Required:    true,
+					Description: "The absolute path to the file to read.",
+				},
+				{
+					Name:        "offset",
+					Type:        "integer",
+					Required:    false,
+					Description: "The line number to start reading from (1-based).",
+				},
+				{
+					Name:        "limit",
+					Type:        "integer",
+					Required:    false,
+					Description: "The maximum number of lines to read. Defaults to 500.",
+				},
+			},
 		},
 	}
 }
@@ -66,10 +100,18 @@ func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) 
 		return nil, fmt.Errorf("path is a directory, not a file: %s", path)
 	}
 
-	// 检查文件大小（限制最大 10MB）
-	const maxFileSize = 10 * 1024 * 1024
-	if info.Size() > maxFileSize {
-		return nil, fmt.Errorf("file too large (%.2f MB), maximum is 10MB", float64(info.Size())/1024/1024)
+	// 第一层防御：Pre-read check — 文件大小限制 (256KB)
+	if r.limits.MaxSizeBytes > 0 && info.Size() > r.limits.MaxSizeBytes {
+		return map[string]any{
+			"success": false,
+			"path":    path,
+			"size_bytes": info.Size(),
+			"error": fmt.Sprintf(
+				"file too large (%.2f KB), maximum allowed is %d KB. "+
+					"Use offset and limit parameters to read specific sections, "+
+					"or use grep/glob to locate the relevant parts first.",
+				float64(info.Size())/1024, r.limits.MaxSizeBytes/1024),
+		}, nil
 	}
 
 	// 打开文件
@@ -79,37 +121,48 @@ func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) 
 	}
 	defer file.Close()
 
-	// 获取行范围参数
-	startLine := 0 // 0 表示从头开始
-	if start, ok := params["start_line"].(float64); ok {
-		startLine = int(start)
+	// 获取分页参数
+	startLine := 1
+	if offset, ok := ToFloat64(params["offset"]); ok && offset > 0 {
+		startLine = int(offset)
 	}
 
-	endLine := -1 // -1 表示读到结尾
-	if end, ok := params["end_line"].(float64); ok {
-		endLine = int(end)
+	maxLines := r.limits.DefaultLines
+	if limit, ok := ToFloat64(params["limit"]); ok && limit > 0 {
+		maxLines = int(limit)
 	}
+	endLine := startLine + maxLines - 1
 
 	// 读取文件内容
 	var content strings.Builder
 	scanner := bufio.NewScanner(file)
+	// Increase scanner buffer for long lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
 	lineNum := 0
 	linesRead := 0
+	totalLines := 0
+
+	// First pass: count total lines
+	file.Seek(0, 0)
+	for scanner.Scan() {
+		totalLines++
+	}
+	file.Seek(0, 0)
+	scanner = bufio.NewScanner(file)
+	scanner.Buffer(buf, 1024*1024)
 
 	for scanner.Scan() {
 		lineNum++
 
-		// 如果还没到起始行，跳过
-		if startLine > 0 && lineNum < startLine {
+		if lineNum < startLine {
 			continue
 		}
-
-		// 如果超过结束行，停止
-		if endLine > 0 && lineNum > endLine {
+		if lineNum > endLine {
 			break
 		}
 
-		// 添加行号和内容
 		content.WriteString(fmt.Sprintf("%d\t%s\n", lineNum, scanner.Text()))
 		linesRead++
 	}
@@ -118,30 +171,35 @@ func (r *Read) Execute(ctx context.Context, params map[string]any) (any, error) 
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
+	// 第二层防御：Post-read check — Token 估算
+	outputChars := content.Len()
+	estimatedTokens := outputChars / 3 // rough estimate
+	if r.limits.MaxTokens > 0 && estimatedTokens > r.limits.MaxTokens {
+		// Truncate to fit within token budget
+		targetChars := r.limits.MaxTokens * 3
+		runes := []rune(content.String())
+		if len(runes) > targetChars {
+			content.Reset()
+			content.WriteString(string(runes[:targetChars]))
+			content.WriteString("\n... [truncated: output exceeds token budget] ...")
+		}
+	}
+
 	// 构建响应
 	result := map[string]any{
 		"success":     true,
 		"path":        path,
 		"size_bytes":  info.Size(),
 		"lines_read":  linesRead,
-		"total_lines": lineNum,
+		"total_lines": totalLines,
 		"content":     content.String(),
+		"start_line":  startLine,
 	}
 
-	// 如果指定了行范围，添加到结果中
-	if startLine > 0 || endLine > 0 {
-		result["start_line"] = max(1, startLine)
-		if endLine > 0 {
-			result["end_line"] = endLine
-		}
+	if linesRead >= maxLines && lineNum < totalLines {
+		result["has_more"] = true
+		result["next_offset"] = endLine + 1
 	}
 
 	return result, nil
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

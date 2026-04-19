@@ -13,7 +13,7 @@ import (
 // FileEditTool implements a tool for editing files with staleness checks.
 type FileEditTool struct{}
 
-func NewFileEditTool() *FileEditTool {
+func NewFileEditTool() core.FuncTool {
 	return &FileEditTool{}
 }
 
@@ -33,7 +33,7 @@ func (t *FileEditTool) Info() *core.ToolInfo {
 		Description: editDescription,
 		Parameters: []core.Parameter{
 			{
-				Name:        "file_path",
+				Name:        "path",
 				Type:        "string",
 				Description: "Path to the file to edit.",
 				Required:    true,
@@ -67,7 +67,7 @@ func (t *FileEditTool) Info() *core.ToolInfo {
 }
 
 func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any, error) {
-	filePath, err := ValidateRequiredString(params, "file_path")
+	filePath, err := ValidateRequiredString(params, "path")
 	if err != nil {
 		return nil, err
 	}

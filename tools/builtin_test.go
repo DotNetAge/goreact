@@ -82,8 +82,8 @@ func TestReplace(t *testing.T) {
 	// 创建 Replace 工具
 	replace := NewReplaceTool()
 
-	// 创建一个临时测试文件
-	testFile := "/tmp/test_replace.txt"
+	// 创建一个临时测试文件（使用当前目录以通过 ValidateFileSafety）
+	testFile := "test_replace.txt"
 	initialContent := "Hello World! Hello Go! Hello Testing!"
 	err := os.WriteFile(testFile, []byte(initialContent), 0644)
 	if err != nil {
@@ -522,7 +522,7 @@ func TestWrite(t *testing.T) {
 	write := NewWriteTool()
 
 	t.Run("write to temp file", func(t *testing.T) {
-		testFile := "/tmp/goreact_test_write.txt"
+		testFile := "goreact_test_write.txt"
 		result, err := write.Execute(context.Background(), map[string]any{
 			"path":    testFile,
 			"content": "hello world",
@@ -541,7 +541,7 @@ func TestWrite(t *testing.T) {
 	})
 
 	t.Run("append to file", func(t *testing.T) {
-		testFile := "/tmp/goreact_test_append.txt"
+		testFile := "goreact_test_append.txt"
 		write.Execute(context.Background(), map[string]any{"path": testFile, "content": "line1\n"})
 		result, err := write.Execute(context.Background(), map[string]any{
 			"path":    testFile,
@@ -619,24 +619,32 @@ func TestValidateFunctions(t *testing.T) {
 	})
 
 	t.Run("validateFileSafety - restricted files", func(t *testing.T) {
+		// These are outside workspace, so should be rejected
 		err := ValidateFileSafety("/etc/passwd")
 		if err == nil {
-			t.Error("Expected error for passwd")
+			t.Error("Expected error for /etc/passwd (outside workspace)")
 		}
 
 		err = ValidateFileSafety("/etc/shadow")
 		if err == nil {
-			t.Error("Expected error for shadow")
+			t.Error("Expected error for /etc/shadow (outside workspace)")
 		}
 
 		err = ValidateFileSafety("/etc/sudoers")
 		if err == nil {
-			t.Error("Expected error for sudoers")
+			t.Error("Expected error for /etc/sudoers (outside workspace)")
 		}
 
-		err = ValidateFileSafety("/safe/path/file.txt")
+		// A path inside workspace but with restricted filename should be rejected
+		err = ValidateFileSafety(".env")
+		if err == nil {
+			t.Error("Expected error for .env (restricted filename)")
+		}
+
+		// A safe path inside workspace should pass
+		err = ValidateFileSafety("safe_file.txt")
 		if err != nil {
-			t.Errorf("Expected no error for safe path, got %v", err)
+			t.Errorf("Expected no error for safe local path, got %v", err)
 		}
 	})
 }

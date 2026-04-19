@@ -19,6 +19,14 @@ type ToolInfo struct {
 	Parameters    []Parameter   `json:"parameters" yaml:"parameters"`         // Parameters are the tool parameters
 	ReturnType    string        `json:"return_type" yaml:"return_type"`       // ReturnType is the return type
 	Examples      []string      `json:"examples" yaml:"examples"`             // Examples are usage examples
+
+	// MaxResultSizeChars overrides the default per-tool result size threshold.
+	// Set to -1 (math.MinInt) to disable persistence for this tool (e.g., read tool).
+	// Set to 0 to use the global default.
+	MaxResultSizeChars int `json:"max_result_size_chars,omitempty" yaml:"max_result_size_chars,omitempty"`
+
+	// IsReadOnly indicates if the tool only reads data without side effects.
+	IsReadOnly bool `json:"is_read_only,omitempty" yaml:"is_read_only,omitempty"`
 }
 
 // Parameter represents a tool parameter

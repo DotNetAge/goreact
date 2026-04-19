@@ -38,6 +38,8 @@ func (r *defaultSkillRegistry) GetSkill(name string) (*core.Skill, error) {
 	return skill, nil
 }
 
+// FindApplicableSkills finds skills whose trigger rules match the given intent context.
+// The context parameter should be a *reactor.Intent; other types are silently ignored.
 func (r *defaultSkillRegistry) FindApplicableSkills(context any) ([]*core.Skill, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

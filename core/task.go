@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,12 +38,14 @@ type TaskManager interface {
 	UpdateTaskStatus(id string, status TaskStatus, output string, err string) error
 	GetTask(id string) (*Task, error)
 	ListSubTasks(parentID string) ([]*Task, error)
+	ListAllTasks() ([]*Task, error)
 }
 
 // InMemoryTaskManager is a simple in-memory implementation of TaskManager.
 type InMemoryTaskManager struct {
-	tasks map[string]*Task
-	mu    sync.RWMutex
+	tasks  map[string]*Task
+	nextID atomic.Int64
+	mu     sync.RWMutex
 }
 
 // NewInMemoryTaskManager creates a new InMemoryTaskManager.
@@ -56,7 +59,7 @@ func (m *InMemoryTaskManager) CreateTask(parentID string, description string, in
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := fmt.Sprintf("task_%d", len(m.tasks)+1)
+	id := fmt.Sprintf("task_%d", m.nextID.Add(1))
 	task := &Task{
 		ID:          id,
 		ParentID:    parentID,
@@ -108,4 +111,15 @@ func (m *InMemoryTaskManager) ListSubTasks(parentID string) ([]*Task, error) {
 		}
 	}
 	return subtasks, nil
+}
+
+func (m *InMemoryTaskManager) ListAllTasks() ([]*Task, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	tasks := make([]*Task, 0, len(m.tasks))
+	for _, task := range m.tasks {
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
 }
