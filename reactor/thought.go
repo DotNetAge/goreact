@@ -38,8 +38,9 @@ type Thought struct {
 }
 
 // BuildThinkPrompt constructs the Think phase prompt using Go template.
-// It includes the classified intent, available tools, applicable skills, and user input.
-func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skills []*core.Skill) string {
+// It includes the classified intent, available tools, applicable skills,
+// relevant memory records, and user input.
+func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skills []*core.Skill, memoryRecords []core.MemoryRecord) string {
 	intentSection := "(no intent)"
 	if intent != nil {
 		b, _ := json.Marshal(intent)
@@ -48,10 +49,16 @@ func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skill
 
 	toolSection := FormatToolDescriptions(tools)
 
+	memorySection := ""
+	if len(memoryRecords) > 0 {
+		memorySection = core.FormatMemoryRecords(memoryRecords)
+	}
+
 	result, err := renderThinkPrompt(thinkPromptData{
 		IntentSection: intentSection,
 		ToolSection:   toolSection,
 		Skills:        skills,
+		MemorySection: memorySection,
 		Input:         input,
 	})
 	if err != nil {

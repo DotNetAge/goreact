@@ -1,3 +1,11 @@
+---
+name: verify
+description: >
+  Rigorous verification of changes through testing and execution.
+  Use when the user mentions verify, test, check, or QA.
+allowed-tools: bash todo-write
+---
+
 # Verify: Code Change QA
 
 Verify a code change does what it should by running the app and tests.

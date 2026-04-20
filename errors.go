@@ -1,6 +1,10 @@
 package goreact
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/DotNetAge/goreact/core"
+)
 
 // Agent errors
 var (
@@ -17,16 +21,16 @@ var (
 	ErrToolUnauthorized = errors.New("tool unauthorized")
 )
 
-// Skill errors
+// Skill errors (defined in core package, aliased here for backward compatibility)
 var (
-	ErrSkillNotFound    = errors.New("skill not found")
-	ErrSkillExecution   = errors.New("skill execution failed")
-	ErrSkillCompilation = errors.New("skill compilation failed")
+	ErrSkillNotFound    = core.ErrSkillNotFound
+	ErrSkillExecution   = core.ErrSkillExecution
+	ErrSkillCompilation = core.ErrSkillCompilation
 )
 
-// Memory errors
+// Memory errors (defined in core package, aliased here for backward compatibility)
 var (
-	ErrMemoryNotFound   = errors.New("memory not found")
-	ErrMemoryStorage    = errors.New("memory storage failed")
-	ErrMemoryRetrieval  = errors.New("memory retrieval failed")
+	ErrMemoryNotFound   = core.ErrMemoryNotFound
+	ErrMemoryStorage    = core.ErrMemoryStorage
+	ErrMemoryRetrieval  = core.ErrMemoryRetrieval
 )

@@ -337,7 +337,7 @@ func TestBash(t *testing.T) {
 }
 
 func TestLS(t *testing.T) {
-	ls := NewLSTool()
+	ls := NewLsTool()
 
 	t.Run("list current directory", func(t *testing.T) {
 		result, err := ls.Execute(context.Background(), map[string]any{"path": "."})

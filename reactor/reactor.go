@@ -80,6 +80,10 @@ type Reactor struct {
 	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder // pre-configured LLM client builder
 
+	// Memory for knowledge retrieval (suppresses hallucination via RAG).
+	// If nil, Think phase operates without memory augmentation.
+	memory core.Memory
+
 	// Context defense (three-layer strategy)
 	compactor       core.ContextCompactor // optional: third layer (compact)
 	compactorConfig core.CompactorConfig
@@ -99,14 +103,24 @@ type Reactor struct {
 	// Shared across main reactor and all subagent tasks.
 	eventBus EventBus
 
+	// MessageBus enables inter-agent communication within teams.
+	// Shared across main reactor and all subagent tasks so that
+	// team members can send/receive messages via channel-based mailboxes.
+	messageBus *core.AgentMessageBus
+
 	// pendingTasks tracks in-flight subagent tasks (Issue #2: instance-bound, not global)
-	pendingTasks   map[string]chan *RunResult
+	pendingTasks   map[string]chan any
 	pendingTasksMu sync.RWMutex
 }
 
 // EventBus returns the reactor's event bus for subscribing to agent events.
 func (r *Reactor) EventBus() EventBus {
 	return r.eventBus
+}
+
+// MessageBus returns the reactor's agent message bus for team communication.
+func (r *Reactor) MessageBus() *core.AgentMessageBus {
+	return r.messageBus
 }
 
 // AskUser returns the reactor's ask_user tool for responding to clarification requests.
@@ -126,23 +140,29 @@ func (r *Reactor) AskPermission() *tools.AskPermission {
 	return r.askPermission
 }
 
+// Memory returns the reactor's memory instance for external access.
+// Returns nil if no memory was configured.
+func (r *Reactor) Memory() core.Memory {
+	return r.memory
+}
+
 // SetAskPermission sets a custom AskPermission instance.
 func (r *Reactor) SetAskPermission(p *tools.AskPermission) {
 	r.askPermission = p
 }
 
 // registerPendingTask adds a pending subagent task to this reactor instance.
-func (r *Reactor) registerPendingTask(taskID string, ch chan *RunResult) {
+func (r *Reactor) registerPendingTask(taskID string, ch chan any) {
 	r.pendingTasksMu.Lock()
 	defer r.pendingTasksMu.Unlock()
 	if r.pendingTasks == nil {
-		r.pendingTasks = make(map[string]chan *RunResult)
+		r.pendingTasks = make(map[string]chan any)
 	}
 	r.pendingTasks[taskID] = ch
 }
 
 // getPendingTask retrieves the channel for a pending subagent task.
-func (r *Reactor) getPendingTask(taskID string) (chan *RunResult, bool) {
+func (r *Reactor) getPendingTask(taskID string) (chan any, bool) {
 	r.pendingTasksMu.RLock()
 	defer r.pendingTasksMu.RUnlock()
 	ch, ok := r.pendingTasks[taskID]
@@ -158,16 +178,21 @@ func (r *Reactor) removePendingTask(taskID string) {
 
 // reactorSetup holds options applied before tool registration.
 type reactorSetup struct {
-	skipTools        map[string]bool
-	skipAllBundled   bool
-	extraTools       []core.FuncTool
-	securityPolicy   SecurityPolicy
-	resultStorage    core.ToolResultStorage
-	resultLimits     core.ToolResultLimits
-	compactor        core.ContextCompactor
-	compactorConfig  core.CompactorConfig
-	tokenEstimator   core.TokenEstimator
-	eventBus         EventBus
+	skipTools         map[string]bool
+	skipAllBundled    bool
+	extraTools        []core.FuncTool
+	securityPolicy    SecurityPolicy
+	resultStorage     core.ToolResultStorage
+	resultLimits      core.ToolResultLimits
+	compactor         core.ContextCompactor
+	compactorConfig   core.CompactorConfig
+	tokenEstimator    core.TokenEstimator
+	eventBus          EventBus
+	mcpRegistry       *core.MCPToolRegistry
+	skillDirs         []string // External skill directories to load skills from
+	skipBundledSkills bool
+	messageBus        *core.AgentMessageBus // Shared message bus for team communication
+	memory            core.Memory           // Optional: knowledge retrieval for hallucination suppression
 }
 
 // ReactorOption configures a Reactor during creation.
@@ -251,6 +276,51 @@ func WithEventBus(bus EventBus) ReactorOption {
 	}
 }
 
+// WithMCPRegistry sets an MCP tool registry for discovering and calling
+// tools from external MCP servers.
+func WithMCPRegistry(registry *core.MCPToolRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.mcpRegistry = registry
+	}
+}
+
+// WithSkillDir specifies external directories to load skills from.
+// Each directory should contain subdirectories, each with a SKILL.md file.
+// Skills loaded from these directories are registered in addition to bundled skills.
+// Multiple directories can be specified by calling WithSkillDir multiple times.
+func WithSkillDir(dir string) ReactorOption {
+	return func(s *reactorSetup) {
+		s.skillDirs = append(s.skillDirs, dir)
+	}
+}
+
+// WithoutBundledSkills skips registration of all built-in bundled skills.
+func WithoutBundledSkills() ReactorOption {
+	return func(s *reactorSetup) {
+		s.skipBundledSkills = true
+	}
+}
+
+// WithMessageBus sets an AgentMessageBus for inter-agent team communication.
+// SubAgents spawned with a team_name will join teams and can communicate
+// via send_message/receive_messages tools. The bus is shared across the
+// main reactor and all subagent tasks.
+func WithMessageBus(bus *core.AgentMessageBus) ReactorOption {
+	return func(s *reactorSetup) {
+		s.messageBus = bus
+	}
+}
+
+// WithMemory sets a Memory implementation for knowledge retrieval.
+// Memory is queried during the Think phase to inject relevant knowledge
+// into the LLM prompt, suppressing hallucination.
+// If not set, the reactor operates without memory augmentation.
+func WithMemory(mem core.Memory) ReactorOption {
+	return func(s *reactorSetup) {
+		s.memory = mem
+	}
+}
+
 // NewReactor creates a new Reactor with the given configuration and options.
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if config.MaxIterations <= 0 {
@@ -277,6 +347,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		taskManager:     core.NewInMemoryTaskManager(),
 		compactorConfig: core.DefaultCompactorConfig(),
 		tokenEstimator:  core.NewDefaultTokenEstimator(3.0),
+		memory:          setup.memory,
 	}
 
 	// Apply event bus (create default if not provided via option)
@@ -286,19 +357,44 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.eventBus = NewEventBus()
 	}
 
+	// Apply message bus for team communication (create default if not provided)
+	if setup.messageBus != nil {
+		r.messageBus = setup.messageBus
+	} else {
+		r.messageBus = core.NewAgentMessageBus()
+	}
+
 	// Pre-configure LLM client builder (Issue #13: reuse client across calls)
 	r.llmClient = gochat.Client().Config(
 		gochat.WithAPIKey(config.APIKey),
 		gochat.WithBaseURL(config.BaseURL),
 	)
 
-	// Register bundled skills
-	RegisterBundledSkills(r.skillRegistry)
+	// Register bundled skills (unless skipped)
+	if !setup.skipBundledSkills {
+		if err := RegisterBundledSkills(r.skillRegistry); err != nil {
+			// Log but don't panic — bundled skills should always be available
+			fmt.Printf("[goreact] warning: failed to register bundled skills: %v\n", err)
+		}
+	}
 
-	// Register orchestration tools (always registered)
-	_ = r.RegisterTool(NewTaskCreateTool(r))
-	_ = r.RegisterTool(NewTaskResultTool(r))
-	_ = r.RegisterTool(NewTaskListTool(r))
+	// Load skills from external directories
+	for _, dir := range setup.skillDirs {
+		loader := core.NewFileSystemSkillLoader(dir)
+		skills, err := loader.Load()
+		if err != nil {
+			fmt.Printf("[goreact] warning: failed to load skills from %q: %v\n", dir, err)
+			continue
+		}
+		for _, skill := range skills {
+			if err := r.skillRegistry.RegisterSkill(skill); err != nil {
+				fmt.Printf("[goreact] warning: failed to register skill %q: %v\n", skill.Name, err)
+			}
+		}
+	}
+
+	// Register orchestration tools (task, subagent, team, skill)
+	r.registerOrchestrationTools()
 
 	// Register ask_user tool for interactive clarification (interrupt-resume)
 	r.askUser = tools.NewAskUserTool().(*tools.AskUser)
@@ -332,7 +428,8 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			{"grep", tools.NewGrepTool()},
 			{"glob", tools.NewGlobTool()},
 			{"bash", tools.NewBashTool()},
-			{"web_fetch", tools.NewWebFetchTool()},
+			{"web_search", tools.NewWebSearchTool()},
+			{"web_fetch", tools.NewWebFetchToolClaude()},
 			{"todo_write", tools.NewTodoWriteTool()},
 			{"todo_read", tools.NewTodoReadTool()},
 			{"todo_execute", tools.NewTodoExecuteTool()},
@@ -340,11 +437,13 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			{"repl", tools.NewREPLTool()},
 			{"read", tools.NewReadTool()},
 			{"write", tools.NewWriteTool()},
-			{"ls", tools.NewLSTool()},
+			{"ls", tools.NewLsTool()},
 			{"echo", tools.NewEchoTool()},
 			{"calculator", tools.NewCalculatorTool()},
 			{"replace", tools.NewReplaceTool()},
 			{"cron", tools.NewCronTool()},
+			{"memory_save", tools.NewMemorySaveTool()},
+			{"memory_search", tools.NewMemorySearchTool()},
 		}
 		for _, bt := range bundledTools {
 			if !setup.skipTools[bt.name] {
@@ -380,6 +479,13 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	}
 	if setup.tokenEstimator != nil {
 		r.tokenEstimator = setup.tokenEstimator
+	}
+
+	// Configure memory tools with the Memory instance
+	if r.memory != nil {
+		tools.SetMemory(r.memory)
+		// Inject memory into registries for reflexive semantic search
+		r.toolRegistry.SetMemory(r.memory)
 	}
 
 	return r
@@ -465,6 +571,8 @@ func (r *Reactor) callLLMStream(reactCtx *ReactContext, systemPrompt, userMessag
 
 // buildLLMBuilder creates a pre-configured ClientBuilder with system prompt, history, and user message.
 // This is shared by both streaming and non-streaming call paths.
+// History messages are truncated using a token-budget-aware strategy: messages are kept from
+// newest to oldest (back-to-front) until the history token budget is exhausted.
 func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history ConversationHistory, maxHistoryTurns int) gochat.ClientBuilder {
 	builder := r.llmClient.
 		Model(r.config.Model).
@@ -478,12 +586,43 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 		builder.SystemMessage(systemPrompt)
 	}
 
+	// Three-layer token budget allocation
+	// Layer 1: System prompts (fixed, not counted against history budget)
+	// Layer 2: User message (fixed, not counted against history budget)
+	// Layer 3: Conversation history (trimmed to fit remaining budget)
+	//
+	// We allocate 70% of MaxTokens to history, reserving 30% for system prompts,
+	// user message, and the LLM's output.
+	maxTokensForHistory := int64(float64(r.config.MaxTokens) * 0.7)
+
 	var chatMessages []gochatcore.Message
 	messages := history
+
+	// Apply maxHistoryTurns hard limit first
 	if maxHistoryTurns > 0 && len(messages) > maxHistoryTurns {
 		messages = messages[len(messages)-maxHistoryTurns:]
 	}
-	for _, m := range messages {
+
+	// Token-budget-aware truncation: keep messages from newest to oldest
+	estimateFn := r.tokenEstimator.Estimate
+	var selectedMessages []core.Message
+	var usedTokens int64
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		msgTokens := int64(estimateFn(messages[i].Content))
+		if usedTokens+msgTokens > maxTokensForHistory {
+			break // budget exhausted
+		}
+		selectedMessages = append(selectedMessages, messages[i])
+		usedTokens += msgTokens
+	}
+
+	// Reverse to restore chronological order
+	for i, j := 0, len(selectedMessages)-1; i < j; i, j = i+1, j-1 {
+		selectedMessages[i], selectedMessages[j] = selectedMessages[j], selectedMessages[i]
+	}
+
+	for _, m := range selectedMessages {
 		chatMessages = append(chatMessages, gochatcore.NewTextMessage(m.Role, m.Content))
 	}
 	builder.Messages(chatMessages...)
@@ -526,13 +665,28 @@ func parseIntentResponse(content string) (*Intent, error) {
 
 // Think asks the LLM to decide the next action based on the current context.
 // Uses streaming to emit ThinkingDelta events in real-time via EventBus.
+// If Memory is configured, relevant records are retrieved and injected into the prompt.
 func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	tools := r.toolRegistry.ToToolInfos()
 
 	// Discover applicable skills based on current context/intent
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
 	
-	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, tools, skills)
+	// Retrieve relevant memory records for hallucination suppression
+	var memoryRecords []core.MemoryRecord
+	if r.memory != nil {
+		records, err := r.memory.Retrieve(
+			ctx.Ctx(), ctx.Input,
+			core.WithMemoryTypes(core.MemoryTypeLongTerm, core.MemoryTypeUser, core.MemoryTypeExperience),
+			core.WithMemoryLimit(3),
+		)
+		if err == nil {
+			memoryRecords = records
+		}
+		// Non-fatal: memory retrieval failure should not break the Think phase
+	}
+
+	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, tools, skills, memoryRecords)
 
 	// Use streaming call — emits ThinkingDelta events as content arrives
 	content, tokens, err := r.callLLMStream(ctx, instructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns)
@@ -685,6 +839,18 @@ func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 		// If Target is set (ask_user tool result), continue the loop
 	}
 
+	// Three-layer loop detection defense
+	// Layer 1: Destructive loop — same tool call + same error, immediate termination
+	if isDestructiveLoop(ctx.History) {
+		return true, "destructive loop detected: same tool call and error repeated"
+	}
+
+	// Layer 2: Stuck detection — agent reasoning without tool progress
+	if isAgentStuck(ctx.History) {
+		return true, "agent stuck: no tool progress in recent iterations"
+	}
+
+	// Legacy checks (still useful as additional safeguards)
 	if isResultConverged(ctx.History) {
 		return true, "result converged"
 	}
@@ -882,10 +1048,27 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 	}
 	reactCtx.EmitEvent(core.ExecutionSummary, summary)
 
+	// Save experience to memory if the task completed successfully.
+	// This records the problem description + solution so future similar
+	// tasks can reuse the analysis instead of spending tokens re-analyzing.
+	r.saveExperience(reactCtx, result)
+
 	return result, nil
 }
 
-// --- Termination helper functions ---
+// --- Termination helper functions (three-layer defense) ---
+//
+// Layer 1: Destructive loop detection — same tool call + same error repeated.
+// Layer 2: Stuck detection — consecutive steps with identical reasoning but no tool progress.
+// Layer 3: Hard iteration limit (enforced in CheckTermination).
+
+// maxDestructiveLoopCount is the threshold for detecting a destructive loop.
+// If the same tool+params+error appears this many times consecutively, terminate immediately.
+const maxDestructiveLoopCount = 3
+
+// maxStuckCount is the threshold for detecting a stuck agent.
+// If the agent produces reasoning-only steps (no tool calls) this many times, inject a nudge.
+const maxStuckCount = 4
 
 // isToolErrorIrrecoverable checks if a tool error cannot be recovered by retry.
 func isToolErrorIrrecoverable(obs *Observation) bool {
@@ -906,6 +1089,54 @@ func isToolErrorIrrecoverable(obs *Observation) bool {
 		}
 	}
 	return false
+}
+
+// isDestructiveLoop checks for the most dangerous pattern: the same tool call
+// producing the same error repeatedly (e.g., trying to edit a file that doesn't exist).
+func isDestructiveLoop(history []Step) bool {
+	if len(history) < maxDestructiveLoopCount {
+		return false
+	}
+	// Check the last N steps for identical tool calls with identical errors
+	tail := history[len(history)-maxDestructiveLoopCount:]
+	var target, params, errMsg string
+	for i, step := range tail {
+		if step.Action.Type != ActionTypeToolCall {
+			return false // not a tool call, break the chain
+		}
+		if i == 0 {
+			target = step.Action.Target
+			params = fmt.Sprintf("%v", step.Action.Params)
+			errMsg = step.Observation.Error
+		} else {
+			if step.Action.Target != target ||
+				fmt.Sprintf("%v", step.Action.Params) != params ||
+				step.Observation.Error != errMsg {
+				return false
+			}
+		}
+	}
+	// All N steps have identical tool call + error
+	return errMsg != "" // only flag if there IS an error (otherwise it's intentional repetition)
+}
+
+// isAgentStuck detects when the agent is reasoning without making progress.
+// If the agent repeatedly produces Answer/Clarify decisions without tool calls,
+// it's likely stuck in a reasoning loop.
+func isAgentStuck(history []Step) bool {
+	if len(history) < maxStuckCount {
+		return false
+	}
+	// Count consecutive non-tool-call steps from the end
+	count := 0
+	for i := len(history) - 1; i >= 0 && i >= len(history)-maxStuckCount; i-- {
+		if history[i].Action.Type != ActionTypeToolCall {
+			count++
+		} else {
+			break
+		}
+	}
+	return count >= maxStuckCount
 }
 
 func isResultConverged(history []Step) bool {
@@ -948,6 +1179,10 @@ func analyzeActionResult(result string) []string {
 // maybeCompact checks whether the conversation history has exceeded the context budget
 // and applies micro-compact or full compact (via LLM) as appropriate.
 // This is called after each T-A-O cycle's observation phase.
+//
+// If Memory implements the ReNewer interface, ReNew is tried first as a semantic
+// context rebuild. If ReNew fails or is not available, the traditional compact
+// strategies are used as fallback.
 func (r *Reactor) maybeCompact(ctx *ReactContext) {
 	estimateFn := func(s string) int {
 		return r.tokenEstimator.Estimate(s)
@@ -969,6 +1204,11 @@ func (r *Reactor) maybeCompact(ctx *ReactContext) {
 		return
 	}
 
+	// Try ReNew first: semantic context rebuild via Memory (Phase 2)
+	if r.tryReNew(ctx) {
+		return
+	}
+
 	// Decide between micro-compact and full compact
 	if budget.UsageRatio >= r.compactorConfig.MicroCompactThreshold &&
 		(r.compactor == nil || budget.UsageRatio < r.compactorConfig.CompactThresholdRatio) {
@@ -983,9 +1223,9 @@ func (r *Reactor) maybeCompact(ctx *ReactContext) {
 	// Full compact: use LLM to summarize
 	if r.compactor != nil {
 		req := core.CompactRequest{
-			Messages:     ctx.ConversationHistory,
+			Messages:      ctx.ConversationHistory,
 			PreserveLastN: r.compactorConfig.PreserveLastN,
-			MaxTokens:    int64(r.config.MaxTokens),
+			MaxTokens:     int64(r.config.MaxTokens),
 		}
 		compacted, err := r.compactor.Compact(ctx.Ctx(), req)
 		if err == nil && compacted != nil {
@@ -1015,4 +1255,47 @@ func (r *Reactor) maybeCompact(ctx *ReactContext) {
 			ctx.ConversationHistory, estimateFn, targetTokens,
 		)
 	}
+}
+
+// tryReNew attempts to use Memory's ReNew capability for semantic context rebuild.
+// Returns true if ReNew was successfully applied, false otherwise (fallback to compact).
+func (r *Reactor) tryReNew(ctx *ReactContext) bool {
+	if r.memory == nil {
+		return false
+	}
+	renewer, ok := r.memory.(core.ReNewer)
+	if !ok {
+		return false
+	}
+
+	// Build a summary of current intent for ReNew
+	intentSummary := ""
+	if ctx.Intent != nil {
+		intentSummary = ctx.Intent.Topic
+		if ctx.Intent.Summary != "" {
+			if intentSummary != "" {
+				intentSummary += " - "
+			}
+			intentSummary += ctx.Intent.Summary
+		}
+	}
+	if intentSummary == "" {
+		intentSummary = ctx.Input
+	}
+
+	// Convert ConversationHistory to []core.Message for ReNew
+	messages := []core.Message(ctx.ConversationHistory)
+
+	renewed, err := renewer.ReNew(ctx.Ctx(), ctx.SessionID, intentSummary, messages)
+	if err != nil || len(renewed) == 0 {
+		return false
+	}
+
+	// Insert a boundary message to indicate context was rebuilt via Memory
+	boundary := core.Message{
+		Role:    "system",
+		Content: fmt.Sprintf("[Context Rebuilt via Memory] Previous %d messages were semantically rebuilt into %d messages.", len(messages), len(renewed)),
+	}
+	ctx.ConversationHistory = append([]core.Message{boundary}, renewed...)
+	return true
 }

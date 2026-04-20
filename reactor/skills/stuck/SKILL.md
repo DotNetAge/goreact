@@ -1,3 +1,11 @@
+---
+name: stuck
+description: >
+  Strategy to break free when the agent is repeating actions or failing.
+  Use when the user mentions stuck, loop, repeat, or failing.
+allowed-tools: grep glob bash
+---
+
 # Stuck: Diagnose Frozen/Slow State
 
 Strategy to break free when the agent is repeating actions, failing, or stuck in a loop.

@@ -59,6 +59,10 @@ type ToolRegistry struct {
 	permissionChecker core.ToolPermissionChecker
 	hooks             map[core.HookEventType][]core.Hook // keyed by event type
 	eventEmitter      func(core.ReactEvent)              // for emitting PermissionRequest events
+
+	// Memory for semantic tool search (reflexive memory fallback).
+	// When set, SemanticSearch uses Memory.Retrieve to find tools by intent semantics.
+	memory core.Memory
 }
 
 // NewToolRegistry creates an empty tool registry.
@@ -124,6 +128,53 @@ func (r *ToolRegistry) All() []core.FuncTool {
 		out = append(out, t)
 	}
 	return out
+}
+
+// SetMemory injects a Memory instance for semantic tool search (reflexive memory).
+// When set, GetWithSemantic will fallback to Memory.Retrieve for intent-based
+// tool discovery if exact name matching fails.
+func (r *ToolRegistry) SetMemory(mem core.Memory) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.memory = mem
+}
+
+// GetWithSemantic first tries exact name matching, then falls back to
+// semantic search via Memory if configured. This is the reflexive memory
+// integration: tools indexed in Memory can be found by intent semantics.
+//
+// Returns the matched tool and true on success, nil and false otherwise.
+func (r *ToolRegistry) GetWithSemantic(ctx context.Context, name string, intent string) (core.FuncTool, bool) {
+	// Phase 1: exact name match
+	if tool, ok := r.Get(name); ok {
+		return tool, true
+	}
+
+	// Phase 2: semantic search via Memory (reflexive memory fallback)
+	if r.memory == nil || intent == "" {
+		return nil, false
+	}
+
+	r.mu.RLock()
+	mem := r.memory
+	r.mu.RUnlock()
+
+	records, err := mem.Retrieve(ctx, intent,
+		core.WithMemoryTypes(core.MemoryTypeRefactive),
+		core.WithMemoryLimit(5),
+	)
+	if err != nil || len(records) == 0 {
+		return nil, false
+	}
+
+	// Phase 3: use returned tool names for exact lookup in map
+	for _, rec := range records {
+		if tool, ok := r.Get(rec.Title); ok {
+			return tool, true
+		}
+	}
+
+	return nil, false
 }
 
 // ToToolInfos extracts core.ToolInfo from all registered tools for prompt building.

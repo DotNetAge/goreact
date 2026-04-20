@@ -15,8 +15,8 @@ type LS struct {
 	info *core.ToolInfo
 }
 
-// NewLSTool 创建 LS 工具
-func NewLSTool() core.FuncTool {
+// NewLsTool 创建 LS 工具
+func NewLsTool() core.FuncTool {
 	return &LS{
 		info: &core.ToolInfo{
 			Name:          "ls",

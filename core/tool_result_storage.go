@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // DiskToolResultStorage implements ToolResultStorage by writing large results
@@ -14,6 +15,7 @@ type DiskToolResultStorage struct {
 	baseDir         string
 	maxResultChars  int
 	previewChars    int
+	sessionID       string // explicit session ID for consistent directory naming
 }
 
 // StorageOption configures DiskToolResultStorage behavior.
@@ -37,6 +39,14 @@ func WithMaxResultChars(n int) StorageOption {
 func WithPreviewChars(n int) StorageOption {
 	return func(s *DiskToolResultStorage) {
 		s.previewChars = n
+	}
+}
+
+// WithSessionID sets an explicit session ID for consistent directory naming.
+// If not set, the process PID is used as a fallback.
+func WithSessionID(id string) StorageOption {
+	return func(s *DiskToolResultStorage) {
+		s.sessionID = id
 	}
 }
 
@@ -65,7 +75,11 @@ func (s *DiskToolResultStorage) Persist(toolName string, result string) *Persist
 	defer s.mu.Unlock()
 
 	// Create session-scoped directory
-	sessionDir := filepath.Join(s.baseDir, fmt.Sprintf("session_%d", os.Getpid()))
+	sid := s.sessionID
+	if sid == "" {
+		sid = fmt.Sprintf("%d", os.Getpid())
+	}
+	sessionDir := filepath.Join(s.baseDir, "session_"+sid)
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		// Fallback: return truncated inline if disk write fails
 		return &PersistedToolResult{
@@ -77,7 +91,7 @@ func (s *DiskToolResultStorage) Persist(toolName string, result string) *Persist
 	}
 
 	// Write full result to a unique file
-	filename := fmt.Sprintf("%s_%d.txt", sanitizeFileName(toolName), os.Getpid())
+	filename := fmt.Sprintf("%s_%d.txt", sanitizeFileName(toolName), time.Now().UnixNano())
 	filePath := filepath.Join(sessionDir, filename)
 	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
 		return &PersistedToolResult{

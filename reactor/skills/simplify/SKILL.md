@@ -1,3 +1,11 @@
+---
+name: simplify
+description: >
+  Post-implementation cleanup to ensure code quality and simplicity.
+  Use when the user mentions simplify, cleanup, refactor, or polish.
+allowed-tools: file-edit bash read replace
+---
+
 # Simplify: Code Review and Cleanup
 
 Review all changed files for reuse, quality, and efficiency. Fix any issues found.

@@ -52,6 +52,10 @@ const (
 
 	// CycleEnd signals one complete T-A-O cycle has ended.
 	CycleEnd ReactEventType = "cycle_end"
+
+	// ExperienceSaved signals that a successful task execution was saved
+	// as experience memory for future reuse.
+	ExperienceSaved ReactEventType = "experience_saved"
 )
 
 // ReactEvent is the unit of data published by the Reactor's event bus.
@@ -145,6 +149,15 @@ type ExecutionSummaryData struct {
 	TotalDuration   time.Duration  `json:"total_duration_ms"`
 	TokensUsed      int            `json:"tokens_used"`
 	TerminationReason string       `json:"termination_reason,omitempty"`
+}
+
+// ExperienceSavedData is the payload for ExperienceSaved events.
+// It is emitted when a successful task execution is saved to Memory
+// as an experience record (MemoryTypeExperience) for future reuse.
+type ExperienceSavedData struct {
+	Problem    string   `json:"problem"`     // The original user input / problem description
+	Iterations int      `json:"iterations"`  // Number of T-A-O cycles
+	ToolsUsed  []string `json:"tools_used"`  // Unique tools called during execution
 }
 
 // NewReactEvent creates a new ReactEvent with the current timestamp.

@@ -59,6 +59,7 @@ type thinkPromptData struct {
 	IntentSection string
 	ToolSection   string
 	Skills        []*core.Skill
+	MemorySection string // relevant memory records for hallucination suppression
 	Input         string
 }
 

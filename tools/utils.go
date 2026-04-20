@@ -28,26 +28,47 @@ func ValidateRequiredString(params map[string]any, key string) (string, error) {
 	return str, nil
 }
 
-// ValidateFileSafety 验证文件安全性，采用路径锚定模式
+// ValidateFileSafety 验证文件安全性，采用路径锚定模式。
+// 使用 filepath.Clean 规范化路径，解析符号链接确保真实路径在允许范围内。
 func ValidateFileSafety(path string) error {
-	absPath, err := filepath.Abs(path)
+	// Step 1: 规范化路径，消除 ../ 等相对路径成分
+	cleaned := filepath.Clean(path)
+
+	// Step 2: 获取绝对路径
+	absPath, err := filepath.Abs(cleaned)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	// Step 3: 解析符号链接，获取真实路径
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// 如果文件不存在（比如即将创建的文件），使用绝对路径作为回退
+		// 仅对已存在的路径解析符号链接
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to resolve symlinks: %w", err)
+		}
+		realPath = absPath
+	}
+
+	// Step 4: 获取工作目录的真实路径（同样解析符号链接）
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
-
-	// 确保路径在当前工作目录内
-	if !strings.HasPrefix(absPath, cwd) {
-		return fmt.Errorf("access denied: path %q is outside the workspace %q", path, cwd)
+	realCwd, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		realCwd = cwd
 	}
 
-	// 检查是否是敏感系统文件
-	baseName := filepath.Base(absPath)
-	restrictedFiles := []string{".env", "id_rsa", "passwd", "shadow"}
+	// Step 5: 确保真实路径在当前工作目录内（白名单目录锚定）
+	if !strings.HasPrefix(realPath, realCwd+string(filepath.Separator)) && realPath != realCwd {
+		return fmt.Errorf("access denied: path %q resolves to %q which is outside the workspace %q", path, realPath, realCwd)
+	}
+
+	// Step 6: 检查是否是敏感系统文件
+	baseName := filepath.Base(realPath)
+	restrictedFiles := []string{".env", "id_rsa", "id_ed25519", "passwd", "shadow", "sudoers"}
 	for _, restricted := range restrictedFiles {
 		if strings.Contains(baseName, restricted) {
 			return fmt.Errorf("access to %s is restricted for security reasons", baseName)

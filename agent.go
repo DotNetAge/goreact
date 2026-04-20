@@ -7,11 +7,59 @@ import (
 	"github.com/DotNetAge/goreact/reactor"
 )
 
+// DefaultModel returns a ModelConfig pre-configured for a fast, cost-effective model.
+// The default uses qwen3.5-flash which provides excellent performance-to-cost ratio.
+// Override individual fields as needed (e.g., change BaseURL for a compatible API).
+func DefaultModel() *core.ModelConfig {
+	return &core.ModelConfig{
+		Name:        "qwen3.5-flash",
+		Description: "Quick and cost-effective model for general-purpose tasks",
+		MaxTokens:   8192,
+	}
+}
+
+// DefaultAgent creates a ready-to-use Agent with sensible defaults.
+// It only requires an API key to start working. The agent uses qwen3.5-flash
+// by default with a standard T-A-O reactor, InMemory memory, and a session
+// context window of 8192 tokens.
+//
+// Usage:
+//
+//	agent := goreact.DefaultAgent("your-api-key")
+//	answer, err := agent.Ask("Hello, how are you?")
+func DefaultAgent(apiKey string) *Agent {
+	model := DefaultModel()
+	model.APIKey = apiKey
+
+	reactorConfig := reactor.ReactorConfig{
+		APIKey:    apiKey,
+		Model:     model.Name,
+		BaseURL:   model.BaseURL,
+		MaxTokens: int(model.MaxTokens),
+	}
+
+	memory := core.NewInMemoryMemory()
+	r := reactor.NewReactor(reactorConfig, reactor.WithMemory(memory))
+
+	return NewAgentWithSession(
+		&core.AgentConfig{
+			Name:        "default-agent",
+			Domain:      "general",
+			Description: "A general-purpose AI agent powered by GoReAct",
+		},
+		model,
+		memory,
+		r,
+		"default",
+		8192,
+	)
+}
+
 // Agent is the top-level facade for interacting with the ReAct agent system.
 type Agent struct {
 	config        *core.AgentConfig
 	model         *core.ModelConfig
-	memory        *core.Memory
+	memory        core.Memory
 	reactor       reactor.ReActor
 	contextWindow *core.ContextWindow
 }
@@ -19,7 +67,7 @@ type Agent struct {
 // NewAgent creates a new Agent with the given configuration.
 func NewAgent(config *core.AgentConfig,
 	model *core.ModelConfig,
-	memory *core.Memory,
+	memory core.Memory,
 	reactor reactor.ReActor) *Agent {
 	return &Agent{
 		config:  config,
@@ -32,7 +80,7 @@ func NewAgent(config *core.AgentConfig,
 // NewAgentWithSession creates an Agent with a pre-initialized ContextWindow.
 func NewAgentWithSession(config *core.AgentConfig,
 	model *core.ModelConfig,
-	memory *core.Memory,
+	memory core.Memory,
 	reactor reactor.ReActor,
 	sessionID string,
 	maxTokens int64) *Agent {
@@ -55,6 +103,11 @@ func (a *Agent) Domain() string {
 
 func (a *Agent) Description() string {
 	return a.config.Description
+}
+
+// Memory returns the agent's memory instance, or nil if not configured.
+func (a *Agent) Memory() core.Memory {
+	return a.memory
 }
 
 // ContextWindow returns the agent's context window, or nil if no session is active.
@@ -141,9 +194,4 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (string, er
 	}
 
 	return result.Answer, nil
-}
-
-// Recognize identifies the user's intent from the given text.
-func (a *Agent) Recognize(text string) (*reactor.Intent, error) {
-	return nil, nil // TODO: implement using reactor's intent classification
 }

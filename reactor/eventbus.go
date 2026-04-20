@@ -1,7 +1,6 @@
 package reactor
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -24,9 +23,8 @@ type EventBus interface {
 
 // subscriber represents a single subscriber with its filter and cancel state.
 type subscriber struct {
-	ch      chan core.ReactEvent
-	filter  func(core.ReactEvent) bool // nil = no filter, receive all
-	cancel  context.CancelFunc
+	ch     chan core.ReactEvent
+	filter func(core.ReactEvent) bool // nil = no filter, receive all
 }
 
 // InProcessEventBus is an in-process EventBus implementation using fan-out channels.
@@ -86,20 +84,16 @@ func (b *InProcessEventBus) SubscribeFiltered(filter func(core.ReactEvent) bool)
 		return ch, func() {}
 	}
 
-	_, cancel := context.WithCancel(context.Background())
-
 	id := b.nextID
 	b.nextID++
 
 	sub := &subscriber{
 		ch:     make(chan core.ReactEvent, 256), // buffer for burst events
 		filter: filter,
-		cancel: cancel,
 	}
 	b.subscribers[idStr(id)] = sub
 
 	unsubscribe := func() {
-		cancel()
 		b.mu.Lock()
 		delete(b.subscribers, idStr(id))
 		b.mu.Unlock()
@@ -115,7 +109,6 @@ func (b *InProcessEventBus) Close() {
 
 	b.closed = true
 	for _, sub := range b.subscribers {
-		sub.cancel()
 		close(sub.ch)
 	}
 	b.subscribers = make(map[string]*subscriber)
