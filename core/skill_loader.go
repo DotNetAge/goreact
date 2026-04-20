@@ -191,6 +191,19 @@ func parseSkillMd(data []byte, rootDir string, source string) (*Skill, error) {
 		return nil, err
 	}
 
+	instructions := strings.TrimSpace(body)
+
+	// Resolve template variables in instructions.
+	// {base_dir} → the absolute path of the skill directory on disk.
+	// For bundled skills (rootDir is empty), the variable is replaced with an empty string.
+	resolved := instructions
+	if strings.Contains(resolved, "{base_dir}") {
+		resolved = strings.ReplaceAll(resolved, "{base_dir}", rootDir)
+	}
+	if strings.Contains(resolved, "{skill_name}") {
+		resolved = strings.ReplaceAll(resolved, "{skill_name}", fm.Name)
+	}
+
 	return &Skill{
 		Name:          fm.Name,
 		Description:   fm.Description,
@@ -198,7 +211,7 @@ func parseSkillMd(data []byte, rootDir string, source string) (*Skill, error) {
 		Compatibility: fm.Compatibility,
 		Metadata:      fm.Metadata,
 		AllowedTools:  fm.AllowedTools,
-		Instructions:  strings.TrimSpace(body),
+		Instructions:  resolved,
 		RootDir:       rootDir,
 		Source:        source,
 	}, nil

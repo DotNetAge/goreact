@@ -20,45 +20,45 @@
 
 --- 
 
-[x] 如何向客户端输出 Execution Summary, 如：工具数的使用，耗时，总Tokens消耗。
-[x] 是否有必要需要增加文字汇总工具, summarize ？无必要LLM本身就可以完成这个功能。
+- [x] 如何向客户端输出 Execution Summary, 如：工具数的使用，耗时，总Tokens消耗。
+- [x] 是否有必要需要增加文字汇总工具, summarize ？无必要LLM本身就可以完成这个功能。
 
 ---
 
-[x] 重构Skill系统，实现两种Skill的加载方式，两种方式都是基于文件系统方式加载Skill.md文件，可支持指定Skill目录的加载，第二种则内置Skill加载，内置Skill可以用go的embed包实现。
-[X] 团队工具：SendMessage, TeamDelete ? 这些工具是可以辅助SubAgent的协作吗？
+- [x] 重构Skill系统，实现两种Skill的加载方式，两种方式都是基于文件系统方式加载Skill.md文件，可支持指定Skill目录的加载，第二种则内置Skill加载，内置Skill可以用go的embed包实现。
+- [X] 团队工具：SendMessage, TeamDelete ? 这些工具是可以辅助SubAgent的协作吗？
 
 ---
 
-[x] 整理所有内置工具，全部工具都应该存放于 tools 目录
-[x] 增加一种可以自动编写Skill的Skill或者工具；
-[x] 完全仿照Clude的WebSearch的实现方式重构 WebSearch与WebFetch工具；
+- [x] 整理所有内置工具，全部工具都应该存放于 tools 目录
+- [x] 增加一种可以自动编写Skill的Skill或者工具；
+- [x] 完全仿照Clude的WebSearch的实现方式重构 WebSearch与WebFetch工具；
 
 ---
 
-[x] 提供一份完整的GoRact功能描述，纯文字讲述 GoReact提供了什么功能，可以实现什么，最大的特色是什么；
+- [x] 提供一份完整的GoRact功能描述，纯文字讲述 GoReact提供了什么功能，可以实现什么，最大的特色是什么；
   - GoReact 的设计目标是希望能帮助开发人员专注于Tools与Skills的开发与运用，内核机制与性能由GoReact负责，保证以最少量的Token收获最大的价值。开发人员则在垂直领域中提供各种各样不同的Tools和Skills才能让AIAgent能在垂直领域中创造最大的价值。
-[x] 补充如何使用 Agent 快速实现智能助手系统（无Memory版,只配置API_KEY就马上可以运行）
+- [x] 补充如何使用 Agent 快速实现智能助手系统（无Memory版,只配置API_KEY就马上可以运行）
   - 我们可以提供一套 `DefaultAgent()` 生成一个基于 qwen3.5-flash 的AgentModel
   - 提供一个 `DeaultModel()` 生成一个基于 qwen3.5-flash 的默认 Model 配置
-[x] 补充GoRact的Tools的开发指南
-[x] 补充GoRact的Skills的开发指南
-[x] 补充GoRact的MCP的开发指南
-[x] 补充一份GoRact通信指南，包括但不限于以下的内容：
+- [x] 补充GoRact的Tools的开发指南
+- [x] 补充GoRact的Skills的开发指南
+- [x] 补充GoRact的MCP的开发指南
+- [x] 补充一份GoRact通信指南，包括但不限于以下的内容：
   - 如何获取思想流
   - 如何获取结果注
   - 如何获取Token消耗情况
   - 如何获取上下文窗口的状态
-[x] 当启用团队模式研究一个问题时，主Agent会干什么？空置？
+- [x] 当启用团队模式研究一个问题时，主Agent会干什么？空置？
 ---
 
-[x] 从入口开始Agent就附带了SystemPrompt，而这个SystemPrompt应该是每轮对话中都必须写LLM的，我们当前的代码是这样的吗？
-[x] SubAgent 是通过 "subagent" 工具唤醒的吗？我们是否要提供一份内置工具清单？
-[ ] 对于subagent 的命名可以使用 `@{name}` 的形式，这样有利于LLM识别出subagent的名称，以便于在Skill中进行引用。
-[ ] Skill 的描述是否采用 XML 格式效果会更加好？
-[ ] 如果在Skill中启用了Cron工具，那么是否就可以具有计划任务能力？如果是这个计划任务被唤醒时是怎么调起Agent呢？
-[ ] Skill.md 内的变量：`{base_dir}` 这是Skill目录地址读入Reactor在执行之前要将这个变量格式化掉
-[ ] 增加新的开关，ReActor 要设置一个 IsLocal 的属性，这个属性是由Agent的Model中带入的，如果这个属性为真，所有的LLM调用都必须采用串方式调用，而不能采取当前并发模式。但如果SubAgent的ReActor的`IsLocal`为假时则可以继续采用并发模式，这样做的目的是可以支持“本地+云端”的混合调用模式。如果全部不采用云端则整个Agent项目都会以LLM的单线程模式运行。
-[ ] 用户如何打断正在执行T-A-O流程，在打断后如何让其重新执行？
-[ ] 重新设计ReActor的主测试（端到端），要完全覆盖功能描述中的全部内容与场景；
-[ ] 当Agent完成一个完整的任务后应该输出一段任务的总结，对于团队协作则要收集全部Agent的处理总结汇总后写总结；
+- [x] 从入口开始Agent就附带了SystemPrompt，而这个SystemPrompt应该是每轮对话中都必须写LLM的，我们当前的代码是这样的吗？
+- [x] SubAgent 是通过 "subagent" 工具唤醒的吗？我们是否要提供一份内置工具清单？
+- [x] 对于subagent 的命名可以使用 `@{name}` 的形式，这样有利于LLM识别出subagent的名称，以便于在Skill中进行引用。
+- [x] Skill 的描述是否采用 XML 格式效果会更加好？
+- [ ] 如果在Skill中启用了Cron工具，那么是否就可以具有计划任务能力？如果是这个计划任务被唤醒时是怎么调起Agent呢？
+- [x] Skill.md 内的变量：`{base_dir}` 这是Skill目录地址读入Reactor在执行之前要将这个变量格式化掉
+- [x] 增加新的开关，ReActor 要设置一个 IsLocal 的属性，这个属性是由Agent的Model中带入的，如果这个属性为真，所有的LLM调用都必须采用串方式调用，而不能采取当前并发模式。但如果SubAgent的ReActor的`IsLocal`为假时则可以继续采用并发模式，这样做的目的是可以支持"本地+云端"的混合调用模式。如果全部不采用云端则整个Agent项目都会以LLM的单线程模式运行。
+- [x] 用户如何打断正在执行T-A-O流程，在打断后如何让其重新执行？
+- [x] 重新设计ReActor的主测试（端到端），要完全覆盖功能描述中的全部内容与场景；
+- [x] 当Agent完成一个完整的任务后应该输出一段任务的总结，对于团队协作则要收集全部Agent的处理总结汇总后写总结；

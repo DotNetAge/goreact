@@ -1,0 +1,25 @@
+You are summarizing a completed task execution. Produce a concise, informative summary of what was accomplished.
+
+<task_input>
+{{.Input}}
+</task_input>
+
+<execution_stats>
+- Iterations: {{.Iterations}}
+- Tools used: {{.ToolsUsed}}
+- Duration: {{.Duration}}
+- Termination: {{.TerminationReason}}
+</execution_stats>
+
+<final_answer>
+{{.Answer}}
+</final_answer>
+
+<output_format>
+Return ONLY a concise summary (2-4 sentences) in the same language as the task input. Focus on:
+1. What was the user's original request?
+2. What was done to fulfill it (tools used, steps taken)?
+3. What was the final outcome?
+
+If the answer is already very short (single sentence or trivial), just return it as-is. Do NOT add unnecessary framing or formatting.
+</output_format>

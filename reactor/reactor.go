@@ -30,6 +30,13 @@ type ReactorConfig struct {
 	// Agent configuration
 	SystemPrompt  string
 	MaxIterations int
+
+	// IsLocal indicates whether this reactor uses a local model.
+	// When true, SubAgent spawning is forced to run synchronously (serial execution)
+	// instead of the default asynchronous goroutine mode. This prevents concurrent
+	// LLM calls that local models typically cannot handle.
+	// SubAgents with their own model override (IsLocal=false) can still run async.
+	IsLocal bool
 }
 
 // RunResult holds the complete output of a Run invocation.
@@ -50,6 +57,8 @@ type RunResult struct {
 type ReActor interface {
 	// Run executes the full T-A-O loop for a single user input.
 	Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error)
+	// RunFromSnapshot resumes a T-A-O execution from a previously saved snapshot.
+	RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, newInput string) (*RunResult, error)
 	// Think, Act, Observe, CheckTermination are the individual T-A-O phases.
 	Think(ctx *ReactContext) (int, error)
 	Act(ctx *ReactContext) error
@@ -97,6 +106,22 @@ type Reactor struct {
 	// pendingTasks tracks in-flight subagent tasks (Issue #2: instance-bound, not global)
 	pendingTasks   map[string]chan any
 	pendingTasksMu sync.RWMutex
+
+	// scheduler manages cron-based scheduled tasks.
+	// When configured, the cron tool can register/list/remove scheduled tasks
+	// and the scheduler will trigger agent execution at the specified times.
+	scheduler *core.CronScheduler
+
+	// mockLLM replaces the real LLM call when set (non-nil).
+	// Used for deterministic end-to-end testing without real API calls.
+	// When set, callLLMWithHistory delegates to this function instead of the gochat client.
+	mockLLM func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
+
+	// pauseRequested is set to true by Pause() to indicate the current Run should
+	// save its state before returning. The runTAOLoop checks this after detecting
+	// context cancellation and saves a snapshot if true.
+	pauseRequested bool
+	pauseMu        sync.Mutex
 }
 
 // EventBus returns the reactor's event bus for subscribing to agent events.
@@ -130,6 +155,67 @@ func (r *Reactor) AskPermission() *tools.AskPermission {
 // Returns nil if no memory was configured.
 func (r *Reactor) Memory() core.Memory {
 	return r.memory
+}
+
+// SetPauseRequested signals the reactor to save a snapshot when the current Run
+// is cancelled. This is used by Agent.Pause() to enable resumable interruption.
+func (r *Reactor) SetPauseRequested() {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	r.pauseRequested = true
+}
+
+// TakeSnapshot captures the current execution state as a RunSnapshot.
+// If a Run is in progress, this returns the state at the moment of capture.
+// Returns nil if no snapshot is available (no Run has started or no pause was requested).
+func (r *Reactor) TakeSnapshot() *RunSnapshot {
+	r.pauseMu.Lock()
+	defer r.pauseMu.Unlock()
+	r.pauseRequested = false
+	return nil // The actual snapshot is set by runTAOLoop when pause is detected
+}
+
+// snapshotHolder stores the latest snapshot from a paused Run.
+// This is a simple atomic-like mechanism since only one Run can be active at a time.
+var snapshotHolder struct {
+	sync.RWMutex
+	snap *RunSnapshot
+}
+
+// setSnapshot stores a RunSnapshot for later retrieval.
+func setSnapshot(snap *RunSnapshot) {
+	snapshotHolder.Lock()
+	defer snapshotHolder.Unlock()
+	snapshotHolder.snap = snap
+}
+
+// getSnapshot retrieves and consumes the stored RunSnapshot.
+func getSnapshot() *RunSnapshot {
+	snapshotHolder.Lock()
+	defer snapshotHolder.Unlock()
+	snap := snapshotHolder.snap
+	snapshotHolder.snap = nil
+	return snap
+}
+
+// clearSnapshotHolder resets the global snapshot holder. Call in test cleanup.
+func clearSnapshotHolder() {
+	snapshotHolder.Lock()
+	defer snapshotHolder.Unlock()
+	snapshotHolder.snap = nil
+}
+
+// ConsumeSnapshot retrieves and consumes the stored RunSnapshot.
+// This is the public API for Agent.Resume() to access the snapshot.
+func (r *Reactor) ConsumeSnapshot() *RunSnapshot {
+	return getSnapshot()
+}
+
+// PeekSnapshot returns the stored RunSnapshot without consuming it.
+func (r *Reactor) PeekSnapshot() *RunSnapshot {
+	snapshotHolder.RLock()
+	defer snapshotHolder.RUnlock()
+	return snapshotHolder.snap
 }
 
 // SetAskPermission sets a custom AskPermission instance.
@@ -180,6 +266,8 @@ type reactorSetup struct {
 	skipBundledSkills bool
 	messageBus        *core.AgentMessageBus // Shared message bus for team communication
 	memory            core.Memory           // Optional: knowledge retrieval for hallucination suppression
+	mockLLM           func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
+	scheduler         *core.CronScheduler   // Optional: cron-based scheduled task management
 }
 
 // ReactorOption configures a Reactor during creation.
@@ -308,6 +396,40 @@ func WithMemory(mem core.Memory) ReactorOption {
 	}
 }
 
+// WithScheduler enables cron-based scheduled task management.
+// The scheduler runs a background loop that checks for due tasks every 30 seconds.
+// When a task fires, it invokes agent.Run() with the task's prompt.
+// The scheduler is started automatically with the reactor's context.
+//
+// Usage:
+//
+//	scheduler := core.NewCronScheduler()
+//	scheduler.SetCallback(func(ctx context.Context, task core.ScheduledTask) {
+//	    result, err := agent.AskWithContext(ctx, task.Prompt)
+//	    // handle result...
+//	})
+//	reactor := reactor.NewReactor(config, reactor.WithScheduler(scheduler))
+func WithScheduler(scheduler *core.CronScheduler) ReactorOption {
+	return func(s *reactorSetup) {
+		s.scheduler = scheduler
+	}
+}
+
+// MockLLMFunc is the signature for a mock LLM function used in testing.
+// When provided via WithMockLLM, the reactor delegates all LLM calls
+// to this function instead of the real API client.
+type MockLLMFunc func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
+
+// WithMockLLM replaces the real LLM client with a deterministic mock function.
+// This is intended for end-to-end testing without requiring real API keys or network access.
+// The mock function receives the full prompt context (system prompt, user message, history)
+// and must return a complete LLM response.
+func WithMockLLM(fn MockLLMFunc) ReactorOption {
+	return func(s *reactorSetup) {
+		s.mockLLM = fn
+	}
+}
+
 func WithSystemPrompt(prompt string) ReactorOption {
 	return func(rs *reactorSetup) {
 		rs.systemPrompt = prompt
@@ -346,6 +468,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		compactorConfig: core.DefaultCompactorConfig(),
 		tokenEstimator:  core.NewDefaultTokenEstimator(3.0),
 		memory:          setup.memory,
+		mockLLM:         setup.mockLLM,
 	}
 
 	// Apply event bus (create default if not provided via option)
@@ -360,6 +483,11 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.messageBus = setup.messageBus
 	} else {
 		r.messageBus = core.NewAgentMessageBus()
+	}
+
+	// Apply scheduler for cron-based scheduled tasks
+	if setup.scheduler != nil {
+		r.scheduler = setup.scheduler
 	}
 
 	// Pre-configure LLM client builder (Issue #13: reuse client across calls)
@@ -448,6 +576,13 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 				_ = r.RegisterTool(bt.tool)
 			}
 		}
+
+		// Inject reactor accessor into cron tool for scheduler access
+		if cronTool, ok := r.toolRegistry.Get("cron"); ok {
+			if ct, ok := cronTool.(*tools.Cron); ok {
+				ct.SetAccessor(r)
+			}
+		}
 	}
 
 	// Register extra tools from options
@@ -509,6 +644,11 @@ func (r *Reactor) TaskManager() core.TaskManager {
 	return r.taskManager
 }
 
+// Scheduler returns the reactor's cron scheduler, or nil if not configured.
+func (r *Reactor) Scheduler() *core.CronScheduler {
+	return r.scheduler
+}
+
 // RegisterTool is a convenience method to register a core.FuncTool.
 func (r *Reactor) RegisterTool(tool core.FuncTool) error {
 	return r.toolRegistry.Register(tool)
@@ -520,15 +660,32 @@ func (r *Reactor) RegisterIntent(def IntentDefinition) error {
 }
 
 // callLLMWithHistory makes an LLM call using the reactor's cached client and conversation history.
+// If a mockLLM function is configured (for testing), it delegates to the mock instead.
 func (r *Reactor) callLLMWithHistory(systemPrompt, userMessage string, history ConversationHistory, maxHistoryTurns int) (*gochatcore.Response, error) {
+	if r.mockLLM != nil {
+		return r.mockLLM(systemPrompt, userMessage, history)
+	}
 	builder := r.buildLLMBuilder(systemPrompt, userMessage, history, maxHistoryTurns)
 	return builder.GetResponseFor(r.config.ClientType)
 }
 
 // callLLMStream makes a streaming LLM call, emitting ThinkingDelta events via EventBus
 // as content arrives, then returns the complete response content and token usage.
-// The ctx parameter is the ReactContext (not context.Context) used for event emission.
+// If mockLLM is configured, it delegates to the mock (non-streaming).
 func (r *Reactor) callLLMStream(reactCtx *ReactContext, systemPrompt, userMessage string, history ConversationHistory, maxHistoryTurns int) (string, int, error) {
+	// Mock path: delegate directly without streaming
+	if r.mockLLM != nil {
+		resp, err := r.mockLLM(systemPrompt, userMessage, history)
+		if err != nil {
+			return "", 0, err
+		}
+		tokens := 0
+		if resp.Usage != nil && resp.Usage.TotalTokens > 0 {
+			tokens = resp.Usage.TotalTokens
+		}
+		return resp.Content, tokens, nil
+	}
+
 	builder := r.buildLLMBuilder(systemPrompt, userMessage, history, maxHistoryTurns)
 
 	stream, err := builder.GetStreamFor(r.config.ClientType)
@@ -872,13 +1029,9 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 	reactCtx := NewReactContext(ctx, input, history, r.config.MaxIterations)
 
 	// Inject event emission callback into context.
-	// All T-A-O phases will use reactCtx.EmitEvent() to publish to EventBus.
 	if r.eventBus != nil {
 		reactCtx.emitEvent = r.eventBus.Emit
 	}
-
-	totalTokens := 0
-	runStart := time.Now()
 
 	// Phase 1: Classify intent
 	intent, tokens, err := r.classifyIntent(reactCtx)
@@ -886,10 +1039,7 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 		reactCtx.EmitEvent(core.Error, fmt.Sprintf("intent classification: %v", err))
 		return nil, fmt.Errorf("intent classification: %w", err)
 	}
-	totalTokens += tokens
 	reactCtx.Intent = intent
-
-	// Apply confidence threshold
 	ApplyConfidenceThreshold(intent, 0)
 
 	// Early return for clarification needed from intent
@@ -900,9 +1050,45 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 			ClarificationNeeded:   true,
 			ClarificationQuestion: intent.ClarificationQuestion,
 			Confidence:            intent.Confidence,
-			TokensUsed:            totalTokens,
+			TokensUsed:            tokens,
 		}, nil
 	}
+
+	// Phase 2 + 3: T-A-O loop + result building
+	return r.runTAOLoop(reactCtx, tokens, time.Now())
+}
+
+// RunFromSnapshot resumes a T-A-O execution from a previously saved snapshot.
+// It skips intent classification (already done) and continues the T-A-O loop
+// from the saved iteration. If newInput is non-empty, it is appended to the
+// conversation history before resuming (useful for redirect scenarios).
+//
+// This is used by Agent.Resume() to continue a paused task.
+func (r *Reactor) RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, newInput string) (*RunResult, error) {
+	reactCtx := NewReactContextFromSnapshot(ctx, snapshot)
+
+	// Inject event emission callback
+	if r.eventBus != nil {
+		reactCtx.emitEvent = r.eventBus.Emit
+	}
+
+	// Reset termination state (allow the loop to continue)
+	reactCtx.IsTerminated = false
+	reactCtx.TerminationReason = ""
+
+	// Inject new user message if provided (redirect scenario)
+	if newInput != "" {
+		reactCtx.AddMessage("user", newInput)
+	}
+
+	// Continue from saved iteration (skip Phase 1: intent already classified)
+	return r.runTAOLoop(reactCtx, 0, time.Now())
+}
+
+// runTAOLoop executes the T-A-O iteration loop (Phase 2) and builds the final result (Phase 3).
+// This is the shared execution path for both Run() and RunFromSnapshot().
+func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
+	totalTokens := initialTokens
 
 	// Phase 2: T-A-O loop
 	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
@@ -1001,11 +1187,11 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 
 	// Phase 3: Build result
 	result := &RunResult{
-		Intent:            intent,
+		Intent:            reactCtx.Intent,
 		Steps:             reactCtx.History,
 		TotalIterations:   reactCtx.CurrentIteration,
 		TerminationReason: reactCtx.TerminationReason,
-		Confidence:        intent.Confidence,
+		Confidence:        reactCtx.Intent.Confidence,
 		TokensUsed:        totalTokens,
 	}
 
@@ -1052,10 +1238,30 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 	}
 	reactCtx.EmitEvent(core.ExecutionSummary, summary)
 
+	// If a pause was requested (via Agent.Pause()), save the execution snapshot
+	// so the task can be resumed later. This happens before saveExperience because
+	// a paused task should not be saved as completed experience.
+	r.pauseMu.Lock()
+	paused := r.pauseRequested
+	r.pauseRequested = false
+	r.pauseMu.Unlock()
+	if paused {
+		snap := reactCtx.ToSnapshot()
+		snap.TerminationReason = "paused"
+		setSnapshot(snap)
+	}
+
 	// Save experience to memory if the task completed successfully.
 	// This records the problem description + solution so future similar
 	// tasks can reuse the analysis instead of spending tokens re-analyzing.
 	r.saveExperience(reactCtx, result)
+
+	// Generate a natural-language task summary for non-trivial tasks.
+	// Skip for trivially short tasks (single iteration, no tool calls) or failed tasks.
+	if result.TotalIterations > 1 && result.Answer != "" &&
+		!strings.Contains(result.TerminationReason, "error") {
+		r.generateSummary(reactCtx, result, totalDuration)
+	}
 
 	return result, nil
 }
@@ -1080,16 +1286,29 @@ func isToolErrorIrrecoverable(obs *Observation) bool {
 		return false
 	}
 	irrecoverablePatterns := []string{
-		"not found",
 		"permission denied",
 		"unauthorized",
 		"invalid api key",
 		"authentication",
 	}
+	retrieablePatterns := []string{
+		"not found",
+		"team",
+	}
 	lower := strings.ToLower(obs.Error)
 	for _, p := range irrecoverablePatterns {
 		if strings.Contains(lower, p) {
-			return true
+			// Check if it's actually a retrieable pattern (e.g., team "not found" is retriable)
+			retrieable := false
+			for _, rp := range retrieablePatterns {
+				if strings.Contains(lower, rp) {
+					retrieable = true
+					break
+				}
+			}
+			if !retrieable {
+				return true
+			}
 		}
 	}
 	return false
@@ -1302,4 +1521,42 @@ func (r *Reactor) tryReNew(ctx *ReactContext) bool {
 	}
 	ctx.ConversationHistory = append([]core.Message{boundary}, renewed...)
 	return true
+}
+
+// generateSummary produces a natural-language summary of the completed task using the LLM.
+// The summary is emitted as a TaskSummary event and appended to the RunResult.
+// This runs asynchronously to avoid blocking the Run return.
+func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDuration time.Duration) {
+	toolsUsed := BuildSummaryToolsUsed(ctx.History)
+	durationStr := totalDuration.Round(time.Millisecond).String()
+	answer := result.Answer
+	if len(answer) > 2000 {
+		answer = answer[:2000] + "... [truncated]"
+	}
+
+	prompt, err := renderSummaryPrompt(summaryPromptData{
+		Input:             ctx.Input,
+		Answer:            answer,
+		Iterations:        result.TotalIterations,
+		ToolsUsed:         toolsUsed,
+		Duration:          durationStr,
+		TerminationReason: result.TerminationReason,
+	})
+	if err != nil {
+		return // non-fatal: summary is a nice-to-have
+	}
+
+	go func() {
+		resp, err := r.callLLMWithHistory(prompt, "Summarize this task execution.", nil, 0)
+		if err != nil || resp == nil || resp.Content == "" {
+			return
+		}
+
+		summaryText := strings.TrimSpace(resp.Content)
+		// Strip markdown code fences if present
+		summaryText = stripJSONWrappers(summaryText)
+		summaryText = strings.TrimSpace(summaryText)
+
+		ctx.EmitEvent(core.TaskSummary, core.TaskSummaryData{Summary: summaryText})
+	}()
 }

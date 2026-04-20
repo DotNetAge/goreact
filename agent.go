@@ -3,6 +3,7 @@ package goreact
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/reactor"
@@ -52,6 +53,13 @@ type Agent struct {
 	eventBus      reactor.EventBus
 	contextWindow *core.ContextWindow
 	lastResult    *Result
+	scheduler     *core.CronScheduler
+
+	// Interrupt state — protected by interruptMu
+	interruptMu sync.Mutex
+	cancelFunc  context.CancelFunc // cancels the current Run
+	isRunning   bool               // true while a Run is in progress
+	snapshot    *reactor.RunSnapshot // saved state from Pause()
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +108,9 @@ type agentSetup struct {
 	// Event streaming & security
 	eventBus       reactor.EventBus
 	securityPolicy reactor.SecurityPolicy
+
+	// Scheduler for cron-based scheduled tasks
+	scheduler *core.CronScheduler
 }
 
 // AgentOption configures an Agent during creation via NewAgent.
@@ -206,6 +217,25 @@ func WithSecurityPolicy(policy reactor.SecurityPolicy) AgentOption {
 	}
 }
 
+// WithScheduler enables cron-based scheduled task management.
+// The scheduler allows the agent to register, list, and manage cron-based tasks.
+// When a scheduled task fires, the provided callback is invoked to trigger agent execution.
+//
+// Usage:
+//
+//	scheduler := core.NewCronScheduler()
+//	agent := goreact.NewAgent(
+//	    goreact.WithModel(model),
+//	    goreact.WithScheduler(scheduler),
+//	)
+//	scheduler.Start(context.Background())
+//	defer scheduler.Stop()
+func WithScheduler(scheduler *core.CronScheduler) AgentOption {
+	return func(s *agentSetup) {
+		s.scheduler = scheduler
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
@@ -292,7 +322,7 @@ func NewAgent(opts ...AgentOption) *Agent {
 
 	// Validate required fields
 	if model.APIKey == "" {
-		panic(fmt.Sprintf("goreact: ModelConfig.APIKey is required, got empty. Use goreact.WithModel(model) where model.APIKey is set."))
+		panic("goreact: ModelConfig.APIKey is required, got empty. Use goreact.WithModel(model) where model.APIKey is set.")
 	}
 
 	// Build reactor options — only forward options with real extension value
@@ -315,6 +345,9 @@ func NewAgent(opts ...AgentOption) *Agent {
 	if setup.securityPolicy != nil {
 		reactorOpts = append(reactorOpts, reactor.WithSecurityPolicy(setup.securityPolicy))
 	}
+	if setup.scheduler != nil {
+		reactorOpts = append(reactorOpts, reactor.WithScheduler(setup.scheduler))
+	}
 	for _, dir := range setup.skillDirs {
 		reactorOpts = append(reactorOpts, reactor.WithSkillDir(dir))
 	}
@@ -325,16 +358,18 @@ func NewAgent(opts ...AgentOption) *Agent {
 		BaseURL:      model.BaseURL,
 		Model:        model.Name,
 		SystemPrompt: systemPrompt,
+		IsLocal:      model.IsLocal,
 	}
 
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)
 
 	a := &Agent{
-		config:   config,
-		model:    model,
-		memory:   setup.memory,
-		reactor:  r,
-		eventBus: r.EventBus(),
+		config:    config,
+		model:     model,
+		memory:    setup.memory,
+		reactor:   r,
+		eventBus:  r.EventBus(),
+		scheduler: setup.scheduler,
 	}
 
 	if setup.sessionID != "" {
@@ -392,6 +427,12 @@ func (a *Agent) Reactor() *reactor.Reactor {
 	return a.reactor
 }
 
+// Scheduler returns the agent's CronScheduler, or nil if not configured.
+// Use WithScheduler() during agent creation to enable scheduled tasks.
+func (a *Agent) Scheduler() *core.CronScheduler {
+	return a.scheduler
+}
+
 // ---------------------------------------------------------------------------
 // Session management
 // ---------------------------------------------------------------------------
@@ -435,6 +476,23 @@ func (a *Agent) Ask(question string) (*Result, error) {
 // and timeout control. Most users should use Ask; this is for advanced scenarios
 // such as request-scoped deadlines or graceful shutdown.
 func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, error) {
+	// Create a cancellable context derived from the user's context.
+	// This allows Cancel() and Pause() to interrupt the Run from outside.
+	runCtx, cancel := context.WithCancel(ctx)
+
+	a.interruptMu.Lock()
+	a.cancelFunc = cancel
+	a.isRunning = true
+	a.interruptMu.Unlock()
+
+	defer func() {
+		cancel()
+		a.interruptMu.Lock()
+		a.cancelFunc = nil
+		a.isRunning = false
+		a.interruptMu.Unlock()
+	}()
+
 	// Build conversation history from ContextWindow if available
 	var history reactor.ConversationHistory
 	if a.contextWindow != nil {
@@ -447,7 +505,7 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, e
 	}
 
 	// Delegate to the reactor for full T-A-O processing
-	runResult, err := a.reactor.Run(ctx, question, history)
+	runResult, err := a.reactor.Run(runCtx, question, history)
 	if err != nil {
 		return nil, err
 	}
@@ -544,8 +602,111 @@ func (a *Agent) AskStreamWithContext(ctx context.Context, question string) (<-ch
 }
 
 // ---------------------------------------------------------------------------
-// Result & Events — what happened after a call
+// Interruption — Cancel, Pause, Resume
 // ---------------------------------------------------------------------------
+
+// Cancel interrupts the currently running Ask/AskStream call.
+// The Run will return with partial results and TerminationReason "request cancelled".
+// If no Run is in progress, this is a no-op.
+// The state is NOT saved — use Pause() if you want to resume later.
+func (a *Agent) Cancel() {
+	a.interruptMu.Lock()
+	defer a.interruptMu.Unlock()
+	if a.cancelFunc != nil {
+		a.cancelFunc()
+	}
+}
+
+// Pause interrupts the currently running Ask/AskStream call and saves the
+// execution state (snapshot) so it can be resumed later with Resume().
+// The Run returns with partial results.
+// If no Run is in progress, this is a no-op.
+// Calling Pause() replaces any previously saved snapshot.
+func (a *Agent) Pause() {
+	a.interruptMu.Lock()
+	defer a.interruptMu.Unlock()
+	if !a.isRunning {
+		return
+	}
+	// Signal the reactor to save a snapshot when the Run loop detects cancellation
+	a.reactor.SetPauseRequested()
+	// Cancel the context to interrupt the Run
+	if a.cancelFunc != nil {
+		a.cancelFunc()
+	}
+}
+
+// Resume continues a previously paused task. If newInput is non-empty, it is
+// appended to the conversation history before resuming (useful for redirect scenarios).
+// Returns the result of the resumed execution.
+// Returns an error if no snapshot is available (nothing was paused).
+func (a *Agent) Resume(newInput ...string) (*Result, error) {
+	a.interruptMu.Lock()
+	snap := a.snapshot
+	a.interruptMu.Unlock()
+
+	if snap == nil {
+		// Try the reactor-level snapshot holder (set by runTAOLoop on pause)
+		snap = a.reactor.ConsumeSnapshot()
+	}
+	if snap == nil {
+		return nil, fmt.Errorf("goreact: cannot Resume — no paused snapshot available. Call Pause() first while a Run is in progress")
+	}
+
+	input := ""
+	if len(newInput) > 0 {
+		input = newInput[0]
+	}
+
+	ctx := context.Background()
+
+	runResult, err := a.reactor.RunFromSnapshot(ctx, snap, input)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &Result{
+		Answer:    runResult.Answer,
+		Tokens:    runResult.TokensUsed,
+		Duration:  runResult.TotalDuration.String(),
+		Steps:     runResult.TotalIterations,
+		ToolsUsed: len(runResult.Steps),
+	}
+	a.lastResult = result
+
+	// Update context window with resumed result
+	if a.contextWindow != nil && runResult.Answer != "" {
+		a.contextWindow.AddMessage("assistant", runResult.Answer)
+		a.contextWindow.AddTokens(int64(runResult.TokensUsed))
+		if a.contextWindow.TokensRemaining() <= 0 {
+			a.contextWindow.Prune(nil)
+		}
+	}
+
+	// Clear snapshot after successful resume (consumed)
+	a.interruptMu.Lock()
+	a.snapshot = nil
+	a.interruptMu.Unlock()
+
+	return result, nil
+}
+
+// Snapshot returns the current saved RunSnapshot (from Pause), or nil if none.
+func (a *Agent) Snapshot() *reactor.RunSnapshot {
+	a.interruptMu.Lock()
+	defer a.interruptMu.Unlock()
+	if a.snapshot != nil {
+		return a.snapshot
+	}
+	return a.reactor.PeekSnapshot()
+}
+
+// IsRunning returns true if an Ask/AskStream call is currently in progress.
+func (a *Agent) IsRunning() bool {
+	a.interruptMu.Lock()
+	defer a.interruptMu.Unlock()
+	return a.isRunning
+}
 
 // LastResult returns the Result from the most recent Ask/AskStream call, or nil.
 // This is the primary way to inspect token usage, step count, and duration

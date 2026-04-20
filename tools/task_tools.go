@@ -268,7 +268,7 @@ Team collaboration:
 4. Lead agent uses 'wait_team' to collect all results.
 5. Lead agent uses 'team_delete' to clean up.`,
 		Parameters: []core.Parameter{
-			{Name: "name", Type: "string", Description: "Agent name within the team (e.g., 'researcher'). Must be unique within the team.", Required: true},
+			{Name: "name", Type: "string", Description: "Agent name within the team. Use the format @{role_name} (e.g., '@researcher', '@reviewer'). The @ prefix helps the LLM identify agent references in skills and prompts. Must be unique within the team.", Required: true},
 			{Name: "description", Type: "string", Description: "Brief description of this agent's task.", Required: true},
 			{Name: "prompt", Type: "string", Description: "The task instruction for this agent. Should be self-contained.", Required: true},
 			{Name: "system_prompt", Type: "string", Description: "The agent's system prompt — defines its role, expertise, and behavior.", Required: false},

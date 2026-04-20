@@ -56,6 +56,10 @@ const (
 	// ExperienceSaved signals that a successful task execution was saved
 	// as experience memory for future reuse.
 	ExperienceSaved ReactEventType = "experience_saved"
+
+	// TaskSummary signals a natural-language summary of the completed task.
+	// This is emitted after the T-A-O loop finishes for non-trivial tasks.
+	TaskSummary ReactEventType = "task_summary"
 )
 
 // ReactEvent is the unit of data published by the Reactor's event bus.
@@ -170,4 +174,10 @@ func NewReactEvent(sessionID, taskID, parentID string, eventType ReactEventType,
 		Data:      data,
 		Timestamp: time.Now().UnixMilli(),
 	}
+}
+
+// TaskSummaryData is the payload for TaskSummary events.
+// It carries a natural-language summary of the task execution produced by the LLM.
+type TaskSummaryData struct {
+	Summary string `json:"summary"` // Natural-language task execution summary
 }

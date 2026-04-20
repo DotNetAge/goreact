@@ -10,9 +10,11 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Cron cron 表达式工具
+// Cron cron 表达式工具，支持解析和计划任务管理
 type Cron struct {
 	info *core.ToolInfo
+	// accessor provides access to the reactor's scheduler (set via SetAccessor).
+	accessor ReactorAccessor
 }
 
 // NewCronTool 创建 cron 工具
@@ -20,10 +22,15 @@ func NewCronTool() core.FuncTool {
 	return &Cron{
 		info: &core.ToolInfo{
 			Name:          "cron",
-			Description:   "Cron expression parsing and calculation. Params: {operation: 'parse'|'next'|'validate', expression: 'cron_expr', from: 'time_string', count: number}",
+			Description:   "Cron expression tool. Operations: 'parse'|'next'|'validate' for expression handling; 'schedule'|'unschedule'|'list_schedules'|'enable_schedule'|'disable_schedule' for scheduled task management. Params: {operation: string, expression: 'cron_expr', from: 'time_string', count: number, name: 'task_name', prompt: 'task_prompt', schedule_id: 'id'}",
 			SecurityLevel: core.LevelSafe,
 		},
 	}
+}
+
+// SetAccessor sets the reactor accessor for scheduler access.
+func (c *Cron) SetAccessor(a ReactorAccessor) {
+	c.accessor = a
 }
 
 func (c *Cron) Info() *core.ToolInfo {
@@ -70,6 +77,26 @@ func (c *Cron) Execute(ctx context.Context, params map[string]any) (any, error) 
 			count = int(cnt)
 		}
 		return c.next(expression, fromStr, count)
+
+	case "schedule":
+		// 注册定时任务
+		return c.schedule(params)
+
+	case "unschedule":
+		// 删除定时任务
+		return c.unschedule(params)
+
+	case "list_schedules":
+		// 列出所有定时任务
+		return c.listSchedules()
+
+	case "enable_schedule":
+		// 启用定时任务
+		return c.enableSchedule(params)
+
+	case "disable_schedule":
+		// 禁用定时任务
+		return c.disableSchedule(params)
 
 	default:
 		return nil, fmt.Errorf("unknown operation: %s", operation)
@@ -355,4 +382,152 @@ func fieldToString(field []int) string {
 		strs[i] = strconv.Itoa(v)
 	}
 	return strings.Join(strs, ",")
+}
+
+// --- Scheduled task management operations ---
+
+// schedule registers a new scheduled task via the reactor's CronScheduler.
+func (c *Cron) schedule(params map[string]any) (map[string]any, error) {
+	if c.accessor == nil {
+		return nil, fmt.Errorf("scheduler not available: accessor not configured")
+	}
+
+	scheduler := c.accessor.Scheduler()
+	if scheduler == nil {
+		return nil, fmt.Errorf("scheduler not configured. Use reactor.WithScheduler() to enable scheduled tasks")
+	}
+
+	name, _ := params["name"].(string)
+	expression, ok := params["expression"].(string)
+	if !ok || expression == "" {
+		return nil, fmt.Errorf("missing or invalid 'expression' parameter")
+	}
+	prompt, ok := params["prompt"].(string)
+	if !ok || prompt == "" {
+		return nil, fmt.Errorf("missing or invalid 'prompt' parameter")
+	}
+
+	if name == "" {
+		name = fmt.Sprintf("schedule_%d", time.Now().Unix())
+	}
+
+	id, err := scheduler.Schedule(name, expression, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	task := scheduler.Get(id)
+	return map[string]any{
+		"id":         id,
+		"name":       name,
+		"expression": expression,
+		"prompt":     prompt,
+		"next_run":   task.NextRunAt.Format(time.RFC3339),
+		"enabled":    true,
+	}, nil
+}
+
+// unschedule removes a scheduled task by ID.
+func (c *Cron) unschedule(params map[string]any) (map[string]any, error) {
+	if c.accessor == nil {
+		return nil, fmt.Errorf("scheduler not available: accessor not configured")
+	}
+
+	scheduler := c.accessor.Scheduler()
+	if scheduler == nil {
+		return nil, fmt.Errorf("scheduler not configured")
+	}
+
+	id, ok := params["schedule_id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("missing or invalid 'schedule_id' parameter")
+	}
+
+	removed := scheduler.Unschedule(id)
+	if !removed {
+		return map[string]any{"removed": false, "id": id}, nil
+	}
+
+	return map[string]any{"removed": true, "id": id}, nil
+}
+
+// listSchedules returns all scheduled tasks.
+func (c *Cron) listSchedules() (map[string]any, error) {
+	if c.accessor == nil {
+		return nil, fmt.Errorf("scheduler not available: accessor not configured")
+	}
+
+	scheduler := c.accessor.Scheduler()
+	if scheduler == nil {
+		return map[string]any{"tasks": []any{}, "count": 0}, nil
+	}
+
+	tasks := scheduler.List()
+	items := make([]map[string]any, 0, len(tasks))
+	for _, t := range tasks {
+		item := map[string]any{
+			"id":        t.ID,
+			"name":      t.Name,
+			"expression": t.Expression,
+			"prompt":    t.Prompt,
+			"enabled":   t.Enabled,
+			"run_count": t.RunCount,
+		}
+		if !t.NextRunAt.IsZero() {
+			item["next_run"] = t.NextRunAt.Format(time.RFC3339)
+		}
+		if !t.LastRunAt.IsZero() {
+			item["last_run"] = t.LastRunAt.Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+
+	return map[string]any{
+		"tasks": items,
+		"count": len(items),
+	}, nil
+}
+
+// enableSchedule enables a scheduled task.
+func (c *Cron) enableSchedule(params map[string]any) (map[string]any, error) {
+	if c.accessor == nil {
+		return nil, fmt.Errorf("scheduler not available: accessor not configured")
+	}
+
+	scheduler := c.accessor.Scheduler()
+	if scheduler == nil {
+		return nil, fmt.Errorf("scheduler not configured")
+	}
+
+	id, ok := params["schedule_id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("missing or invalid 'schedule_id' parameter")
+	}
+
+	if err := scheduler.Enable(id); err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "enabled": true}, nil
+}
+
+// disableSchedule disables a scheduled task.
+func (c *Cron) disableSchedule(params map[string]any) (map[string]any, error) {
+	if c.accessor == nil {
+		return nil, fmt.Errorf("scheduler not available: accessor not configured")
+	}
+
+	scheduler := c.accessor.Scheduler()
+	if scheduler == nil {
+		return nil, fmt.Errorf("scheduler not configured")
+	}
+
+	id, ok := params["schedule_id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("missing or invalid 'schedule_id' parameter")
+	}
+
+	if err := scheduler.Disable(id); err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "enabled": false}, nil
 }

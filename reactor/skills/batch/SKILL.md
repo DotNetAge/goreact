@@ -18,6 +18,7 @@ You are orchestrating a large, parallelizable change across this codebase.
 
 ## Phase 2: Spawn Workers
 Spawn one independent SubAgent per work unit using the 'subagent' tool. Each SubAgent runs asynchronously in a background goroutine with its own timeout (default 5 minutes, configurable via timeout_seconds parameter). You can optionally provide a custom system_prompt and model for each worker.
+Name each SubAgent using the @{name} format (e.g., @worker-1, @worker-2) for clear identification in skills and prompts.
 You can spawn multiple 'subagent' calls across multiple Think-Act cycles. Each spawn returns immediately with a task ID.
 For each SubAgent, the prompt must be fully self-contained including the specific task and codebase conventions.
 

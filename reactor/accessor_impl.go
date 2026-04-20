@@ -55,17 +55,70 @@ func (r *Reactor) RemovePendingTask(taskID string) {
 // RunSubAgent spawns an independent agent asynchronously in a goroutine.
 // It creates a sub-reactor with the specified system prompt and model,
 // executes the task, and sends the result to resultCh.
+//
+// If the parent reactor has IsLocal=true (indicating a local model that cannot
+// handle concurrent requests), the subagent runs synchronously instead of in a
+// goroutine, unless the subagent specifies a different model.
 func (r *Reactor) RunSubAgent(ctx context.Context, taskID string, systemPrompt, prompt string, model string, resultCh chan<- any) {
-	go func() {
-		// Build sub-reactor config inheriting parent's settings with overrides
-		subConfig := r.config
-		if model != "" {
-			subConfig.Model = model
-		}
-		if systemPrompt != "" {
-			subConfig.SystemPrompt = systemPrompt
-		}
+	// Determine if this subagent should run synchronously.
+	// Synchronous when: parent IsLocal=true AND no model override (or same model).
+	forceSync := r.config.IsLocal && (model == "" || model == r.config.Model)
 
+	// Build sub-reactor config inheriting parent's settings with overrides
+	subConfig := r.config
+	if model != "" {
+		subConfig.Model = model
+		// If a different model is specified, the subagent may support concurrency
+		if model != r.config.Model {
+			forceSync = false
+		}
+	}
+	if systemPrompt != "" {
+		subConfig.SystemPrompt = systemPrompt
+	}
+
+	if forceSync {
+		// Synchronous execution: run inline and send result directly
+		r.runSubAgentSync(ctx, taskID, subConfig, prompt, resultCh)
+	} else {
+		// Asynchronous execution: run in a goroutine
+		r.runSubAgentAsync(ctx, taskID, subConfig, prompt, resultCh)
+	}
+}
+
+// runSubAgentSync runs a subagent synchronously (blocking the caller).
+// Used when the parent reactor uses a local model (IsLocal=true).
+func (r *Reactor) runSubAgentSync(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
+	// Create a dedicated sub-reactor for this task
+	subReactor := NewReactor(subConfig,
+		WithMemory(r.memory),
+		WithMessageBus(r.messageBus),
+		WithEventBus(r.eventBus),
+	)
+
+	tm := r.taskManager
+	result, runErr := subReactor.Run(ctx, prompt, nil)
+
+	if runErr != nil {
+		_ = tm.UpdateTaskStatus(taskID, core.TaskStatusFailed, "", runErr.Error())
+		select {
+		case resultCh <- runErr.Error():
+		default:
+		}
+	} else {
+		_ = tm.UpdateTaskStatus(taskID, core.TaskStatusCompleted, result.Answer, "")
+		select {
+		case resultCh <- result.Answer:
+		default:
+		}
+	}
+
+	r.RemovePendingTask(taskID)
+}
+
+// runSubAgentAsync runs a subagent asynchronously in a goroutine.
+func (r *Reactor) runSubAgentAsync(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
+	go func() {
 		// Create a dedicated sub-reactor for this task
 		subReactor := NewReactor(subConfig,
 			WithMemory(r.memory),
@@ -73,7 +126,6 @@ func (r *Reactor) RunSubAgent(ctx context.Context, taskID string, systemPrompt, 
 			WithEventBus(r.eventBus),
 		)
 
-		// Update task status to completed when done (deferred)
 		tm := r.taskManager
 		result, runErr := subReactor.Run(ctx, prompt, nil)
 
@@ -91,7 +143,6 @@ func (r *Reactor) RunSubAgent(ctx context.Context, taskID string, systemPrompt, 
 			}
 		}
 
-		// Clean up pending task registration
 		r.RemovePendingTask(taskID)
 	}()
 }
@@ -118,6 +169,7 @@ func (r *Reactor) Config() tools.ReactorConfig {
 		MaxTokens:     r.config.MaxTokens,
 		MaxIterations: r.config.MaxIterations,
 		ClientType:    r.config.ClientType,
+		IsLocal:       r.config.IsLocal,
 	}
 }
 
