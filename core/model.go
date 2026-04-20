@@ -9,6 +9,7 @@ type ModelConfig struct {
 	APIKey      string `json:"api_key" yaml:"api_key"`         // API密钥
 	AuthToken   string `json:"auth_token" yaml:"auth_token"`   // 认证令牌
 	MaxTokens   int64  `json:"max_tokens" yaml:"max_tokens"`   // 最大token数
+	IsLocal     bool   `json:"is_local" yaml:"is_local"`       // 是否本地模型
 }
 
 func (m *ModelConfig) Config() *core.Config {

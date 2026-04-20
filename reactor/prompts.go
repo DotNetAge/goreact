@@ -47,6 +47,11 @@ var thinkPromptTemplate = template.Must(
 	template.New("think_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/think_prompt.tmpl"),
 )
 
+// defaultSystemPromptTemplate is parsed once at init from the embedded .tmpl file.
+var defaultSystemPromptTemplate = template.Must(
+	template.New("default_system_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/default_system_prompt.tmpl"),
+)
+
 // intentPromptData holds template variables for the intent classification prompt.
 type intentPromptData struct {
 	IntentTypes string
@@ -61,6 +66,13 @@ type thinkPromptData struct {
 	Skills        []*core.Skill
 	MemorySection string // relevant memory records for hallucination suppression
 	Input         string
+}
+
+// systemPromptData holds template variables for the default agent system prompt.
+type systemPromptData struct {
+	Name        string
+	Domain      string
+	Description string
 }
 
 // renderIntentPrompt renders the intent prompt using the embedded Go template.
@@ -84,6 +96,24 @@ func renderThinkPrompt(data thinkPromptData) (string, error) {
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
+// It accepts the agent's name, domain, and description as template variables.
+func RenderDefaultSystemPrompt(name, domain, description string) (string, error) {
+	t := defaultSystemPromptTemplate.Lookup("prompts/default_system_prompt.tmpl")
+	if t == nil {
+		return "", template.ExecError{Name: "prompts/default_system_prompt.tmpl", Err: nil}
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, systemPromptData{
+		Name:        name,
+		Domain:      domain,
+		Description: description,
+	}); err != nil {
 		return "", err
 	}
 	return buf.String(), nil

@@ -16,7 +16,7 @@
 
 ## GoReAct 是什么
 
-GoReAct 是一个用纯 Go 实现的 AI Agent 框架，核心采用 **T-A-O (Think-Act-Observe)** 循环模式驱动 LLM 进行推理与行动。它的设计目标是帮助开发人员**专注于 Tools 与 Skills 的开发与运用**，内核机制与性能由 GoReAct 负责，保证以最少量的 Token 收获最大的价值。开发人员在垂直领域中提供各种不同的 Tools 和 Skills，才能让 AI Agent 在垂直领域中创造最大的价值。
+GoReAct 是一个用纯 Go 实现的 AI Agent 框架，核心采用 **T-A-O (Think-Act-Observe)** 循环模式驱动 LLM 进行推理与行动。它的设计目标是帮助开发人员**专注于 Tools 与 Skills 的开发与运用**，内核机制与性能由 GoReAct 负责，保证以最少量的 Token 收获最大的价值。
 
 ### 核心特性
 
@@ -30,17 +30,15 @@ GoReAct 是一个用纯 Go 实现的 AI Agent 框架，核心采用 **T-A-O (Thi
 
 **三层上下文防御**：Layer 1 工具结果截断与持久化 → Layer 2 大结果溢写到磁盘 → Layer 3 上下文压缩/摘要。防止上下文爆炸。
 
-**多 Agent 团队协作**：支持创建团队、异步派发 SubAgent、Channel 式消息通信、结果收集与综合。每个 SubAgent 可拥有独立的 SystemPrompt 和 Model。
+**多 Agent 团队协作**：支持创建团队、异步派发 SubAgent、Channel 式消息通信、结果收集与综合。
 
-**中断-恢复交互模式**：`ask_user` 工具支持多轮对话澄清（Think 阶段发现问题暂停 → 用户回答 → 恢复执行），`ask_permission` 工具支持高风险工具授权（执行前暂停 → 用户审批 → 继续或拒绝）。
+**中断-恢复交互模式**：`ask_user` 工具支持多轮对话澄清，`ask_permission` 工具支持高风险工具授权。
 
-**事件总线**：完整的 ReactEvent 事件流（ThinkingDelta、ActionStart、ActionResult、SubtaskSpawned、ExecutionSummary 等），支持客户端实时渲染。
+**事件总线**：完整的 ReactEvent 事件流（ThinkingDelta、ActionStart、ActionResult、ExecutionSummary 等），支持客户端实时渲染。
 
-**渐进式 Skill 加载**：YAML Frontmatter + Markdown Body 的 SKILL.md 格式，支持文件系统目录加载和 Go embed 内置加载。三级渐进披露：元数据（启动时）→ 指令（激活时）→ 资源（按需加载）。
+**渐进式 Skill 加载**：YAML Frontmatter + Markdown Body 的 SKILL.md 格式，支持文件系统目录加载和 Go embed 内置加载。
 
-**MCP 协议支持**：通过 `MCPClient` 接口接入外部 MCP 服务器，将 MCP 工具自动转换为标准 `FuncTool` 注册到 Reactor。
-
-**Prompt 模板化**：所有内置 Prompt 使用 Go Template（embed.FS）实现，支持独立编辑和运行时渲染。
+**MCP 协议支持**：通过 MCP 接口接入外部 MCP 服务器，将 MCP 工具自动转换为标准 FuncTool 注册。
 
 ---
 
@@ -54,7 +52,7 @@ go get github.com/DotNetAge/goreact
 
 ### 入口说明
 
-`goreact.Agent` 是面向用户的**一级入口**，封装了 Reactor（T-A-O 引擎）、Memory、Model 和 ContextWindow，一行代码即可创建一个完整的智能体。`reactor.Reactor` 是底层推理引擎，通常不需要直接使用，仅在需要深度定制 T-A-O 循环行为时才直接操作。
+`goreact.Agent` 是面向开发者的**唯一入口**。Agent 内部自动构造 Reactor（T-A-O 引擎）和所有子系统，开发者通过 `WithXXX` Option 注入配置，不需要了解 Reactor 的存在。
 
 ### 5 分钟 Hello World
 
@@ -63,112 +61,231 @@ package main
 
 import (
     "fmt"
-
     "github.com/DotNetAge/goreact"
 )
 
 func main() {
-    // 1. 创建 Agent（只需一个 API Key）
+    // 一行创建 Agent，只需 API Key
     agent := goreact.DefaultAgent("your-api-key")
 
-    // 2. 提问，自动管理会话上下文
-    answer, err := agent.Ask("你好，请介绍一下你自己")
+    // 提问，返回 Result（含答案、Token 消耗、步数、耗时）
+    result, err := agent.Ask("你好，请介绍一下你自己")
     if err != nil {
         panic(err)
     }
 
-    fmt.Println("Answer:", answer)
+    fmt.Println("Answer:", result.Answer)
+    fmt.Println("Tokens:", result.Tokens)
+    fmt.Println("Steps:", result.Steps)
+    fmt.Println("Duration:", result.Duration)
+}
+```
+
+### 自定义 Agent（WithConfig + WithModel）
+
+Agent 的多样性由两个核心实体定义：`AgentConfig`（身份与领域）和 `ModelConfig`（LLM 后端）。
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/DotNetAge/goreact"
+    "github.com/DotNetAge/goreact/core"
+)
+
+func main() {
+    // 定义 Agent 身份
+    config := &core.AgentConfig{
+        Name:        "code-reviewer",
+        Domain:      "software-engineering",
+        Description: "A senior code review assistant",
+        SystemPrompt: "You are a senior software engineer who reviews code with rigor.",
+    }
+
+    // 定义 LLM 后端
+    model := &core.ModelConfig{
+        Name:      "gpt-4o",
+        APIKey:    "your-api-key",
+        BaseURL:   "https://api.openai.com/v1",
+        MaxTokens: 16384,
+    }
+
+    // 一行创建
+    agent := goreact.NewAgent(
+        goreact.WithConfig(config),
+        goreact.WithModel(model),
+    )
+
+    result, _ := agent.Ask("Review this Go function for potential bugs")
+    fmt.Println(result.Answer)
+    fmt.Println("Tokens used:", result.Tokens)
 }
 ```
 
 ### 带记忆的多轮对话
 
-`DefaultAgent` 已内置 InMemory 记忆和会话管理，支持自动上下文管理和记忆检索：
+通过 `WithMemory` 注入记忆体，`WithSession` 启用会话管理：
 
 ```go
 package main
 
 import (
     "fmt"
-
     "github.com/DotNetAge/goreact"
+    "github.com/DotNetAge/goreact/core"
+)
+
+func main() {
+    // Memory 由外部实现（RAG、向量数据库等），nil 表示不启用记忆
+    // agent := goreact.NewAgent(
+    //     goreact.WithModel(goreact.DefaultModel()),
+    //     goreact.WithMemory(yourMemory),  // 注入你的 Memory 实现
+    //     goreact.WithSession("my-session", 8192),
+    // )
+
+    // DefaultAgent 已内置会话管理，直接使用即可
+    agent := goreact.DefaultAgent("your-api-key")
+
+    // 第一轮
+    agent.Ask("记住：我最喜欢的编程语言是 Go")
+
+    // 第二轮：会话上下文自动管理
+    result, _ := agent.Ask("我最喜欢什么编程语言？")
+    fmt.Println(result.Answer)
+
+    // 查看 Agent 信息
+    fmt.Println("Name:", agent.Name())
+    fmt.Println("Session:", agent.SessionID())
+
+    // 查看已注册的工具和技能
+    tools := agent.Tools()
+    fmt.Printf("Registered tools: %d\n", len(tools))
+    skills := agent.Skills()
+    fmt.Printf("Loaded skills: %d\n", len(skills))
+}
+```
+
+> 注意：`DefaultAgent` 已内置会话管理，不需要额外传 `WithSession`。上面的示例展示了显式配置的方式。
+
+### 流式输出 + 事件监听
+
+`AskStream` 流式输出文本，`Events` 接收结构化事件流：
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/DotNetAge/goreact"
+    "github.com/DotNetAge/goreact/core"
 )
 
 func main() {
     agent := goreact.DefaultAgent("your-api-key")
 
-    // 第一轮：告诉 Agent 一件事
-    agent.Ask("记住：我最喜欢的编程语言是 Go")
+    // 订阅事件流（在 Ask 之前调用）
+    events, cancel := agent.Events()
+    defer cancel()
 
-    // 第二轮：Agent 会自动检索记忆来回答
-    answer, _ := agent.Ask("我最喜欢什么编程语言？")
-    fmt.Println(answer) // "Go"
+    // 后台监听事件
+    go func() {
+        for event := range events {
+            switch event.Type {
+            case core.ThinkingDelta:
+                // 思维片段（流式）
+                fmt.Print(event.Data)
+            case core.ActionStart:
+                data := event.Data.(core.ActionStartData)
+                fmt.Printf("\n[Tool: %s]\n", data.ToolName)
+            case core.ExecutionSummary:
+                data := event.Data.(core.ExecutionSummaryData)
+                fmt.Printf("\n=== Summary: %d iterations, %d tokens ===\n",
+                    data.TotalIterations, data.TokensUsed)
+            }
+        }
+    }()
 
-    // 查看 Agent 信息
-    fmt.Println("Name:", agent.Name())
-    fmt.Println("Session:", agent.SessionID())
+    // 流式输出
+    stream, streamCancel, _ := agent.AskStream("帮我写一个 Go 的 HTTP server")
+    defer streamCancel()
+    for text := range stream {
+        fmt.Print(text)
+    }
+
+    // 也可以用 Ask 获取完整结果
+    result, _ := agent.Ask("你好")
+    fmt.Printf("\nAnswer: %s\nTokens: %d\n", result.Answer, result.Tokens)
 }
 ```
 
-### 自定义 Agent
+---
 
-当 `DefaultAgent` 不够用时，可以通过 `NewAgent` 精确控制每个组件：
+## Agent 完整 API
 
-```go
-package main
+### 构造
 
-import (
-    "fmt"
+| 方法 | 说明 |
+|------|------|
+| `goreact.DefaultAgent(apiKey)` | 一行创建，默认配置 |
+| `goreact.NewAgent(opts...)` | 通过 Option 精确配置 |
+| `goreact.DefaultModel()` | 预设模型（qwen3.5-flash） |
+| `goreact.DefaultConfig()` | 预设 AgentConfig |
 
-    "github.com/DotNetAge/goreact"
-    "github.com/DotNetAge/goreact/core"
-    "github.com/DotNetAge/goreact/reactor"
-)
+### Option 清单
 
-func main() {
-    // 自定义模型配置
-    model := &core.ModelConfig{
-        Name:      "gpt-4o",
-        APIKey:    "your-api-key",
-        BaseURL:   "https://api.openai.com/v1",  // 或其他兼容 API
-        MaxTokens: 16384,
-    }
+| Option | 类型 | 说明 |
+|--------|------|------|
+| `WithConfig` | `*core.AgentConfig` | Agent 身份、领域、SystemPrompt |
+| `WithModel` | `*core.ModelConfig` | LLM 后端、API Key、BaseURL、MaxTokens |
+| `WithMemory` | `core.Memory` | 知识检索记忆体 |
+| `WithSession` | `(string, int64)` | 会话 ID 和 Token 预算 |
+| `WithExtraTools` | `...core.FuncTool` | 注入自定义工具 |
+| `WithoutBundledTools` | — | 禁用全部内置工具 |
+| `WithoutTool(name)` | `string` | 禁用指定工具 |
+| `WithSkillDir(dir)` | `string` | 加载外部 Skill 目录 |
+| `WithEventBus` | `reactor.EventBus` | 自定义事件总线 |
+| `WithSecurityPolicy` | `func(string, SecurityLevel) bool` | 工具执行安全策略 |
 
-    // 自定义记忆（可替换为 RAG 等外部实现）
-    memory := core.NewInMemoryMemory()
+### 对话
 
-    // 自定义 Reactor（深度定制 T-A-O 引擎）
-    r := reactor.NewReactor(
-        reactor.ReactorConfig{
-            APIKey:  model.APIKey,
-            Model:   model.Name,
-            BaseURL: model.BaseURL,
-        },
-        reactor.WithMemory(memory),
-        reactor.WithSecurityPolicy(yourPolicy),
-    )
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `Ask(question)` | `(*Result, error)` | 同步提问，返回完整结果 |
+| `AskStream(question)` | `(<-chan string, func(), error)` | 流式输出文本片段 |
 
-    // 组装 Agent
-    agent := goreact.NewAgentWithSession(
-        &core.AgentConfig{
-            Name:        "my-coder",
-            Domain:      "programming",
-            Description: "A coding assistant",
-        },
-        model,
-        memory,
-        r,
-        "session-001", // Session ID
-        16384,         // 上下文窗口 Token 上限
-    )
+### 结果查询
 
-    answer, err := agent.Ask("帮我写一个 Go 的 HTTP server")
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println(answer)
-}
-```
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `LastResult()` | `*Result` | 最近一次调用的结果（含 Tokens、Steps、Duration、ToolsUsed） |
+| `Events()` | `(<-chan ReactEvent, func())` | 订阅所有事件 |
+| `EventsFiltered(filter)` | `(<-chan ReactEvent, func())` | 按条件过滤事件 |
+
+### 只读查询
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `Tools()` | `[]core.ToolInfo` | 已注册工具列表（名称、描述、参数、安全级别） |
+| `Skills()` | `[]*core.Skill` | 已加载 Skill 列表 |
+| `Config()` | `*core.AgentConfig` | Agent 配置 |
+| `Model()` | `*core.ModelConfig` | 模型配置 |
+| `Name()` | `string` | Agent 名称 |
+| `Domain()` | `string` | 领域 |
+| `Memory()` | `core.Memory` | 记忆体实例 |
+| `SessionID()` | `string` | 当前会话 ID |
+
+### 会话管理
+
+| 方法 | 说明 |
+|------|------|
+| `NewSession(id, maxTokens)` | 开启新会话，丢弃旧上下文 |
+
+### 高级
+
+| 方法 | 说明 |
+|------|------|
+| `Reactor()` | 获取内部 Reactor 引用（高级场景，通常不需要） |
 
 ---
 
@@ -187,7 +304,6 @@ package main
 import (
     "context"
     "fmt"
-
     "github.com/DotNetAge/goreact/reactor"
 )
 
@@ -203,48 +319,6 @@ func main() {
         panic(err)
     }
     fmt.Println(result.Answer)
-}
-```
-
-### 流式输出 + 事件监听
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-
-    "github.com/DotNetAge/goreact/core"
-    "github.com/DotNetAge/goreact/reactor"
-)
-
-func main() {
-    bus := reactor.NewEventBus()
-    ch, cancel := bus.Subscribe()
-    defer cancel()
-
-    go func() {
-        for event := range ch {
-            switch event.Type {
-            case core.ThinkingDelta:
-                fmt.Print(event.Data)
-            case core.ActionStart:
-                data := event.Data.(core.ActionStartData)
-                fmt.Printf("\n[Tool: %s]\n", data.ToolName)
-            case core.ExecutionSummary:
-                data := event.Data.(core.ExecutionSummaryData)
-                fmt.Printf("\n=== Summary ===\nIterations: %d\nTokens: %d\nTools: %v\n",
-                    data.TotalIterations, data.TokensUsed, data.ToolsUsed)
-            }
-        }
-    }()
-
-    r := reactor.NewReactor(
-        reactor.ReactorConfig{APIKey: "key", Model: "qwen3.5-flash"},
-        reactor.WithEventBus(bus),
-    )
-    r.Run(context.Background(), "帮我写一个 Go 的 HTTP server", nil)
 }
 ```
 
@@ -296,14 +370,15 @@ func main() {
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                    Agent / CLI                    │
-│  (Ask / AskWithContext / ContextWindow)           │
+│                   Agent (门面)                     │
+│  Ask / AskStream / Events / Tools / Skills        │
+│  WithConfig / WithModel / WithMemory / ...        │
 └────────────────────┬─────────────────────────────┘
-                     │
+                     │ 内部自动构造
 ┌────────────────────▼─────────────────────────────┐
 │                  Reactor (T-A-O)                  │
 │                                                    │
-│  Run(ctx, input, history)                         │
+│  Run(ctx, input, history) → RunResult             │
 │    ├─ Phase 1: classifyIntent (意图分类)           │
 │    ├─ Phase 2: T-A-O Loop                         │
 │    │    ├─ Think (LLM推理 + Memory检索 + Skill匹配) │
@@ -322,40 +397,6 @@ func main() {
 │  │(事件流)   │  │(团队通信) │ │  (外部工具协议)    │ │
 │  └──────────┘  └──────────┘  └──────────────────┘ │
 └──────────────────────────────────────────────────┘
-```
-
----
-
-## 配置选项
-
-GoReAct 通过 `ReactorOption` 函数式选项进行配置：
-
-```go
-r := reactor.NewReactor(config,
-    // 记忆系统
-    reactor.WithMemory(yourMemory),
-
-    // 上下文防御
-    reactor.WithCompactor(yourCompactor),           // LLM 摘要压缩
-    reactor.WithCompactorConfig(yourConfig),        // 压缩阈值
-    reactor.WithResultStorage(yourStorage),          // 大结果溢写到磁盘
-    reactor.WithTokenEstimator(yourEstimator),       // 自定义 Token 估算
-
-    // 安全
-    reactor.WithSecurityPolicy(yourPolicy),          // 安全策略
-    reactor.WithoutTool("bash"),                     // 禁用特定工具
-    reactor.WithoutBundledTools(),                   // 禁用全部内置工具
-
-    // 事件与通信
-    reactor.WithEventBus(yourBus),                   // 自定义事件总线
-    reactor.WithMessageBus(yourMsgBus),              // 团队消息总线
-
-    // 扩展
-    reactor.WithExtraTools(customTool),              // 注册自定义工具
-    reactor.WithSkillDir("/path/to/skills"),         // 外部 Skill 目录
-    reactor.WithoutBundledSkills(),                  // 禁用内置 Skill
-    reactor.WithMCPRegistry(yourMCPRegistry),         // MCP 工具注册
-)
 ```
 
 ---

@@ -15,15 +15,12 @@ import (
 
 func testConfig(t *testing.T) ReactorConfig {
 	t.Helper()
-	cfg := DefaultReactorConfig()
-
-	// 如果没有设置真实的 API Key，可以在这里处理。如果是 CI 环境可以跳过
-	// 但为了简单，我们还是保留原配置结构
-	cfg.APIKey = "DASHSCOPE_API_KEY"
-	cfg.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-	cfg.Model = "qwen3.5-flash"
-	cfg.ClientType = gochat.QwenClient
-	return cfg
+	return ReactorConfig{
+		APIKey:     "DASHSCOPE_API_KEY",
+		BaseURL:    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		Model:      "qwen3.5-flash",
+		ClientType: gochat.QwenClient,
+	}
 }
 
 // newTestReactor creates a reactor pre-loaded with all built-in tools.

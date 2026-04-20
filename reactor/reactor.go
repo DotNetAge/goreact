@@ -32,31 +32,17 @@ type ReactorConfig struct {
 	MaxIterations int
 }
 
-// DefaultReactorConfig returns a config with sensible defaults.
-// APIKey must be set before use.
-func DefaultReactorConfig() ReactorConfig {
-	return ReactorConfig{
-		Model:         core.DefaultModel,
-		ClientType:    gochat.OpenAIClient,
-		Temperature:   core.DefaultTemperature,
-		MaxTokens:     core.DefaultMaxTokens,
-		MaxIterations: core.DefaultMaxSteps,
-		SystemPrompt: "You are a helpful AI assistant powered by a T-A-O (Think-Act-Observe) agent system. " +
-			"你是一个由 T-A-O（思考-行动-观察）智能体系统驱动的 AI 助手。",
-	}
-}
-
 // RunResult holds the complete output of a Run invocation.
 type RunResult struct {
-	Answer                string  `json:"answer" yaml:"answer"`
-	Intent                *Intent `json:"intent,omitempty" yaml:"intent,omitempty"`
-	Steps                 []Step  `json:"steps,omitempty" yaml:"steps,omitempty"`
-	TotalIterations       int     `json:"total_iterations" yaml:"total_iterations"`
-	TerminationReason     string  `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
-	Confidence            float64 `json:"confidence" yaml:"confidence"`
-	ClarificationNeeded   bool    `json:"clarification_needed" yaml:"clarification_needed"`
-	ClarificationQuestion string  `json:"clarification_question,omitempty" yaml:"clarification_question,omitempty"`
-	TokensUsed            int     `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
+	Answer                string        `json:"answer" yaml:"answer"`
+	Intent                *Intent       `json:"intent,omitempty" yaml:"intent,omitempty"`
+	Steps                 []Step        `json:"steps,omitempty" yaml:"steps,omitempty"`
+	TotalIterations       int           `json:"total_iterations" yaml:"total_iterations"`
+	TerminationReason     string        `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
+	Confidence            float64       `json:"confidence" yaml:"confidence"`
+	ClarificationNeeded   bool          `json:"clarification_needed" yaml:"clarification_needed"`
+	ClarificationQuestion string        `json:"clarification_question,omitempty" yaml:"clarification_question,omitempty"`
+	TokensUsed            int           `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
 	TotalDuration         time.Duration `json:"total_duration_ms,omitempty" yaml:"total_duration_ms,omitempty"`
 }
 
@@ -152,32 +138,33 @@ func (r *Reactor) SetAskPermission(p *tools.AskPermission) {
 }
 
 // registerPendingTask adds a pending subagent task to this reactor instance.
-func (r *Reactor) registerPendingTask(taskID string, ch chan any) {
-	r.pendingTasksMu.Lock()
-	defer r.pendingTasksMu.Unlock()
-	if r.pendingTasks == nil {
-		r.pendingTasks = make(map[string]chan any)
-	}
-	r.pendingTasks[taskID] = ch
-}
+// func (r *Reactor) registerPendingTask(taskID string, ch chan any) {
+// 	r.pendingTasksMu.Lock()
+// 	defer r.pendingTasksMu.Unlock()
+// 	if r.pendingTasks == nil {
+// 		r.pendingTasks = make(map[string]chan any)
+// 	}
+// 	r.pendingTasks[taskID] = ch
+// }
 
 // getPendingTask retrieves the channel for a pending subagent task.
-func (r *Reactor) getPendingTask(taskID string) (chan any, bool) {
-	r.pendingTasksMu.RLock()
-	defer r.pendingTasksMu.RUnlock()
-	ch, ok := r.pendingTasks[taskID]
-	return ch, ok
-}
+// func (r *Reactor) getPendingTask(taskID string) (chan any, bool) {
+// 	r.pendingTasksMu.RLock()
+// 	defer r.pendingTasksMu.RUnlock()
+// 	ch, ok := r.pendingTasks[taskID]
+// 	return ch, ok
+// }
 
 // removePendingTask removes a completed pending task.
-func (r *Reactor) removePendingTask(taskID string) {
-	r.pendingTasksMu.Lock()
-	defer r.pendingTasksMu.Unlock()
-	delete(r.pendingTasks, taskID)
-}
+// func (r *Reactor) removePendingTask(taskID string) {
+// 	r.pendingTasksMu.Lock()
+// 	defer r.pendingTasksMu.Unlock()
+// 	delete(r.pendingTasks, taskID)
+// }
 
 // reactorSetup holds options applied before tool registration.
 type reactorSetup struct {
+	systemPrompt      string
 	skipTools         map[string]bool
 	skipAllBundled    bool
 	extraTools        []core.FuncTool
@@ -321,6 +308,12 @@ func WithMemory(mem core.Memory) ReactorOption {
 	}
 }
 
+func WithSystemPrompt(prompt string) ReactorOption {
+	return func(rs *reactorSetup) {
+		rs.systemPrompt = prompt
+	}
+}
+
 // NewReactor creates a new Reactor with the given configuration and options.
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if config.MaxIterations <= 0 {
@@ -337,6 +330,11 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	setup := &reactorSetup{skipTools: make(map[string]bool)}
 	for _, opt := range opts {
 		opt(setup)
+	}
+
+	// Apply SystemPrompt from options (overrides ReactorConfig if set)
+	if setup.systemPrompt != "" {
+		config.SystemPrompt = setup.systemPrompt
 	}
 
 	r := &Reactor{
@@ -579,11 +577,17 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 		Temperature(r.config.Temperature).
 		MaxTokens(r.config.MaxTokens)
 
+	// Layer 1: Agent identity — always use r.config.SystemPrompt as the sole system message.
+	// This defines WHO the agent is (its persona, domain expertise, behavioral constraints).
 	if r.config.SystemPrompt != "" {
 		builder.SystemMessage(r.config.SystemPrompt)
 	}
+
+	// Layer 2: Phase instruction (Think/Intent) — prepend to user message.
+	// BuildThinkPrompt/BuildIntentPrompt returns structured instructions for the current
+	// T-A-O phase. These are NOT identity definitions, so they should NOT be system messages.
 	if systemPrompt != "" {
-		builder.SystemMessage(systemPrompt)
+		userMessage = systemPrompt + "\n\n" + userMessage
 	}
 
 	// Three-layer token budget allocation
@@ -671,7 +675,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 
 	// Discover applicable skills based on current context/intent
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
-	
+
 	// Retrieve relevant memory records for hallucination suppression
 	var memoryRecords []core.MemoryRecord
 	if r.memory != nil {
@@ -974,8 +978,8 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 
 		// Emit cycle end event
 		reactCtx.EmitEvent(core.CycleEnd, core.CycleInfo{
-			Iteration:        reactCtx.CurrentIteration + 1,
-			Duration:         time.Since(cycleStart),
+			Iteration: reactCtx.CurrentIteration + 1,
+			Duration:  time.Since(cycleStart),
 		})
 
 		// Feed back to conversation history to maintain context
