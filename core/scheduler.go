@@ -11,15 +11,15 @@ import (
 
 // ScheduledTask represents a cron-based scheduled task.
 type ScheduledTask struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Expression  string    `json:"expression"`  // cron expression
-	Prompt      string    `json:"prompt"`      // the prompt to send to the agent when triggered
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	NextRunAt   time.Time `json:"next_run_at,omitempty"`
-	LastRunAt   time.Time `json:"last_run_at,omitempty"`
-	RunCount    int       `json:"run_count"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Expression string    `json:"expression"` // cron expression
+	Prompt     string    `json:"prompt"`     // the prompt to send to the agent when triggered
+	Enabled    bool      `json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	NextRunAt  time.Time `json:"next_run_at,omitempty"`
+	LastRunAt  time.Time `json:"last_run_at,omitempty"`
+	RunCount   int       `json:"run_count"`
 }
 
 // TaskCallback is the function called when a scheduled task fires.
@@ -165,10 +165,21 @@ func (s *CronScheduler) Start(parentCtx context.Context) {
 		return // already started
 	}
 	s.ctx, s.cancel = context.WithCancel(parentCtx)
+	ctx := s.ctx
 	s.mu.Unlock()
 
-	s.wg.Add(1)
-	go s.runLoop()
+	s.wg.Go(func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.checkAndFire()
+			}
+		}
+	})
 }
 
 // Stop stops the scheduling loop and waits for it to finish.
@@ -217,23 +228,6 @@ func (s *CronScheduler) SetNextRunAt(id string, t time.Time) error {
 // It checks for due tasks and fires their callbacks immediately.
 func (s *CronScheduler) CheckAndFire() {
 	s.checkAndFire()
-}
-
-// runLoop checks for due tasks every 30 seconds.
-func (s *CronScheduler) runLoop() {
-	defer s.wg.Done()
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkAndFire()
-		}
-	}
 }
 
 // checkAndFire finds tasks whose NextRunAt has arrived, fires them, and advances NextRunAt.

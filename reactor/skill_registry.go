@@ -87,29 +87,45 @@ func (r *defaultSkillRegistry) FindApplicableSkills(context any) ([]*core.Skill,
 	return applicable, nil
 }
 
-// matchSkill checks if a skill is relevant to the given intent text.
-// It extracts keywords from the intent text and checks if they appear in the
-// skill's description or name. This ensures partial matches work correctly
-// (e.g., intent keyword "debug" matches skill description containing "debugging").
+// matchSkill checks if a skill is relevant to the given intent text using
+// a weighted scoring algorithm that reduces false positives:
+//   - Longer keyword matches score higher (more specific)
+//   - Requires minimum total score of 2.0 (e.g., two 3-char words, or one 6+ char word)
+//   - Exact skill-name substring match provides a strong bonus
 func matchSkill(skill *core.Skill, intentText string) bool {
 	skillText := strings.ToLower(skill.Name + " " + skill.Description)
+	skillName := strings.ToLower(skill.Name)
 
-	// Extract keywords from intent text
 	intentKeywords := extractKeywords(intentText)
 	if len(intentKeywords) == 0 {
 		return false
 	}
 
-	// Match if any significant intent keyword (>= 3 chars) appears in skill text
-	matched := 0
+	var totalScore float64
+
 	for _, word := range intentKeywords {
-		if len(word) >= 3 && strings.Contains(skillText, word) {
-			matched++
+		wordLen := len(word)
+		if wordLen < 3 || !strings.Contains(skillText, word) {
+			continue
+		}
+
+		switch {
+		case wordLen >= 7:
+			totalScore += 2.5 // very specific term
+		case wordLen >= 5:
+			totalScore += 1.5 // moderately specific
+		default:
+			totalScore += 1.0 // common term
 		}
 	}
 
-	// Require at least one keyword match
-	return matched >= 1
+	// Exact skill name substring in intent gives a big bonus
+	if len(skillName) >= 4 && strings.Contains(intentText, skillName) {
+		totalScore += 2.0
+	}
+
+	// Minimum score threshold: 2.0 points required
+	return totalScore >= 2.0
 }
 
 // extractKeywords splits text into lowercase words, filtering common stop words.

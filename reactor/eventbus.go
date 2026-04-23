@@ -95,7 +95,10 @@ func (b *InProcessEventBus) SubscribeFiltered(filter func(core.ReactEvent) bool)
 
 	unsubscribe := func() {
 		b.mu.Lock()
-		delete(b.subscribers, idStr(id))
+		if sub, exists := b.subscribers[idStr(id)]; exists {
+			delete(b.subscribers, idStr(id))
+			close(sub.ch)
+		}
 		b.mu.Unlock()
 	}
 

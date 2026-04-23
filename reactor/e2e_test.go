@@ -453,7 +453,7 @@ func TestE2E_PauseAndResume(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	clearSnapshotHolder()
+	r.clearSnapshot()
 
 	// Run in background
 	var runResult *RunResult
@@ -494,8 +494,8 @@ func TestE2E_PauseAndResume(t *testing.T) {
 	}
 	t.Logf("Paused after %d iterations: %s", runResult.TotalIterations, runResult.TerminationReason)
 
-	// Check that a snapshot was saved
-	snap := getSnapshot()
+	// Check that a snapshot was saved in this reactor instance
+	snap := r.getSnapshot()
 	if snap == nil {
 		t.Skip("Pause snapshot not captured in time (timing-sensitive test)")
 		return
@@ -541,7 +541,7 @@ func TestE2E_PauseAndResumeWithRedirect(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	clearSnapshotHolder()
+	r.clearSnapshot()
 
 	done := make(chan struct{})
 	go func() {
@@ -556,7 +556,7 @@ func TestE2E_PauseAndResumeWithRedirect(t *testing.T) {
 	cancel()
 	<-done
 
-	snap := getSnapshot()
+	snap := r.getSnapshot()
 	if snap == nil {
 		t.Skip("Pause snapshot not captured (timing-sensitive)")
 		return

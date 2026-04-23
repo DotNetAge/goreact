@@ -248,7 +248,7 @@ func WithScheduler(scheduler *core.CronScheduler) AgentOption {
 //
 //	agent := goreact.DefaultAgent("your-api-key")
 //	answer, err := agent.Ask("Hello, how are you?")
-func DefaultAgent(apiKey string) *Agent {
+func DefaultAgent(apiKey string) (*Agent, error) {
 	model := DefaultModel()
 	model.APIKey = apiKey
 
@@ -290,7 +290,7 @@ func DefaultAgent(apiKey string) *Agent {
 //	    goreact.WithSession("s1", 16384),
 //	    goreact.WithSecurityPolicy(policy),
 //	)
-func NewAgent(opts ...AgentOption) *Agent {
+func NewAgent(opts ...AgentOption) (*Agent, error) {
 	setup := &agentSetup{}
 	for _, opt := range opts {
 		opt(setup)
@@ -322,7 +322,7 @@ func NewAgent(opts ...AgentOption) *Agent {
 
 	// Validate required fields
 	if model.APIKey == "" {
-		panic("goreact: ModelConfig.APIKey is required, got empty. Use goreact.WithModel(model) where model.APIKey is set.")
+		return nil, fmt.Errorf("goreact: ModelConfig.APIKey is required, got empty. Use goreact.WithModel(model) where model.APIKey is set")
 	}
 
 	// Build reactor options — only forward options with real extension value
@@ -380,7 +380,7 @@ func NewAgent(opts ...AgentOption) *Agent {
 		a.contextWindow = core.NewContextWindow(setup.sessionID, maxTokens)
 	}
 
-	return a
+	return a, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -598,7 +598,7 @@ func (a *Agent) AskStreamWithContext(ctx context.Context, question string) (<-ch
 		}
 	}()
 
-	return textCh, func() { cancel(); ctx.Done() }, nil
+	return textCh, func() { cancel() }, nil
 }
 
 // ---------------------------------------------------------------------------

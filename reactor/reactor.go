@@ -122,6 +122,13 @@ type Reactor struct {
 	// context cancellation and saves a snapshot if true.
 	pauseRequested bool
 	pauseMu        sync.Mutex
+
+	// snapshotHolder stores the latest snapshot from a paused Run.
+	// Instance-scoped (not global) so multiple Reactor instances are safe for concurrent use.
+	snapshotHolder struct {
+		sync.RWMutex
+		snap *RunSnapshot
+	}
 }
 
 // EventBus returns the reactor's event bus for subscribing to agent events.
@@ -175,78 +182,46 @@ func (r *Reactor) TakeSnapshot() *RunSnapshot {
 	return nil // The actual snapshot is set by runTAOLoop when pause is detected
 }
 
-// snapshotHolder stores the latest snapshot from a paused Run.
-// This is a simple atomic-like mechanism since only one Run can be active at a time.
-var snapshotHolder struct {
-	sync.RWMutex
-	snap *RunSnapshot
+// setSnapshot stores a RunSnapshot in this reactor instance for later retrieval.
+func (r *Reactor) setSnapshot(snap *RunSnapshot) {
+	r.snapshotHolder.Lock()
+	defer r.snapshotHolder.Unlock()
+	r.snapshotHolder.snap = snap
 }
 
-// setSnapshot stores a RunSnapshot for later retrieval.
-func setSnapshot(snap *RunSnapshot) {
-	snapshotHolder.Lock()
-	defer snapshotHolder.Unlock()
-	snapshotHolder.snap = snap
-}
-
-// getSnapshot retrieves and consumes the stored RunSnapshot.
-func getSnapshot() *RunSnapshot {
-	snapshotHolder.Lock()
-	defer snapshotHolder.Unlock()
-	snap := snapshotHolder.snap
-	snapshotHolder.snap = nil
+// getSnapshot retrieves and consumes the stored RunSnapshot from this reactor instance.
+func (r *Reactor) getSnapshot() *RunSnapshot {
+	r.snapshotHolder.Lock()
+	defer r.snapshotHolder.Unlock()
+	snap := r.snapshotHolder.snap
+	r.snapshotHolder.snap = nil
 	return snap
 }
 
-// clearSnapshotHolder resets the global snapshot holder. Call in test cleanup.
-func clearSnapshotHolder() {
-	snapshotHolder.Lock()
-	defer snapshotHolder.Unlock()
-	snapshotHolder.snap = nil
+// clearSnapshot resets this reactor instance's snapshot holder.
+func (r *Reactor) clearSnapshot() {
+	r.snapshotHolder.Lock()
+	defer r.snapshotHolder.Unlock()
+	r.snapshotHolder.snap = nil
 }
 
 // ConsumeSnapshot retrieves and consumes the stored RunSnapshot.
 // This is the public API for Agent.Resume() to access the snapshot.
 func (r *Reactor) ConsumeSnapshot() *RunSnapshot {
-	return getSnapshot()
+	return r.getSnapshot()
 }
 
 // PeekSnapshot returns the stored RunSnapshot without consuming it.
 func (r *Reactor) PeekSnapshot() *RunSnapshot {
-	snapshotHolder.RLock()
-	defer snapshotHolder.RUnlock()
-	return snapshotHolder.snap
+	r.snapshotHolder.RLock()
+	defer r.snapshotHolder.RUnlock()
+	return r.snapshotHolder.snap
 }
 
 // SetAskPermission sets a custom AskPermission instance.
 func (r *Reactor) SetAskPermission(p *tools.AskPermission) {
 	r.askPermission = p
 }
-
-// registerPendingTask adds a pending subagent task to this reactor instance.
-// func (r *Reactor) registerPendingTask(taskID string, ch chan any) {
-// 	r.pendingTasksMu.Lock()
-// 	defer r.pendingTasksMu.Unlock()
-// 	if r.pendingTasks == nil {
-// 		r.pendingTasks = make(map[string]chan any)
-// 	}
-// 	r.pendingTasks[taskID] = ch
-// }
-
-// getPendingTask retrieves the channel for a pending subagent task.
-// func (r *Reactor) getPendingTask(taskID string) (chan any, bool) {
-// 	r.pendingTasksMu.RLock()
-// 	defer r.pendingTasksMu.RUnlock()
-// 	ch, ok := r.pendingTasks[taskID]
-// 	return ch, ok
-// }
-
-// removePendingTask removes a completed pending task.
-// func (r *Reactor) removePendingTask(taskID string) {
-// 	r.pendingTasksMu.Lock()
-// 	defer r.pendingTasksMu.Unlock()
-// 	delete(r.pendingTasks, taskID)
-// }
 
 // reactorSetup holds options applied before tool registration.
 type reactorSetup struct {
@@ -1248,7 +1223,7 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 	if paused {
 		snap := reactCtx.ToSnapshot()
 		snap.TerminationReason = "paused"
-		setSnapshot(snap)
+		r.setSnapshot(snap)
 	}
 
 	// Save experience to memory if the task completed successfully.

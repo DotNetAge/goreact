@@ -86,7 +86,7 @@ func SummaryMessage(originalCount int, compactedCount int, summary string) Messa
 // This is ClueCode's "microCompact" equivalent.
 func MicroCompact(messages []Message, estimateFn func(string) int, targetTokens int64) []Message {
 	if estimateFn == nil {
-		estimateFn = func(s string) int { return len(s) / 3 }
+		estimateFn = EstimateTokens
 	}
 	if len(messages) <= 2 {
 		return messages

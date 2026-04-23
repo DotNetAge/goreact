@@ -157,3 +157,82 @@ func TestExtractKeywords(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchSkill_ImprovedPrecision(t *testing.T) {
+	skills := []*core.Skill{
+		{
+			Name:        "bug-hunter",
+			Description: "Expert SOP for locating, isolating and fixing complex bugs. Use when debugging.",
+		},
+		{
+			Name:        "architect",
+			Description: "High-level orchestration for system design and major migrations.",
+		},
+		{
+			Name:        "simplify",
+			Description: "Simplifies complex code by reducing cognitive load and improving readability.",
+		},
+		{
+			Name:        "verify",
+			Description: "Verifies code correctness through systematic testing and validation.",
+		},
+	}
+
+	tests := []struct {
+		name           string
+		intentText     string
+		expectedMatch  string // empty = no match expected
+	}{
+		{
+			name:          "Strong match - multiple keywords",
+			intentText:    "debug this bug in my code",
+			expectedMatch: "bug-hunter",
+		},
+		{
+			name:          "Strong match - skill name substring",
+			intentText:    "I need to architect a new system",
+			expectedMatch: "architect",
+		},
+		{
+			name:          "Weak single keyword should NOT match (below threshold)",
+			intentText:    "fix the code",
+			expectedMatch: "",
+		},
+		{
+			name:          "Long specific word alone can match",
+			intentText:    "help me simplify this code module for readability",
+			expectedMatch: "simplify",
+		},
+		{
+			name:          "No relevant keywords",
+			intentText:    "hello world just chatting",
+			expectedMatch: "",
+		},
+		{
+			name:          "Two short words meet threshold",
+			intentText:    "verify code works correctly now",
+			expectedMatch: "verify",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var matched *core.Skill
+			for _, s := range skills {
+				if matchSkill(s, tt.intentText) {
+					matched = s
+					break
+				}
+			}
+			if tt.expectedMatch == "" {
+				if matched != nil {
+					t.Errorf("expected no match, got %q", matched.Name)
+				}
+			} else {
+				if matched == nil || matched.Name != tt.expectedMatch {
+					t.Errorf("expected match %q, got %v", tt.expectedMatch, matched)
+				}
+			}
+		})
+	}
+}
