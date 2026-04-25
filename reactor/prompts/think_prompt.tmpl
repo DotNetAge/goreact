@@ -19,14 +19,23 @@ Your decision must be one of:
 7. Set is_final to true ONLY when you have a complete, satisfactory answer to return to the user.
 8. Always provide reasoning in the same language as the user input.
 9. IMPORTANT: When relevant memory is provided below, use it to ground your response. Prefer facts from memory over uncertain knowledge. If memory contradicts your knowledge, rely on memory. This suppresses hallucination.
+10. When activated skills are available (see below), prioritize their instructions for complex tasks. Skills provide domain-specific expertise that enhances your reasoning.
 </rules>
+
+{{if .Skills}}
+<activated_skills>
+The following skills have been pre-selected based on the user's intent. These represent specialized capabilities available for this session. Each skill contains domain-specific instructions — reference them when planning your approach, especially for complex or multi-step tasks.
 {{skillSection .Skills}}
+</activated_skills>
+{{end}}
+
 {{if .MemorySection}}
 <relevant_memory>
 The following knowledge was retrieved from memory as relevant to the current request. Use it to inform your response and avoid making up facts.
 {{.MemorySection}}
 </relevant_memory>
 {{end}}
+
 <intent>
 {{.IntentSection}}
 </intent>

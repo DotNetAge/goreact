@@ -286,7 +286,7 @@ sequenceDiagram
 
     User->>REPL: 发送消息
     REPL->>Hook: useMergedTools(permissionCtx, mcpTools)
-    Hook->>Tools: assembleToolPool()
+    Hook->>Tools: assembleToolPool
     Tools-->>Hook: [内置工具 + MCP工具]
     Hook-->>REPL: mergedTools[]
     
