@@ -2,7 +2,66 @@ package core
 
 import (
 	"context"
+	"time"
 )
+
+// SecurityPolicy is a function that determines whether a tool execution is allowed.
+// It receives the tool name and its security level; return true to allow, false to block.
+//
+// Deprecated: Use SetPermissionChecker and AddHook instead for the full permission pipeline.
+type SecurityPolicy func(toolName string, level SecurityLevel) bool
+
+// ToolRegistryInterface defines the contract for tool lifecycle management.
+// This interface covers both tool operations and configuration methods,
+// enabling full replacement or selective enhancement via embedding.
+type ToolRegistryInterface interface {
+	// --- Core Operations ---
+
+	// Register adds a tool. Returns error if name already exists.
+	Register(tool FuncTool) error
+
+	// Get returns a tool by exact name match.
+	Get(name string) (FuncTool, bool)
+
+	// All returns all registered tools.
+	All() []FuncTool
+
+	// ToToolInfos extracts metadata from all tools for prompt building.
+	ToToolInfos() []ToolInfo
+
+	// GetWithSemantic finds a tool by name, falling back to memory-based
+	// semantic search if exact match fails.
+	GetWithSemantic(ctx context.Context, name string, intent string) (FuncTool, bool)
+
+	// ExecuteTool runs a tool with full permission pipeline support.
+	ExecuteTool(ctx context.Context, name string, params map[string]any) (string, time.Duration, error)
+
+	// --- Configuration Methods ---
+
+	// SetSecurityPolicy sets the legacy security policy (deprecated).
+	SetSecurityPolicy(policy SecurityPolicy)
+
+	// SetPermissionChecker sets the fine-grained permission checker.
+	SetPermissionChecker(checker ToolPermissionChecker)
+
+	// SetResultStorage configures result persistence for context defense.
+	SetResultStorage(storage ToolResultStorage)
+
+	// SetResultLimits configures per-result size limits.
+	SetResultLimits(limits ToolResultLimits)
+
+	// SetMemory injects Memory for reflexive semantic search.
+	SetMemory(mem Memory)
+
+	// AddHook registers a lifecycle hook (PreToolUse / PostToolUse).
+	AddHook(hook Hook)
+
+	// SetEventEmitter sets the callback for permission events.
+	SetEventEmitter(fn func(ReactEvent))
+
+	// ResetMessageCharCounter resets per-cycle char tracking.
+	ResetMessageCharCounter()
+}
 
 // FuncTool represents an executable tool
 type FuncTool interface {

@@ -57,8 +57,8 @@ type Agent struct {
 
 	// Interrupt state — protected by interruptMu
 	interruptMu sync.Mutex
-	cancelFunc  context.CancelFunc // cancels the current Run
-	isRunning   bool               // true while a Run is in progress
+	cancelFunc  context.CancelFunc   // cancels the current Run
+	isRunning   bool                 // true while a Run is in progress
 	snapshot    *reactor.RunSnapshot // saved state from Pause()
 }
 
@@ -107,7 +107,7 @@ type agentSetup struct {
 
 	// Event streaming & security
 	eventBus       reactor.EventBus
-	securityPolicy reactor.SecurityPolicy
+	securityPolicy core.SecurityPolicy
 
 	// Scheduler for cron-based scheduled tasks
 	scheduler *core.CronScheduler
@@ -211,7 +211,7 @@ func WithEventBus(bus reactor.EventBus) AgentOption {
 //	goreact.WithSecurityPolicy(func(name string, level core.SecurityLevel) bool {
 //	    return name != "bash" // block bash tool
 //	})
-func WithSecurityPolicy(policy reactor.SecurityPolicy) AgentOption {
+func WithSecurityPolicy(policy core.SecurityPolicy) AgentOption {
 	return func(s *agentSetup) {
 		s.securityPolicy = policy
 	}

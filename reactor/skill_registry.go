@@ -8,19 +8,33 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-type defaultSkillRegistry struct {
+// DefaultSkillRegistry implements core.SkillRegistry using keyword-based matching.
+type DefaultSkillRegistry struct {
 	mu     sync.RWMutex
 	skills map[string]*core.Skill
 }
 
-// NewSkillRegistry creates a new empty skill registry.
-func NewSkillRegistry() core.SkillRegistry {
-	return &defaultSkillRegistry{
+// SkillRegistry is an alias for DefaultSkillRegistry for backward compatibility.
+// Deprecated: Use DefaultSkillRegistry directly.
+type SkillRegistry = DefaultSkillRegistry
+
+// NewDefaultSkillRegistry creates a new empty skill registry.
+func NewDefaultSkillRegistry() core.SkillRegistry {
+	return &DefaultSkillRegistry{
 		skills: make(map[string]*core.Skill),
 	}
 }
 
-func (r *defaultSkillRegistry) RegisterSkill(skill *core.Skill) error {
+// NewSkillRegistry creates a new empty skill registry.
+// Deprecated: Use NewDefaultSkillRegistry instead.
+func NewSkillRegistry() core.SkillRegistry {
+	return NewDefaultSkillRegistry()
+}
+
+// Compile-time interface check
+var _ core.SkillRegistry = (*DefaultSkillRegistry)(nil)
+
+func (r *DefaultSkillRegistry) RegisterSkill(skill *core.Skill) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if skill == nil || skill.Name == "" {
@@ -30,7 +44,7 @@ func (r *defaultSkillRegistry) RegisterSkill(skill *core.Skill) error {
 	return nil
 }
 
-func (r *defaultSkillRegistry) GetSkill(name string) (*core.Skill, error) {
+func (r *DefaultSkillRegistry) GetSkill(name string) (*core.Skill, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	skill, ok := r.skills[name]
@@ -41,7 +55,7 @@ func (r *defaultSkillRegistry) GetSkill(name string) (*core.Skill, error) {
 }
 
 // ListSkills returns all registered skills. Returns a copy to avoid data races.
-func (r *defaultSkillRegistry) ListSkills() []*core.Skill {
+func (r *DefaultSkillRegistry) ListSkills() []*core.Skill {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make([]*core.Skill, 0, len(r.skills))
@@ -55,7 +69,7 @@ func (r *defaultSkillRegistry) ListSkills() []*core.Skill {
 // The matching is done by checking if any keyword from the skill's description or name
 // appears in the intent's type, topic, summary, or entity blob.
 // The context parameter should be a *reactor.Intent; other types are silently ignored.
-func (r *defaultSkillRegistry) FindApplicableSkills(context any) ([]*core.Skill, error) {
+func (r *DefaultSkillRegistry) FindApplicableSkills(context any) ([]*core.Skill, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

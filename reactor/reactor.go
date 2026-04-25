@@ -69,8 +69,8 @@ type ReActor interface {
 // Reactor is the standard T-A-O reactor implementation.
 type Reactor struct {
 	config         ReactorConfig
-	intentRegistry *IntentRegistry
-	toolRegistry   *ToolRegistry
+	intentRegistry IntentRegistry
+	toolRegistry   core.ToolRegistryInterface
 	skillRegistry  core.SkillRegistry
 	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder // pre-configured LLM client builder
@@ -229,7 +229,7 @@ type reactorSetup struct {
 	skipTools         map[string]bool
 	skipAllBundled    bool
 	extraTools        []core.FuncTool
-	securityPolicy    SecurityPolicy
+	securityPolicy    core.SecurityPolicy
 	resultStorage     core.ToolResultStorage
 	resultLimits      core.ToolResultLimits
 	compactor         core.ContextCompactor
@@ -242,7 +242,12 @@ type reactorSetup struct {
 	messageBus        *core.AgentMessageBus // Shared message bus for team communication
 	memory            core.Memory           // Optional: knowledge retrieval for hallucination suppression
 	mockLLM           func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
-	scheduler         *core.CronScheduler   // Optional: cron-based scheduled task management
+	scheduler         *core.CronScheduler // Optional: cron-based scheduled task management
+
+	// === Registry Injection (optional, nil = use default) ===
+	intentRegistry IntentRegistry             // Custom intent registry (e.g., LLM-based semantic matching)
+	toolRegistry   core.ToolRegistryInterface // Custom tool registry (e.g., MCP integration, dynamic discovery)
+	skillRegistry  core.SkillRegistry         // Custom skill registry (e.g., embedding-based semantic matching)
 }
 
 // ReactorOption configures a Reactor during creation.
@@ -274,7 +279,7 @@ func WithoutTool(name string) ReactorOption {
 
 // WithSecurityPolicy sets a custom security policy for tool execution.
 // The policy is called before executing a tool; return false to block execution.
-func WithSecurityPolicy(policy SecurityPolicy) ReactorOption {
+func WithSecurityPolicy(policy core.SecurityPolicy) ReactorOption {
 	return func(s *reactorSetup) {
 		s.securityPolicy = policy
 	}
@@ -411,6 +416,53 @@ func WithSystemPrompt(prompt string) ReactorOption {
 	}
 }
 
+// --- Registry Injection Options ---
+
+// WithIntentRegistry sets a custom IntentRegistry implementation.
+// Use this to provide LLM-based intent classification, custom intent types, etc.
+// If not set, DefaultIntentRegistry with built-in definitions is used automatically.
+//
+// Example: embedding-enhanced semantic intent matching:
+//
+//	type SemanticIntentRegistry struct {
+//	    *reactor.DefaultIntentRegistry
+//	    embedder *embedding.Client
+//	}
+//	func (s *SemanticIntentRegistry) FormatPromptSection() string { /* ... */ }
+//
+//	r := reactor.NewReactor(config, reactor.WithIntentRegistry(&SemanticIntentRegistry{...}))
+func WithIntentRegistry(reg IntentRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.intentRegistry = reg
+	}
+}
+
+// WithToolRegistry sets a custom ToolRegistry implementation.
+// Use this to add dynamic tool discovery, MCP integration, semantic filtering, etc.
+// If not set, DefaultToolRegistry is used automatically.
+//
+// Example: MCP-integrated tool registry that merges local + remote tools:
+//
+//	type MCPToolRegistry struct {
+//	    *reactor.DefaultToolRegistry
+//	    mcpClient *mcp.Client
+//	}
+//	func (m *MCPToolRegistry) ToToolInfos() []core.ToolInfo { /* merge local+remote */ }
+func WithToolRegistry(reg core.ToolRegistryInterface) ReactorOption {
+	return func(s *reactorSetup) {
+		s.toolRegistry = reg
+	}
+}
+
+// WithSkillRegistry sets a custom SkillRegistry implementation.
+// Use this to provide embedding-based semantic skill matching, etc.
+// If not set, DefaultSkillRegistry is used automatically.
+func WithSkillRegistry(reg core.SkillRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.skillRegistry = reg
+	}
+}
+
 // NewReactor creates a new Reactor with the given configuration and options.
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if config.MaxIterations <= 0 {
@@ -436,14 +488,28 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	r := &Reactor{
 		config:          config,
-		intentRegistry:  NewIntentRegistry(),
-		toolRegistry:    NewToolRegistry(),
-		skillRegistry:   NewSkillRegistry(),
 		taskManager:     core.NewInMemoryTaskManager(),
 		compactorConfig: core.DefaultCompactorConfig(),
 		tokenEstimator:  core.NewDefaultTokenEstimator(3.0),
 		memory:          setup.memory,
 		mockLLM:         setup.mockLLM,
+	}
+
+	// === Registry Initialization (use injected or create defaults) ===
+	if setup.intentRegistry != nil {
+		r.intentRegistry = setup.intentRegistry
+	} else {
+		r.intentRegistry = NewDefaultIntentRegistry()
+	}
+	if setup.toolRegistry != nil {
+		r.toolRegistry = setup.toolRegistry
+	} else {
+		r.toolRegistry = NewDefaultToolRegistry()
+	}
+	if setup.skillRegistry != nil {
+		r.skillRegistry = setup.skillRegistry
+	} else {
+		r.skillRegistry = NewDefaultSkillRegistry()
 	}
 
 	// Apply event bus (create default if not provided via option)
@@ -605,12 +671,12 @@ func (r *Reactor) SkillRegistry() core.SkillRegistry {
 }
 
 // IntentRegistry returns the reactor's intent registry for dynamic intent management.
-func (r *Reactor) IntentRegistry() *IntentRegistry {
+func (r *Reactor) IntentRegistry() IntentRegistry {
 	return r.intentRegistry
 }
 
 // ToolRegistry returns the reactor's tool registry for dynamic tool management.
-func (r *Reactor) ToolRegistry() *ToolRegistry {
+func (r *Reactor) ToolRegistry() core.ToolRegistryInterface {
 	return r.toolRegistry
 }
 
