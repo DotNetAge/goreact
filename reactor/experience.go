@@ -90,6 +90,11 @@ func (r *Reactor) saveExperience(ctx *ReactContext, result *RunResult) {
 
 	// Store asynchronously — don't block the Run return
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// non-fatal: experience storage panic should not crash the reactor
+			}
+		}()
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = r.memory.Store(bgCtx, record)
@@ -107,12 +112,12 @@ func (r *Reactor) saveExperience(ctx *ReactContext, result *RunResult) {
 func buildExperienceData(input string, history []Step, result *RunResult) *core.ExperienceData {
 	exp := &core.ExperienceData{
 		Problem:   input,
-		Answer:    truncateText(result.Answer, 500),
+		Answer:    truncate(result.Answer, 500),
 		TokenCost: result.TokensUsed,
 	}
 
 	// Collect unique tools, subagents, and build compact step summaries
-	seenTools := make(map[string]bool)
+	exp.Tools = collectUniqueToolNames(history)
 	var reasoningParts []string
 
 	for _, step := range history {
@@ -121,39 +126,28 @@ func buildExperienceData(input string, history []Step, result *RunResult) *core.
 			reasoningParts = append(reasoningParts, step.Thought.Reasoning)
 		}
 
-		// Collect tool calls and subagent spawns
-		if step.Action.Type == ActionTypeToolCall && step.Action.Target != "" {
-			if !seenTools[step.Action.Target] {
-				exp.Tools = append(exp.Tools, step.Action.Target)
-				seenTools[step.Action.Target] = true
+		// Track orchestration tools (task_create, subagent)
+		if step.Action.Type == ActionTypeToolCall && step.Action.Target != "" && orchestrationToolNames[step.Action.Target] {
+			sa := core.ExperienceSubAgent{
+				Tool:    step.Action.Target,
+				Success: step.Observation.Error == "",
 			}
-
-			// Track orchestration tools (task_create, subagent)
-			if orchestrationToolNames[step.Action.Target] {
-				sa := core.ExperienceSubAgent{
-					Tool:    step.Action.Target,
-					Success: step.Observation.Error == "",
+			if step.Action.Params != nil {
+				if name, ok := step.Action.Params["name"].(string); ok {
+					sa.Name = name
+				} else if desc, ok := step.Action.Params["description"].(string); ok {
+					sa.Name = desc
 				}
-				// Extract name from params
-				if step.Action.Params != nil {
-					if name, ok := step.Action.Params["name"].(string); ok {
-						sa.Name = name
-					} else if desc, ok := step.Action.Params["description"].(string); ok {
-						sa.Name = desc
-					}
-					// Extract prompt (truncated)
-					if prompt, ok := step.Action.Params["prompt"].(string); ok {
-						sa.Prompt = truncateText(prompt, 200)
-					}
+				if prompt, ok := step.Action.Params["prompt"].(string); ok {
+					sa.Prompt = truncate(prompt, 200)
 				}
-				// For subagent_result, infer name from task_id
-				if step.Action.Target == "subagent_result" && step.Action.Params != nil {
-					if taskID, ok := step.Action.Params["task_id"].(string); ok {
-						sa.Name = taskID
-					}
-				}
-				exp.SubAgents = append(exp.SubAgents, sa)
 			}
+			if step.Action.Target == "subagent_result" && step.Action.Params != nil {
+				if taskID, ok := step.Action.Params["task_id"].(string); ok {
+					sa.Name = taskID
+				}
+			}
+			exp.SubAgents = append(exp.SubAgents, sa)
 		}
 
 		// Build compact step summary
@@ -161,19 +155,19 @@ func buildExperienceData(input string, history []Step, result *RunResult) *core.
 			HasError: step.Observation.Error != "",
 		}
 		if step.Thought.Reasoning != "" {
-			es.Thought = truncateText(step.Thought.Reasoning, 200)
+			es.Thought = truncate(step.Thought.Reasoning, 200)
 		}
 		if step.Action.Type == ActionTypeToolCall {
 			es.Action = step.Action.Target
 		}
 		if step.Observation.Result != "" {
-			es.Result = truncateText(step.Observation.Result, 200)
+			es.Result = truncate(step.Observation.Result, 200)
 		}
 		exp.Steps = append(exp.Steps, es)
 	}
 
 	// Combine all reasoning into the analysis field (most valuable for reuse)
-	exp.Analysis = truncateText(strings.Join(reasoningParts, "\n---\n"), 2000)
+	exp.Analysis = truncate(strings.Join(reasoningParts, "\n---\n"), 2000)
 
 	return exp
 }
@@ -220,13 +214,4 @@ func extractExperienceTags(input string, intent *Intent) []string {
 	}
 
 	return tags
-}
-
-// truncateText shortens text to maxRunes characters.
-func truncateText(s string, maxRunes int) string {
-	runes := []rune(s)
-	if len(runes) <= maxRunes {
-		return s
-	}
-	return string(runes[:maxRunes]) + "..."
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
 )
@@ -15,17 +16,27 @@ var (
 
 const defaultModel = "gpt-4o"
 
+var initTimeout = 5 * time.Second
+
 func getGlobalEncoder() (*tiktoken.Tiktoken, error) {
 	globalEncoderOnce.Do(func() {
-		globalEncoder, globalEncoderErr = tiktoken.EncodingForModel(defaultModel)
+		type result struct {
+			enc *tiktoken.Tiktoken
+			err error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			enc, err := tiktoken.EncodingForModel(defaultModel)
+			ch <- result{enc: enc, err: err}
+		}()
+		select {
+		case r := <-ch:
+			globalEncoder, globalEncoderErr = r.enc, r.err
+		case <-time.After(initTimeout):
+			globalEncoderErr = fmt.Errorf("tiktoken initialization timed out after %v (network unavailable?)", initTimeout)
+		}
 	})
 	return globalEncoder, globalEncoderErr
-}
-
-func resetGlobalEncoderForTest() {
-	globalEncoder = nil
-	globalEncoderErr = nil
-	globalEncoderOnce = sync.Once{}
 }
 
 // CountTokens returns the exact token count for text using the tiktoken BPE tokenizer.

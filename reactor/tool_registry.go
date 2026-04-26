@@ -143,7 +143,7 @@ func (r *DefaultToolRegistry) GetWithSemantic(ctx context.Context, name string, 
 	r.mu.RUnlock()
 
 	records, err := mem.Retrieve(ctx, intent,
-		core.WithMemoryTypes(core.MemoryTypeRefactive),
+		core.WithMemoryTypes(core.MemoryTypeReflexive),
 		core.WithMemoryLimit(5),
 	)
 	if err != nil || len(records) == 0 {

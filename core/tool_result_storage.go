@@ -81,25 +81,14 @@ func (s *DiskToolResultStorage) Persist(toolName string, result string) *Persist
 	}
 	sessionDir := filepath.Join(s.baseDir, "session_"+sid)
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
-		// Fallback: return truncated inline if disk write fails
-		return &PersistedToolResult{
-			ToolName: toolName,
-			FullSize: charCount,
-			Preview:  truncatePreview(result, s.previewChars),
-			FilePath: "",
-		}
+		return makeFallbackResult(toolName, charCount, s.previewChars)
 	}
 
 	// Write full result to a unique file
 	filename := fmt.Sprintf("%s_%d.txt", sanitizeFileName(toolName), time.Now().UnixNano())
 	filePath := filepath.Join(sessionDir, filename)
 	if err := os.WriteFile(filePath, []byte(result), 0644); err != nil {
-		return &PersistedToolResult{
-			ToolName: toolName,
-			FullSize: charCount,
-			Preview:  truncatePreview(result, s.previewChars),
-			FilePath: "",
-		}
+		return makeFallbackResult(toolName, charCount, s.previewChars)
 	}
 
 	return &PersistedToolResult{
@@ -166,4 +155,14 @@ func sanitizeFileName(name string) string {
 		return "unnamed"
 	}
 	return string(result)
+}
+
+// makeFallbackResult creates a truncated inline result when disk persistence fails.
+func makeFallbackResult(toolName string, charCount int, previewChars int) *PersistedToolResult {
+	return &PersistedToolResult{
+		ToolName: toolName,
+		FullSize: charCount,
+		Preview:  truncatePreview("", previewChars),
+		FilePath: "",
+	}
 }

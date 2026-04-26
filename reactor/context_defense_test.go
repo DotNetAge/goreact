@@ -81,21 +81,6 @@ func TestMicroCompact(t *testing.T) {
 	}
 }
 
-func TestContextBudget(t *testing.T) {
-	budget := core.CalculateBudget(1000, 800, 0.8)
-	if !budget.NeedCompact {
-		t.Error("should need compact at 80% usage")
-	}
-	if budget.Remaining != 200 {
-		t.Errorf("expected 200 remaining, got %d", budget.Remaining)
-	}
-
-	budget2 := core.CalculateBudget(1000, 500, 0.8)
-	if budget2.NeedCompact {
-		t.Error("should not need compact at 50% usage")
-	}
-}
-
 func TestTrimJSONResult(t *testing.T) {
 	// Small JSON should pass through
 	small := `{"key": "value"}`

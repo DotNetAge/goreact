@@ -89,7 +89,18 @@ func (r *Reactor) RunSubAgent(ctx context.Context, taskID string, systemPrompt, 
 // runSubAgentSync runs a subagent synchronously (blocking the caller).
 // Used when the parent reactor uses a local model (IsLocal=true).
 func (r *Reactor) runSubAgentSync(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
-	// Create a dedicated sub-reactor for this task
+	r.runSubAgentCore(ctx, taskID, subConfig, prompt, resultCh)
+}
+
+// runSubAgentAsync runs a subagent asynchronously in a goroutine.
+func (r *Reactor) runSubAgentAsync(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
+	go func() {
+		r.runSubAgentCore(ctx, taskID, subConfig, prompt, resultCh)
+	}()
+}
+
+// runSubAgentCore is the shared execution logic for both sync and async subagent runs.
+func (r *Reactor) runSubAgentCore(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
 	subReactor := NewReactor(subConfig,
 		WithMemory(r.memory),
 		WithMessageBus(r.messageBus),
@@ -114,37 +125,6 @@ func (r *Reactor) runSubAgentSync(ctx context.Context, taskID string, subConfig 
 	}
 
 	r.RemovePendingTask(taskID)
-}
-
-// runSubAgentAsync runs a subagent asynchronously in a goroutine.
-func (r *Reactor) runSubAgentAsync(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
-	go func() {
-		// Create a dedicated sub-reactor for this task
-		subReactor := NewReactor(subConfig,
-			WithMemory(r.memory),
-			WithMessageBus(r.messageBus),
-			WithEventBus(r.eventBus),
-		)
-
-		tm := r.taskManager
-		result, runErr := subReactor.Run(ctx, prompt, nil)
-
-		if runErr != nil {
-			_ = tm.UpdateTaskStatus(taskID, core.TaskStatusFailed, "", runErr.Error())
-			select {
-			case resultCh <- runErr.Error():
-			default:
-			}
-		} else {
-			_ = tm.UpdateTaskStatus(taskID, core.TaskStatusCompleted, result.Answer, "")
-			select {
-			case resultCh <- result.Answer:
-			default:
-			}
-		}
-
-		r.RemovePendingTask(taskID)
-	}()
 }
 
 // RunInline executes a synchronous inline task using the same reactor context.

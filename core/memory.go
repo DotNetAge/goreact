@@ -21,7 +21,7 @@ const (
 	MemoryTypeSession    MemoryType = iota // temporary session context (conversation history)
 	MemoryTypeUser                         // short-term: user preferences, conventions
 	MemoryTypeLongTerm                     // long-term: knowledge base (project docs, domain knowledge)
-	MemoryTypeRefactive                    // reflexive: semantic index of tools/skills/agents
+	MemoryTypeReflexive                    // reflexive: semantic index of tools/skills/agents
 	MemoryTypeExperience                   // experience: analysis results from successful task executions
 )
 
@@ -226,7 +226,7 @@ func memoryTypeLabel(t MemoryType) string {
 		return "User Preference"
 	case MemoryTypeLongTerm:
 		return "Long-term Knowledge"
-	case MemoryTypeRefactive:
+	case MemoryTypeReflexive:
 		return "Reflexive Index"
 	case MemoryTypeExperience:
 		return "Experience"

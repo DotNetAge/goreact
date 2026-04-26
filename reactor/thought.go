@@ -6,8 +6,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/DotNetAge/goreact/core"
 )
 
 // Decision constants for Thought.Decision
@@ -18,14 +16,16 @@ const (
 )
 
 // Thought represents the output of the Think phase.
+// In two-phase thinking, Phase 1 produces SelectedSkill only,
+// and Phase 2 produces the full decision/action/answer fields.
 type Thought struct {
-	IdentID     string         `json:"ident_id,omitempty" yaml:"ident_id"`
-	Content     string         `json:"content,omitempty" yaml:"content"`
-	Reasoning   string         `json:"reasoning" yaml:"reasoning"`
-	Decision    string         `json:"decision" yaml:"decision"`
-	Confidence  float64        `json:"confidence" yaml:"confidence"`
-	IsFinal     bool           `json:"is_final" yaml:"is_final"`
-	FinalAnswer string         `json:"final_answer,omitempty" yaml:"final_answer"`
+	IdentID     string  `json:"ident_id,omitempty" yaml:"ident_id"`
+	Content     string  `json:"content,omitempty" yaml:"content"`
+	Reasoning   string  `json:"reasoning" yaml:"reasoning"`
+	Decision    string  `json:"decision" yaml:"decision"`
+	Confidence  float64 `json:"confidence" yaml:"confidence"`
+	IsFinal     bool    `json:"is_final" yaml:"is_final"`
+	FinalAnswer string  `json:"final_answer,omitempty" yaml:"final_answer"`
 
 	// Action fields (used when Decision == "act")
 	ActionTarget string         `json:"action_target,omitempty" yaml:"action_target"`
@@ -34,38 +34,11 @@ type Thought struct {
 	// Clarification (used when Decision == "clarify")
 	ClarificationQuestion string `json:"clarification_question,omitempty" yaml:"clarification_question"`
 
+	// SelectedSkill is the skill chosen in Phase 1 of two-phase thinking.
+	// Empty string means no specific skill was selected (direct tool use / answer mode).
+	SelectedSkill string `json:"selected_skill,omitempty" yaml:"selected_skill"`
+
 	Timestamp time.Time `json:"timestamp" yaml:"timestamp"`
-}
-
-// BuildThinkPrompt constructs the Think phase prompt using Go template.
-// It includes the classified intent, available tools, applicable skills,
-// relevant memory records, and user input.
-func BuildThinkPrompt(input string, intent *Intent, tools []core.ToolInfo, skills []*core.Skill, memoryRecords []core.MemoryRecord) string {
-	intentSection := "(no intent)"
-	if intent != nil {
-		b, _ := json.Marshal(intent)
-		intentSection = string(b)
-	}
-
-	toolSection := FormatToolDescriptions(tools)
-
-	memorySection := ""
-	if len(memoryRecords) > 0 {
-		memorySection = core.FormatMemoryRecords(memoryRecords)
-	}
-
-	result, err := renderThinkPrompt(thinkPromptData{
-		IntentSection: intentSection,
-		ToolSection:   toolSection,
-		Skills:        skills,
-		MemorySection: memorySection,
-		Input:         input,
-	})
-	if err != nil {
-		// Fallback: should never happen since template is parsed at init
-		return fmt.Sprintf("think prompt render error: %v", err)
-	}
-	return result
 }
 
 // jsonBlockRegex matches ```json ... ``` code blocks.

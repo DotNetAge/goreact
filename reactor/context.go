@@ -138,14 +138,4 @@ func (c *ReactContext) AddMessage(role, content string) {
 	})
 }
 
-// FormatToolDescriptions renders a slice of core.ToolInfo into text for prompt injection.
-func FormatToolDescriptions(tools []core.ToolInfo) string {
-	if len(tools) == 0 {
-		return "(no tools available)"
-	}
-	var sb strings.Builder
-	for i, t := range tools {
-		fmt.Fprintf(&sb, "%d. **%s**: %s\n", i+1, t.Name, t.Description)
-	}
-	return sb.String()
-}
+

@@ -48,7 +48,7 @@ func NewMemorySaveTool() core.FuncTool {
 func (t *MemorySave) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "memory_save",
-		Description: "Save important knowledge, conventions, or findings to long-term memory. Use this to persist information that should be remembered across conversations. Params: {title: string, content: string (required), type: 'session'|'user'|'longterm'|'refactive'|'experience', scope: 'private'|'team', tags: 'comma,separated', id: 'existing_id_to_update'}",
+		Description: "Save important knowledge, conventions, or findings to long-term memory. Use this to persist information that should be remembered across conversations. Params: {title: string, content: string (required), type: 'session'|'user'|'longterm'|'reflexive'|'experience', scope: 'private'|'team', tags: 'comma,separated', id: 'existing_id_to_update'}",
 	}
 }
 
@@ -126,7 +126,7 @@ func NewMemorySearchTool() core.FuncTool {
 func (t *MemorySearch) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "memory_search",
-		Description: "Search long-term memory for relevant knowledge, conventions, or past findings. Use this to recall information stored in previous conversations. Params: {query: string (required), type: 'session'|'user'|'longterm'|'refactive'|'experience', scope: 'private'|'team', limit: int}",
+		Description: "Search long-term memory for relevant knowledge, conventions, or past findings. Use this to recall information stored in previous conversations. Params: {query: string (required), type: 'session'|'user'|'longterm'|'reflexive'|'experience', scope: 'private'|'team', limit: int}",
 	}
 }
 
@@ -203,8 +203,8 @@ func parseMemoryType(s string) core.MemoryType {
 		return core.MemoryTypeUser
 	case "longterm", "knowledge", "project", "reference":
 		return core.MemoryTypeLongTerm
-	case "refactive", "reflexive", "tool", "skill":
-		return core.MemoryTypeRefactive
+	case "reflexive", "refactive", "tool", "skill":
+		return core.MemoryTypeReflexive
 	case "experience", "exp":
 		return core.MemoryTypeExperience
 	default:
@@ -220,7 +220,7 @@ func memoryTypeLabel(t core.MemoryType) string {
 		return "User"
 	case core.MemoryTypeLongTerm:
 		return "Long-term"
-	case core.MemoryTypeRefactive:
+	case core.MemoryTypeReflexive:
 		return "Reflexive"
 	case core.MemoryTypeExperience:
 		return "Experience"

@@ -74,6 +74,17 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		return nil, fmt.Errorf("missing command parameter")
 	}
 
+	if blocked := detectDangerousCommand(command); blocked != "" {
+		return map[string]any{
+			"stdout":      "",
+			"stderr":      fmt.Sprintf("BLOCKED: %s", blocked),
+			"exit_code":   126,
+			"interrupted": false,
+			"success":     false,
+			"error":       blocked,
+		}, nil
+	}
+
 	timeoutMs := 30000
 	if val, ok := params["timeout"].(float64); ok {
 		timeoutMs = int(val)
@@ -83,7 +94,7 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 	defer cancel()
 
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", command)
-	
+
 	// Use strings.Builder to capture output
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -113,17 +124,10 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		}
 	}
 
-	// Truncate output if too large (CludeCode style)
-	// Use rune-aware truncation for safe multi-byte character handling
+	// Truncate output if too large (ClueCode style)
 	const maxOutputSize = 30000
-	if len([]rune(stdoutStr)) > maxOutputSize {
-		runes := []rune(stdoutStr)
-		result["stdout"] = string(runes[:maxOutputSize]) + "\n... [output truncated due to size] ..."
-	}
-	if len([]rune(stderrStr)) > maxOutputSize {
-		runes := []rune(stderrStr)
-		result["stderr"] = string(runes[:maxOutputSize]) + "\n... [output truncated due to size] ..."
-	}
+	result["stdout"] = truncateOutput(stdoutStr, maxOutputSize)
+	result["stderr"] = truncateOutput(stderrStr, maxOutputSize)
 
 	// Map exit_code == 0 to success for tests
 	result["success"] = result["exit_code"] == 0
@@ -132,4 +136,62 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 	}
 
 	return result, nil
+}
+
+// truncateOutput truncates a string to maxRunes characters, appending a truncation notice if needed.
+func truncateOutput(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "\n... [output truncated due to size] ..."
+}
+
+// dangerousPatterns defines commands that are too destructive to allow even with permission.
+// This is defense-in-depth on top of the AskPermission tool.
+var dangerousPatterns = []struct {
+	pattern string
+	reason  string
+}{
+	{`rm\s+-rf\s+/\s*`, "destructive: rm -rf / would erase the entire filesystem"},
+	{`rm\s+-rf\s+/\*`, "destructive: rm -rf /* would erase the entire filesystem"},
+	{`rm\s+-rf\s+/[a-z]*\s*$`, "destructive: recursive root-level removal is blocked"},
+	{`>\s*/dev/sd[a-z]\b`, "dangerous: writing to raw disk device"},
+	{`dd\s+if=.*of=/dev/sd`, "dangerous: raw disk overwrite via dd"},
+	{`mkfs\.`, "dangerous: disk formatting command"},
+	{`:.*\|.*:&\s*;:\s*}`, "dangerous: fork bomb detected"},
+	{`(curl|wget)\s+.*\|\s*(sh|bash)`, "dangerous: remote code execution pipe (curl|sh)"},
+	{`(curl|wget)\s+.*\s*>\s*/(bin|usr/bin)/`, "dangerous: remote binary download to system path"},
+	{`chmod\s+-R\s+777\s+/`, "dangerous: world-writable root filesystem"},
+	{`chown\s+-R.*\s+/`, "dangerous: recursive root ownership change"},
+	{`shutdown\s+(now|-h|-r)`, "dangerous: system shutdown command"},
+	{`reboot\b`, "dangerous: system reboot command"},
+}
+
+// detectDangerousCommand checks a shell command against known dangerous patterns.
+// Returns an empty string if safe, or a block reason if matched.
+func detectDangerousCommand(command string) string {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	for _, dp := range dangerousPatterns {
+		if matchPattern(lower, dp.pattern) {
+			return dp.reason
+		}
+	}
+	return ""
+}
+
+// matchPattern performs a simple substring check for the given pattern.
+// Uses case-insensitive matching for ASCII patterns.
+func matchPattern(s, pattern string) bool {
+	lowerS := strings.ToLower(s)
+	lowerP := strings.ToLower(pattern)
+	if len(lowerP) > len(lowerS) {
+		return false
+	}
+	for i := 0; i <= len(lowerS)-len(lowerP); i++ {
+		if lowerS[i:i+len(lowerP)] == lowerP {
+			return true
+		}
+	}
+	return false
 }

@@ -37,13 +37,3 @@ func NewErrorObservation(err error, shouldRetry bool) *Observation {
 		Timestamp:   time.Now(),
 	}
 }
-
-// NewRetryObservation creates an observation indicating the action should be retried.
-func NewRetryObservation(reason string) *Observation {
-	return &Observation{
-		Success:     false,
-		ShouldRetry: true,
-		Insights:    []string{reason},
-		Timestamp:   time.Now(),
-	}
-}

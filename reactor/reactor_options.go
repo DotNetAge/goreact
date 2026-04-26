@@ -55,22 +55,6 @@ func WithResultLimits(limits core.ToolResultLimits) ReactorOption {
 	}
 }
 
-// WithCompactor enables automatic context compaction (third layer defense).
-// When the context window approaches its token limit, older messages will be
-// summarized/compressed to free space.
-func WithCompactor(compactor core.ContextCompactor) ReactorOption {
-	return func(s *reactorSetup) {
-		s.compactor = compactor
-	}
-}
-
-// WithCompactorConfig configures the compaction thresholds (third layer defense).
-func WithCompactorConfig(config core.CompactorConfig) ReactorOption {
-	return func(s *reactorSetup) {
-		s.compactorConfig = config
-	}
-}
-
 // WithTokenEstimator sets a custom token estimator for budget tracking.
 func WithTokenEstimator(estimator core.TokenEstimator) ReactorOption {
 	return func(s *reactorSetup) {
@@ -215,5 +199,14 @@ func WithToolRegistry(reg core.ToolRegistryInterface) ReactorOption {
 func WithSkillRegistry(reg core.SkillRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.skillRegistry = reg
+	}
+}
+
+// WithSessionStore sets a SessionStore for conversation persistence.
+// The session store provides the backing store for the sliding window mechanism,
+// enabling unlimited context through message persistence and token-budget-aware retrieval.
+func WithSessionStore(store core.SessionStore) ReactorOption {
+	return func(s *reactorSetup) {
+		s.sessionStore = store
 	}
 }

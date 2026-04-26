@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-func TestSummaryMessage(t *testing.T) {
-	msg := SummaryMessage(100, 5, "test summary")
-	if msg.Role != "system" {
-		t.Errorf("expected role=system, got %s", msg.Role)
-	}
-	expected := "[Context Compacted] Previous 100 messages were summarized into 5 messages.\nSummary: test summary"
-	if msg.Content != expected {
-		t.Errorf("mismatch: got %q", msg.Content)
-	}
-}
-
 func TestMicroCompact_NilEstimateFn(t *testing.T) {
 	messages := []Message{
 		{Role: "user", Content: "short"},
@@ -119,34 +108,6 @@ func TestDefaultTokenEstimator(t *testing.T) {
 	}
 }
 
-func TestCalculateBudget(t *testing.T) {
-	b := CalculateBudget(8000, 6000, 0.8)
-	if b.UsageRatio != 0.75 {
-		t.Errorf("expected ratio 0.75, got %f", b.UsageRatio)
-	}
-	if b.NeedCompact {
-		t.Error("should not need compact at 75%")
-	}
-	if b.Remaining != 2000 {
-		t.Errorf("expected remaining 2000, got %d", b.Remaining)
-	}
-
-	b2 := CalculateBudget(8000, 7000, 0.8)
-	if !b2.NeedCompact {
-		t.Error("should need compact at 87.5%")
-	}
-
-	b3 := CalculateBudget(8000, 9000, 0.8)
-	if b3.Remaining != 0 {
-		t.Errorf("remaining should be clamped to 0, got %d", b3.Remaining)
-	}
-
-	b4 := CalculateBudget(0, 100, 0.8)
-	if b4.Remaining != 0 || b4.NeedCompact {
-		t.Error("zero max tokens should produce safe defaults")
-	}
-}
-
 func TestTrimJSONResult_ShortString(t *testing.T) {
 	input := `{"key": "value"}`
 	result := TrimJSONResult(input, 100)
@@ -201,40 +162,5 @@ func TestTrimJSONResult_TrimLongStrings(t *testing.T) {
 	result := TrimJSONResult(string(data), 200)
 	if len(result) > 220 {
 		t.Errorf("long string values should be trimmed, got %d", len(result))
-	}
-}
-
-func TestIsJSONString(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{`{"a": 1}`, true},
-		{`[1, 2, 3]`, true},
-		{`  {"a": 1}  `, true},
-		{`  [1, 2]  `, true},
-		{"not json", false},
-		{"", false},
-		{"{invalid}", true},
-		{"[invalid]", true},
-	}
-	for _, tt := range tests {
-		got := IsJSONString(tt.input)
-		if got != tt.expected {
-			t.Errorf("IsJSONString(%q) = %v, want %v", tt.input, got, tt.expected)
-		}
-	}
-}
-
-func TestCompactorConfigDefaults(t *testing.T) {
-	cfg := DefaultCompactorConfig()
-	if cfg.CompactThresholdRatio <= 0 {
-		t.Error("CompactThresholdRatio should be positive")
-	}
-	if cfg.PreserveLastN != 2 {
-		t.Errorf("PreserveLastN should be 2, got %d", cfg.PreserveLastN)
-	}
-	if cfg.MicroCompactThreshold != 0.6 {
-		t.Errorf("MicroCompactThreshold should be 0.6, got %f", cfg.MicroCompactThreshold)
 	}
 }

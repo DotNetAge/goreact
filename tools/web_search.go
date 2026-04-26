@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -389,23 +390,75 @@ func formatSearchResults(query string, results []SearchResult) string {
 	return sb.String()
 }
 
-// --- WebFetch Tool (Claude-style: local fetch → content extraction) ---
+// --- SSRF Protection Helpers ---
 
-// WebFetchToolClaude implements Claude-style WebFetch:
-// local HTTP fetch → content processing → focused answer.
+// isPrivateIP checks whether an IP address belongs to a private/reserved range.
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []struct {
+		network *net.IPNet
+	}{
+		{parseCIDR("127.0.0.0/8")},    // loopback
+		{parseCIDR("10.0.0.0/8")},     // RFC 1918
+		{parseCIDR("172.16.0.0/12")},  // RFC 1918
+		{parseCIDR("192.168.0.0/16")}, // RFC 1918
+		{parseCIDR("169.254.0.0/16")}, // link-local
+		{parseCIDR("::1/128")},        // IPv6 loopback
+		{parseCIDR("fc00::/7")},       // IPv6 ULA
+		{parseCIDR("fe80::/10")},      // IPv6 link-local
+		{parseCIDR("0.0.0.0/8")},      // current network
+	}
+	for _, r := range privateRanges {
+		if r.network != nil && r.network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseCIDR(s string) *net.IPNet {
+	_, network, err := net.ParseCIDR(s)
+	if err != nil {
+		return nil
+	}
+	return network
+}
+
+// validateURL checks that a URL is not pointing to a private/internal address (SSRF protection).
+func validateURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme: %s (only http/https allowed)", parsed.Scheme)
+	}
+
+	host := parsed.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host %q: %w", host, err)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("access denied: URL resolves to private/internal address %s", ip)
+		}
+	}
+	return nil
+}
+
+// --- WebFetch Tool (local fetch → content extraction) ---
+
+// WebFetchTool implements intelligent web content fetching:
+// URL validation + SSRF protection → HTTP fetch → HTML→Text extraction.
 //
-// Claude Code pattern:
-//   1. URL validation + SSRF protection
-//   2. Local HTTP fetch (not server-side)
-//   3. HTML → text extraction (strips scripts, styles, etc.)
-//   4. Returns processed content with metadata
-//
-// Note: Claude Code uses a secondary LLM (Haiku) for summarization.
-// Since this is a Go implementation without a guaranteed small model,
-// we do intelligent content extraction instead.
-type WebFetchToolClaude struct {
-	client  *http.Client
-	cache   sync.Map // map[string]cachedFetch
+// Features:
+// 1. Validates URL and checks for SSRF risks (blocks private IPs).
+// 2. Fetches the page content locally via HTTP.
+// 3. Strips HTML tags (scripts, styles, nav, etc.) for clean text.
+// 4. Returns processed content with metadata for the LLM to process.
+type WebFetchTool struct {
+	client   *http.Client
+	cache    sync.Map // map[string]cachedFetch
 	cacheTTL time.Duration
 }
 
@@ -414,15 +467,15 @@ type cachedFetch struct {
 	timestamp time.Time
 }
 
-// NewWebFetchToolClaude creates a Claude-style WebFetch tool.
-func NewWebFetchToolClaude() core.FuncTool {
-	return &WebFetchToolClaude{
-		client: &http.Client{Timeout: 15 * time.Second},
+// NewWebFetchTool creates a WebFetch tool.
+func NewWebFetchTool() core.FuncTool {
+	return &WebFetchTool{
+		client:   &http.Client{Timeout: 15 * time.Second},
 		cacheTTL: 15 * time.Minute,
 	}
 }
 
-func (t *WebFetchToolClaude) Info() *core.ToolInfo {
+func (t *WebFetchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name: "web_fetch",
 		Description: `Fetch and extract content from a web page. Unlike web_search which discovers URLs, web_fetch reads the actual content of a known URL.
@@ -456,7 +509,7 @@ Parameters:
 	}
 }
 
-func (t *WebFetchToolClaude) Execute(ctx context.Context, params map[string]any) (any, error) {
+func (t *WebFetchTool) Execute(ctx context.Context, params map[string]any) (any, error) {
 	rawURL, err := ValidateRequiredString(params, "url")
 	if err != nil {
 		return nil, err

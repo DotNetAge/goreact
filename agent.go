@@ -46,20 +46,19 @@ func DefaultConfig() *core.AgentConfig {
 //	agent := goreact.DefaultAgent("your-api-key")
 //	answer, err := agent.Ask("Hello!")
 type Agent struct {
-	config        *core.AgentConfig
-	model         *core.ModelConfig
-	memory        core.Memory
-	reactor       *reactor.Reactor
-	eventBus      reactor.EventBus
-	contextWindow *core.ContextWindow
-	lastResult    *Result
-	scheduler     *core.CronScheduler
+	config       *core.AgentConfig
+	model        *core.ModelConfig
+	memory       core.Memory
+	reactor      *reactor.Reactor
+	eventBus     reactor.EventBus
+	lastResult   *Result
+	scheduler    *core.CronScheduler
+	sessionStore core.SessionStore
 
-	// Interrupt state — protected by interruptMu
 	interruptMu sync.Mutex
-	cancelFunc  context.CancelFunc   // cancels the current Run
-	isRunning   bool                 // true while a Run is in progress
-	snapshot    *reactor.RunSnapshot // saved state from Pause()
+	cancelFunc  context.CancelFunc
+	isRunning   bool
+	snapshot    *reactor.RunSnapshot
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +110,9 @@ type agentSetup struct {
 
 	// Scheduler for cron-based scheduled tasks
 	scheduler *core.CronScheduler
+
+	// Session store for conversation persistence (sliding window backing store)
+	sessionStore core.SessionStore
 }
 
 // AgentOption configures an Agent during creation via NewAgent.
@@ -236,6 +238,14 @@ func WithScheduler(scheduler *core.CronScheduler) AgentOption {
 	}
 }
 
+// WithSessionStore sets a SessionStore for conversation persistence.
+// If not set, NewAgent falls back to MemorySessionStore (in-memory, no persistence).
+func WithSessionStore(store core.SessionStore) AgentOption {
+	return func(s *agentSetup) {
+		s.sessionStore = store
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
@@ -352,6 +362,11 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 		reactorOpts = append(reactorOpts, reactor.WithSkillDir(dir))
 	}
 
+	if setup.sessionStore == nil {
+		setup.sessionStore = core.NewMemorySessionStore()
+	}
+	reactorOpts = append(reactorOpts, reactor.WithSessionStore(setup.sessionStore))
+
 	// Build ReactorConfig from ModelConfig
 	reactorConfig := reactor.ReactorConfig{
 		APIKey:       model.APIKey,
@@ -364,12 +379,13 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)
 
 	a := &Agent{
-		config:    config,
-		model:     model,
-		memory:    setup.memory,
-		reactor:   r,
-		eventBus:  r.EventBus(),
-		scheduler: setup.scheduler,
+		config:       config,
+		model:        model,
+		memory:       setup.memory,
+		reactor:      r,
+		eventBus:     r.EventBus(),
+		scheduler:    setup.scheduler,
+		sessionStore: setup.sessionStore,
 	}
 
 	if setup.sessionID != "" {
@@ -377,7 +393,7 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 		if maxTokens <= 0 {
 			maxTokens = 8192
 		}
-		a.contextWindow = core.NewContextWindow(setup.sessionID, maxTokens)
+		a.reactor.SetContextWindow(core.NewContextWindow(setup.sessionID, maxTokens))
 	}
 
 	return a, nil
@@ -414,9 +430,9 @@ func (a *Agent) Memory() core.Memory {
 	return a.memory
 }
 
-// ContextWindow returns the agent's context window, or nil if no session is active.
+// ContextWindow returns the agent's context window (delegated to Reactor).
 func (a *Agent) ContextWindow() *core.ContextWindow {
-	return a.contextWindow
+	return a.reactor.ContextWindow()
 }
 
 // Reactor returns the internal Reactor for advanced use cases.
@@ -433,6 +449,11 @@ func (a *Agent) Scheduler() *core.CronScheduler {
 	return a.scheduler
 }
 
+// SessionStore returns the agent's session store, or nil if not configured.
+func (a *Agent) SessionStore() core.SessionStore {
+	return a.sessionStore
+}
+
 // ---------------------------------------------------------------------------
 // Session management
 // ---------------------------------------------------------------------------
@@ -440,15 +461,15 @@ func (a *Agent) Scheduler() *core.CronScheduler {
 // NewSession starts a new conversation session, replacing any existing one.
 // The previous context is discarded.
 func (a *Agent) NewSession(sessionID string, maxTokens int64) {
-	a.contextWindow = core.NewContextWindow(sessionID, maxTokens)
+	a.reactor.SetContextWindow(core.NewContextWindow(sessionID, maxTokens))
 }
 
 // SessionID returns the current session ID, or empty string if no session.
 func (a *Agent) SessionID() string {
-	if a.contextWindow == nil {
-		return ""
+	if cw := a.reactor.ContextWindow(); cw != nil {
+		return cw.SessionID
 	}
-	return a.contextWindow.SessionID
+	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -476,8 +497,6 @@ func (a *Agent) Ask(question string) (*Result, error) {
 // and timeout control. Most users should use Ask; this is for advanced scenarios
 // such as request-scoped deadlines or graceful shutdown.
 func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, error) {
-	// Create a cancellable context derived from the user's context.
-	// This allows Cancel() and Pause() to interrupt the Run from outside.
 	runCtx, cancel := context.WithCancel(ctx)
 
 	a.interruptMu.Lock()
@@ -493,24 +512,11 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, e
 		a.interruptMu.Unlock()
 	}()
 
-	// Build conversation history from ContextWindow if available
-	var history reactor.ConversationHistory
-	if a.contextWindow != nil {
-		a.contextWindow.AddMessage("user", question)
-		msgs := a.contextWindow.RecentMessages(0)
-		history = make(reactor.ConversationHistory, len(msgs))
-		for i, m := range msgs {
-			history[i] = core.Message{Role: m.Role, Content: m.Content, Timestamp: m.Timestamp}
-		}
-	}
-
-	// Delegate to the reactor for full T-A-O processing
-	runResult, err := a.reactor.Run(runCtx, question, history)
+	runResult, err := a.reactor.Run(runCtx, question, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to Agent Result
 	result := &Result{
 		Answer:    runResult.Answer,
 		Tokens:    runResult.TokensUsed,
@@ -519,19 +525,6 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, e
 		ToolsUsed: len(runResult.Steps),
 	}
 	a.lastResult = result
-
-	// Record assistant response and token usage in ContextWindow
-	if a.contextWindow != nil {
-		if runResult.Answer != "" {
-			a.contextWindow.AddMessage("assistant", runResult.Answer)
-		}
-		a.contextWindow.AddTokens(int64(runResult.TokensUsed))
-		// Prune if over budget
-		if a.contextWindow.TokensRemaining() <= 0 {
-			a.contextWindow.Prune(nil)
-		}
-	}
-
 	return result, nil
 }
 
@@ -674,16 +667,6 @@ func (a *Agent) Resume(newInput ...string) (*Result, error) {
 	}
 	a.lastResult = result
 
-	// Update context window with resumed result
-	if a.contextWindow != nil && runResult.Answer != "" {
-		a.contextWindow.AddMessage("assistant", runResult.Answer)
-		a.contextWindow.AddTokens(int64(runResult.TokensUsed))
-		if a.contextWindow.TokensRemaining() <= 0 {
-			a.contextWindow.Prune(nil)
-		}
-	}
-
-	// Clear snapshot after successful resume (consumed)
 	a.interruptMu.Lock()
 	a.snapshot = nil
 	a.interruptMu.Unlock()
