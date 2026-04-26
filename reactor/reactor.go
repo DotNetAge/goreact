@@ -67,7 +67,7 @@ var _ ReActorInternal = (*Reactor)(nil)
 type Reactor struct {
 	config         ReactorConfig
 	intentRegistry IntentRegistry
-	toolRegistry   core.ToolRegistryInterface
+	toolRegistry   core.ToolRegistry
 	skillRegistry  core.SkillRegistry
 	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder
@@ -174,7 +174,7 @@ type reactorSetup struct {
 	scheduler         *core.CronScheduler
 	sessionStore      core.SessionStore
 	intentRegistry    IntentRegistry
-	toolRegistry      core.ToolRegistryInterface
+	toolRegistry      core.ToolRegistry
 	skillRegistry     core.SkillRegistry
 }
 
@@ -358,7 +358,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 func (r *Reactor) SkillRegistry() core.SkillRegistry         { return r.skillRegistry }
 func (r *Reactor) IntentRegistry() IntentRegistry            { return r.intentRegistry }
-func (r *Reactor) ToolRegistry() core.ToolRegistryInterface  { return r.toolRegistry }
+func (r *Reactor) ToolRegistry() core.ToolRegistry           { return r.toolRegistry }
 func (r *Reactor) TaskManager() core.TaskManager             { return r.taskManager }
 func (r *Reactor) Scheduler() *core.CronScheduler            { return r.scheduler }
 func (r *Reactor) SessionStore() core.SessionStore           { return r.sessionStore }

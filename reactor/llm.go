@@ -96,7 +96,7 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 	}
 
 	if systemPrompt != "" {
-		userMessage = systemPrompt + "\n\n" + userMessage
+		builder.SystemMessage(systemPrompt)
 	}
 
 	maxTokensForHistory := int64(float64(r.config.MaxTokens) * 0.7)

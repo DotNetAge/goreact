@@ -187,7 +187,7 @@ func WithIntentRegistry(reg IntentRegistry) ReactorOption {
 //	    mcpClient *mcp.Client
 //	}
 //	func (m *MCPToolRegistry) ToToolInfos() []core.ToolInfo { /* merge local+remote */ }
-func WithToolRegistry(reg core.ToolRegistryInterface) ReactorOption {
+func WithToolRegistry(reg core.ToolRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.toolRegistry = reg
 	}

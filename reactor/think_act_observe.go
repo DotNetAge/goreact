@@ -55,14 +55,14 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	var actCtx *ActivatedSkillContext
 
 	if len(skills) > 0 {
-		selectInstructions := BuildSkillSelectPrompt(ctx.Input, ctx.Intent, skills)
-		capabilitiesSection := BuildCapabilitiesList(skills)
-		accountTokens(selectInstructions)
-		accountTokens(capabilitiesSection)
 		r.checkSlide(ctx.Ctx())
 
+		selectInstructions := "Choose the most applicable skill for the user's request from the Available Skills listed in the system prompt. " +
+			"Return JSON: {\"selected_skill\":\"<skill_name_or_empty>\",\"reasoning\":\"<why>\"}. " +
+			"If no skill clearly matches, set selected_skill to empty string."
+
 		selectContent, selectTokens, err := r.callLLMStream(
-			ctx, selectInstructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns, nil, capabilitiesSection,
+			ctx, selectInstructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns, nil, skillsSection,
 		)
 		if err != nil {
 			return totalTokens + selectTokens, fmt.Errorf("think phase1 (skill select) failed: %w", err)

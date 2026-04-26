@@ -55,7 +55,7 @@ func NewToolRegistry() *DefaultToolRegistry {
 }
 
 // Compile-time interface check
-var _ core.ToolRegistryInterface = (*DefaultToolRegistry)(nil)
+var _ core.ToolRegistry = (*DefaultToolRegistry)(nil)
 
 // SetResultStorage sets the tool result persistence storage.
 // When set, tool results exceeding the size threshold will be persisted to disk

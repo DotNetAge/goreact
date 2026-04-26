@@ -32,9 +32,8 @@ var promptFuncMap = template.FuncMap{
 // Go's template.ParseFS strips the directory prefix, so "prompts/summary_prompt.tmpl"
 // becomes associated name "summary_prompt.tmpl".
 const (
-	tmplIntent = "intent_prompt.tmpl"
-	tmplThink  = "think_prompt.tmpl"
-	// tmplSkillSelect = "skill_select_prompt.tmpl"
+	tmplIntent  = "intent_prompt.tmpl"
+	tmplThink   = "think_prompt.tmpl"
 	tmplSystem  = "default_system_prompt.tmpl"
 	tmplSummary = "summary_prompt.tmpl"
 )
@@ -47,11 +46,6 @@ var intentPromptTemplate = template.Must(
 // thinkPromptTemplate is parsed once at init from the embedded .tmpl file.
 var thinkPromptTemplate = template.Must(
 	template.New("think_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/think_prompt.tmpl"),
-)
-
-// skillSelectPromptTemplate is parsed once at init from the embedded .tmpl file (Phase 1).
-var skillSelectPromptTemplate = template.Must(
-	template.New("skill_select").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/skill_select_prompt.tmpl"),
 )
 
 // defaultSystemPromptTemplate is parsed once at init from the embedded .tmpl file.
@@ -135,19 +129,6 @@ func renderThinkPrompt(data thinkPromptData) (string, error) {
 	}
 	return buf.String(), nil
 }
-
-// renderSkillSelectPrompt renders the Skill Selection prompt (Phase 1) using the embedded Go template.
-// func renderSkillSelectPrompt(data skillSelectPromptData) (string, error) {
-// 	t := skillSelectPromptTemplate.Lookup(tmplSkillSelect)
-// 	if t == nil {
-// 		return "", template.ExecError{Name: tmplSkillSelect, Err: nil}
-// 	}
-// 	var buf bytes.Buffer
-// 	if err := t.Execute(&buf, data); err != nil {
-// 		return "", err
-// 	}
-// 	return buf.String(), nil
-// }
 
 // RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
 // It accepts the agent's name, domain, and description as template variables.
@@ -434,21 +415,4 @@ func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryR
 	return result
 }
 
-// BuildSkillSelectPrompt constructs the Skill Selection prompt (Phase 1) using Go template.
-// It presents L1 summaries of all available skills and asks LLM to choose one.
-func BuildSkillSelectPrompt(input string, intent *Intent, skills []*core.Skill) string {
-	intentSection := "(no intent)"
-	if intent != nil {
-		b, _ := json.Marshal(intent)
-		intentSection = string(b)
-	}
-
-	result, err := renderSkillSelectPrompt(skillSelectPromptData{
-		IntentSection: intentSection,
-		Input:         input,
-	})
-	if err != nil {
-		return fmt.Sprintf("skill select prompt render error: %v", err)
-	}
-	return result
-}
+// BuildIntentPrompt constructs the intent classification prompt using Go template.

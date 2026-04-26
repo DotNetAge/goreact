@@ -11,10 +11,10 @@ import (
 // Deprecated: Use SetPermissionChecker and AddHook instead for the full permission pipeline.
 type SecurityPolicy func(toolName string, level SecurityLevel) bool
 
-// ToolRegistryInterface defines the contract for tool lifecycle management.
+// ToolRegistry defines the contract for tool lifecycle management.
 // This interface covers both tool operations and configuration methods,
 // enabling full replacement or selective enhancement via embedding.
-type ToolRegistryInterface interface {
+type ToolRegistry interface {
 	// --- Core Operations ---
 
 	// Register adds a tool. Returns error if name already exists.
