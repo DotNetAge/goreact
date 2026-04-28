@@ -110,6 +110,15 @@ func (m *mockMemoryForTools) Retrieve(_ context.Context, query string, opts ...c
 
 func (m *mockMemoryForTools) Update(_ context.Context, id string, record core.MemoryRecord) error { return nil }
 func (m *mockMemoryForTools) Delete(_ context.Context, id string) error                 { return nil }
+func (m *mockMemoryForTools) BatchStore(_ context.Context, records []core.MemoryRecord) ([]string, error) {
+	var ids []string
+	for _, r := range records {
+		ids = append(ids, r.ID)
+		m.store = append(m.store, r)
+	}
+	return ids, nil
+}
+func (m *mockMemoryForTools) BatchDelete(_ context.Context, ids []string) ([]string, error) { return nil, nil }
 
 func TestMemorySaveTool_Info(t *testing.T) {
 	SetMemory(&mockMemoryForTools{})

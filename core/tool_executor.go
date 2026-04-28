@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -245,9 +246,15 @@ func (e *defaultToolExecutor) processResult(toolName, str string, toolInfo *Tool
 		}
 		runes := []rune(str)
 		if len(runes) > targetChars {
-			str = string(runes[:targetChars]) +
-				fmt.Sprintf("\n... [context budget exceeded: total tool output in this cycle is %d chars, limit is %d] ...",
-					currentChars, limits.MaxToolResultsPerMessageChars)
+			var buf strings.Builder
+			buf.Grow(targetChars + 200)
+			buf.WriteString(string(runes[:targetChars]))
+			buf.WriteString("\n... [context budget exceeded: total tool output in this cycle is ")
+			buf.WriteString(fmt.Sprintf("%d", currentChars))
+			buf.WriteString(" chars, limit is ")
+			buf.WriteString(fmt.Sprintf("%d", limits.MaxToolResultsPerMessageChars))
+			buf.WriteString("] ...")
+			str = buf.String()
 		}
 		return str
 	}

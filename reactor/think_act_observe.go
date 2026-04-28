@@ -1,33 +1,46 @@
 package reactor
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/DotNetAge/goreact/core"
+	gochatcore "github.com/DotNetAge/gochat/core"
 )
 
+// l1RoutingResult holds the parsed L1 routing decision.
+type l1RoutingResult struct {
+	Path          string   // "tool" | "skill" | "answer"
+	Target        string   // selected skill name or primary tool name
+	SelectedTools []string // tool names (for "tool" path)
+	Answer        string   // final answer text (for "answer" path)
+	Reasoning     string
+}
+
 // Think asks the LLM to decide the next action based on the current context.
-// Implements TWO-PHASE thinking:
+// Implements PROGRESSIVE DISCLOSURE two-phase thinking (L1 -> L2):
 //
-//	Phase 1 (Skill Selection):  Lightweight — choose which Skill to use (if any)
-//	Phase 2 (Tool Planning):    Weighted — under chosen Skill's L2 instructions,
-//	                            decide which Tool to invoke with what parameters
+//	Phase 1 (L1 Routing):  All tools loaded as MINIMAL schema (~50 tokens/tool)
+//	                        + all skills metadata in SystemPrompt.
+//	                        LLM routes to: "tool" | "skill" | "answer"
+//	                        Outputs selected target(s) by name.
+//	Phase 2 (L2 Planning):  Selected tools upgraded to FULL schema.
+//	                        If skill routed: skill L2 instructions injected.
+//	                        LLM generates actual action with proper parameters.
 //
-// Uses streaming to emit ThinkingDelta events in real-time via EventBus.
-// Token accounting covers: tool definitions, skill sections, prompts, and L2 instructions.
+// Verified by Experiment 1: Qwen accepts empty-properties NativeTools.
+// Verified by Experiment 2: LLM can semantically match capabilities to tool names.
 func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	estimateFn := r.tokenEstimator.Estimate
 	totalTokens := 0
-	// 匹配与当前上下文意图中相关的工具
-	ts := r.toolRegistry.FindAvailable(&core.ToolFilter{
-		Terms:    ctx.Intent.Summary,
-		Keywords: []string{ctx.Intent.Topic},
-	})
 
-	toolInfos := core.ToToolInfos(ts)
-	llmTools := ToolInfosToLLMTools(toolInfos)
+	// --- Load ALL tools (L1 minimal + L2 full ready) ---
+	allToolInfos := core.ToToolInfos(r.toolRegistry.All())
+	minimalLLMTools := ToolInfosToMinimalLLMTools(allToolInfos)
 
+	// --- Load applicable skills ---
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
 	skillsSection := BuildSkillsSystemPrompt(skills)
 
@@ -50,63 +63,107 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 			r.contextWindow.AddTokens(int64(estimateFn(content)))
 		}
 	}
-
 	accountTokens(skillsSection)
-	toolTokens := EstimateTokensForTools(llmTools, estimateFn)
-	if toolTokens > 0 && r.contextWindow != nil {
-		r.contextWindow.AddTokens(toolTokens)
+	minimalTokens := EstimateTokensForTools(minimalLLMTools, estimateFn)
+	if minimalTokens > 0 && r.contextWindow != nil {
+		r.contextWindow.AddTokens(minimalTokens)
 	}
 
+	// ====================================================================
+	// PHASE 1 (L1 Routing): Minimal tools + skills -> route decision
+	// ====================================================================
+	l1Prompt := buildL1RoutingPrompt(skills)
+
+	l1Content, l1Tokens, err := r.callLLMStream(
+		ctx, l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), minimalLLMTools, skillsSection,
+	)
+	if err != nil {
+		return totalTokens + l1Tokens, fmt.Errorf("think L1 routing failed: %w", err)
+	}
+	totalTokens += l1Tokens
+
+	l1Result, err := parseL1RoutingResponse(l1Content)
+	if err != nil {
+		return totalTokens, fmt.Errorf("think L1 parse failed: %w", err)
+	}
+		logger.Info("L1 Route", "path", l1Result.Path, "target", l1Result.Target,
+			"tools", l1Result.SelectedTools, "reasoning", truncate(l1Result.Reasoning, 200))
+
 	var actCtx *ActivatedSkillContext
+	var l1SelectedToolNames []string
 
-	if len(skills) > 0 {
-		r.checkSlide(ctx.Ctx())
+	switch l1Result.Path {
+	case "answer":
+		ctx.LastThought = &Thought{
+			Decision:    DecisionAnswer,
+			Reasoning:    l1Result.Reasoning,
+			FinalAnswer:  l1Result.Answer,
+			IsFinal:      true,
+		}
+		return totalTokens, nil
 
-		selectInstructions := "Choose the most applicable skill for the user's request from the Available Skills listed in the system prompt. " +
-			"Return JSON: {\"selected_skill\":\"<skill_name_or_empty>\",\"reasoning\":\"<why>\"}. " +
-			"If no skill clearly matches, set selected_skill to empty string."
+	case "tool":
+		l1SelectedToolNames = l1Result.SelectedTools
+		if len(l1SelectedToolNames) == 0 && l1Result.Target != "" {
+			l1SelectedToolNames = []string{l1Result.Target}
+		}
 
-		selectContent, selectTokens, err := r.callLLMStream(
-			ctx, selectInstructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection,
-		)
+	case "skill":
+		if l1Result.Target == "" {
+			l1Result.Path = "tool"
+			break
+		}
+		actCtx, err = r.ActivateSkill(l1Result.Target, allToolInfos)
 		if err != nil {
-			return totalTokens + selectTokens, fmt.Errorf("think phase1 (skill select) failed: %w", err)
-		}
-		totalTokens += selectTokens
-
-		selectThought, err := ParseThinkResponse(selectContent)
-		if err != nil {
-			return totalTokens, fmt.Errorf("think phase1 parse failed: %w", err)
+				logger.Info("Skill activation failed, falling back to direct tool mode", "error", err)
+			actCtx = nil
+			l1Result.Path = "tool"
+		} else if actCtx != nil {
+			accountTokens(actCtx.Instructions)
 		}
 
-		if selectThought.SelectedSkill != "" {
-			actCtx, err = r.ActivateSkill(selectThought.SelectedSkill, toolInfos)
-			if err != nil {
-				actCtx = nil
-			} else if actCtx != nil {
-				accountTokens(actCtx.Instructions)
-				filteredToolTokens := EstimateTokensForTools(actCtx.FilteredTools, estimateFn)
-				if filteredToolTokens > 0 && r.contextWindow != nil {
-					r.contextWindow.AddTokens(filteredToolTokens)
-				}
-				llmTools = actCtx.FilteredTools
-			}
+	default:
+		ctx.LastThought = &Thought{
+			Decision:    DecisionAnswer,
+			Reasoning:    l1Result.Reasoning,
+			FinalAnswer:  "I'm unsure how to proceed. Could you clarify your request?",
+			IsFinal:      true,
 		}
+		return totalTokens, nil
+	}
+
+	// ====================================================================
+	// PHASE 2 (L2 Planning): Full-schema tools + optional skill instructions
+	// ====================================================================
+	var l2FullSchemaTools []gochatcore.Tool
+	if len(l1SelectedToolNames) > 0 && actCtx == nil {
+		l2FullSchemaTools = UpgradeToolsToFullSchema(l1SelectedToolNames, allToolInfos)
+		if len(l2FullSchemaTools) == 0 {
+				logger.Info("L1-selected tools not found in registry, falling back to all full-schema tools")
+			l2FullSchemaTools = ToolInfosToLLMTools(allToolInfos)
+		}
+	} else {
+		l2FullSchemaTools = ToolInfosToLLMTools(allToolInfos)
+	}
+
+	fullSchemaTokens := EstimateTokensForTools(l2FullSchemaTools, estimateFn)
+	if fullSchemaTokens > 0 && r.contextWindow != nil {
+		r.contextWindow.AddTokens(fullSchemaTokens)
 	}
 
 	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry)
 	accountTokens(instructions)
 	r.checkSlide(ctx.Ctx())
 
-	content, tokens, err := r.callLLMStream(ctx, instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), llmTools, skillsSection)
+	content, tokens, err := r.callLLMStream(ctx, instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), l2FullSchemaTools, skillsSection)
 	if err != nil {
-		return totalTokens + tokens, fmt.Errorf("think phase2 (tool plan) failed: %w", err)
+		return totalTokens + tokens, fmt.Errorf("think L2 planning failed: %w", err)
 	}
 	totalTokens += tokens
 
 	thought, err := ParseThinkResponse(content)
 	if err != nil {
-		return totalTokens, fmt.Errorf("think phase2 parse failed: %w", err)
+		return totalTokens + tokens, fmt.Errorf("think L2 parse failed: %w", err)
 	}
 
 	if actCtx != nil && thought.SelectedSkill == "" {
@@ -115,6 +172,55 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 
 	ctx.LastThought = thought
 	return totalTokens, nil
+}
+
+// buildL1RoutingPrompt constructs the Phase 1 routing prompt for L1 progressive disclosure.
+// The model sees ALL tools with minimal schema and ALL skill metadata, then routes.
+func buildL1RoutingPrompt(skills []*core.Skill) string {
+	hasSkills := len(skills) > 0
+	base := "Analyze the user's input and determine the best way to respond.\n" +
+		"\n" +
+		"You see all available tools (with names and descriptions only) and any active capabilities below.\n" +
+		"\n" +
+		"Decide which path to take:\n" +
+		"- **\"tool\"**: The user's request can be fulfilled by directly invoking one or more tools. Set 'selected_tools' to the tool name(s) you need.\n" +
+		"- **\"skill\"**: The request requires specialized domain expertise. Choose the most applicable skill from <available_capabilities>. Set 'target' to the skill name.\n" +
+		"- **\"answer\"**: This is a simple question, chitchat, or knowledge query that needs no tools. Provide the answer directly.\n" +
+		"\n" +
+		"Respond with JSON only:\n" +
+		"{\"path\":\"tool|skill|answer\",\"target\":\"<skill_or_tool_name>\",\"selected_tools\":[\"tool_name1\",...],\"answer\":\"<if answer path>\",\"reasoning\":\"<brief explanation>\"}\n" +
+		"\n" +
+		"CRITICAL rules:\n" +
+		"- For \"tool\" path: you MUST populate selected_tools with specific tool names from the available set\n" +
+		"- For \"skill\" path: set target to the EXACT skill name from available_capabilities  \n" +
+		"- Select the MINIMUM set of tools sufficient for the task\n" +
+		"- When unsure between tool and skill, prefer \"skill\" for complex multi-step tasks"
+	if hasSkills {
+		return base + "\n\nAvailable capabilities (skills) are listed in the system prompt above — reference them by exact name."
+	}
+	return base
+}
+
+// parseL1RoutingResponse extracts the L1 routing result from LLM response JSON.
+func parseL1RoutingResponse(content string) (*l1RoutingResult, error) {
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "```") {
+		lines := strings.Split(content, "\n")
+		if len(lines) > 2 {
+			content = strings.Join(lines[1:len(lines)-1], "\n")
+		} else {
+			content = stripJSONWrappers(content)
+		}
+	}
+	var result l1RoutingResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse L1 routing JSON: %w\nraw: %s", err, content)
+	}
+	result.Path = strings.ToLower(strings.TrimSpace(result.Path))
+	if result.Path == "" {
+		result.Path = "answer"
+	}
+	return &result, nil
 }
 
 // Act executes the decision from the Think phase.

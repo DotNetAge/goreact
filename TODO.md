@@ -133,3 +133,5 @@
   - Agent空闲，而SubAgent正在执行，是否还能向Agent发送消息？
   - 当Agent在等待LLM完成执行时，是否还能向Agent发送消息？实现【紧急叫停】功能；
   - 如果SubAgent正在执行，不能够切换身份，只能等待执行完成；
+- 当切换Agent的时候Skill是不共享的，因为每个Agent有自己领域的Skill，因此不能共享。只能通过输入该Agent定义的Skills目录来加载Skill。
+

@@ -36,13 +36,13 @@ func realLLMConfig(t *testing.T) ReactorConfig {
 		t.Skip("Skipping integration test: DASHSCOPE_API_KEY not set or is placeholder")
 	}
 	return ReactorConfig{
-		APIKey:      apiKey,
-		BaseURL:     "https://dashscope.aliyuncs.com/compatible-mode/v1",
-		Model:       "qwen3.5-plus",
-		ClientType:  gochat.QwenClient,
-		Temperature: 0.7,
-		MaxTokens:   8192,
-		SystemPrompt: "You are a helpful AI assistant. You are concise, accurate, and respond in the same language as the user.",
+		APIKey:        apiKey,
+		BaseURL:       "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		Model:         "qwen3.5-plus",
+		ClientType:    gochat.QwenClient,
+		Temperature:   0.7,
+		MaxTokens:     8192,
+		SystemPrompt:  "You are a helpful AI assistant. You are concise, accurate, and respond in the same language as the user.",
 		MaxIterations: 5,
 	}
 }
@@ -62,8 +62,8 @@ func newRealReactor(t *testing.T) (*Reactor, *taoEventTracer) {
 // ============================================================
 
 type taoEventTracer struct {
-	bus     *InProcessEventBus
-	events  []core.ReactEvent
+	bus    *InProcessEventBus
+	events []core.ReactEvent
 }
 
 func newTaoEventTracer() *taoEventTracer {
@@ -368,6 +368,7 @@ func TestTAO_ClarificationIntent_RealLLM(t *testing.T) {
 // Verifies: conversation history flows into prompts correctly
 
 func TestTAO_FollowUpIntent_RealLLM(t *testing.T) {
+	// TODO: 这个测试总是超时，我怀疑 defer有死锁！
 	r, tracer := newRealReactor(t)
 	defer tracer.close()
 
@@ -558,8 +559,8 @@ func TestTAO_MultiTurnConversation_RealLLM(t *testing.T) {
 	defer cancel()
 
 	turns := []struct {
-		label  string
-		input  string
+		label   string
+		input   string
 		history ConversationHistory
 	}{
 		{label: "T1-chat", input: "你好，我叫小明，请记住我的名字"},

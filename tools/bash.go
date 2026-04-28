@@ -4,19 +4,48 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
 
-// BashTool implements a tool for executing shell commands.
-type BashTool struct{}
-
-// NewBashTool 创建 Bash 工具
-func NewBashTool() core.FuncTool {
-	return &BashTool{}
+// BashTool implements a tool for executing shell commands with whitelist security.
+type BashTool struct {
+	whitelistEnabled bool
+	customWhitelist  map[string]bool
 }
+
+// NewBashTool creates a Bash tool with default whitelist enabled.
+func NewBashTool() core.FuncTool {
+	return &BashTool{
+		whitelistEnabled: true,
+		customWhitelist:  make(map[string]bool),
+	}
+}
+
+// NewBashToolWithWhitelist creates a Bash tool with custom whitelist.
+func NewBashToolWithWhitelist(allowedCommands []string) core.FuncTool {
+	wl := make(map[string]bool)
+	for _, cmd := range allowedCommands {
+		wl[cmd] = true
+	}
+	return &BashTool{
+		whitelistEnabled: true,
+		customWhitelist:  wl,
+	}
+}
+
+// NewBashToolUnrestricted creates a Bash tool without whitelist (not recommended for production).
+func NewBashToolUnrestricted() core.FuncTool {
+	return &BashTool{
+		whitelistEnabled: false,
+		customWhitelist:  make(map[string]bool),
+	}
+}
+
+var baseCommandPattern = regexp.MustCompile(`^\s*([a-zA-Z][a-zA-Z0-9._\-]*)(\s|$)`)
 
 const bashDescription = `Executes a given bash command and returns its output.
 
@@ -50,7 +79,7 @@ func (t *BashTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:          "bash",
 		Description:   bashDescription,
-		Tags:         []string{"shell", "execute", "system", "command", "process"},
+		Tags:          []string{"shell", "execute", "system", "command", "process"},
 		SecurityLevel: core.LevelHighRisk,
 		Parameters: []core.Parameter{
 			{
@@ -84,6 +113,20 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 			"success":     false,
 			"error":       blocked,
 		}, nil
+	}
+
+	if t.whitelistEnabled {
+		if allowed := t.isCommandWhitelisted(command); !allowed {
+			baseCmd := extractBaseCommand(command)
+			return map[string]any{
+				"stdout":      "",
+				"stderr":      fmt.Sprintf("BLOCKED: command %q is not in the whitelist. Allowed commands: %s", baseCmd, strings.Join(getDefaultWhitelist(), ", ")),
+				"exit_code":   126,
+				"interrupted": false,
+				"success":     false,
+				"error":       fmt.Sprintf("command not whitelisted: %s", baseCmd),
+			}, nil
+		}
 	}
 
 	timeoutMs := 30000
@@ -191,6 +234,60 @@ func matchPattern(s, pattern string) bool {
 	}
 	for i := 0; i <= len(lowerS)-len(lowerP); i++ {
 		if lowerS[i:i+len(lowerP)] == lowerP {
+			return true
+		}
+	}
+	return false
+}
+
+// getDefaultWhitelist returns the default allowed commands for the bash tool.
+func getDefaultWhitelist() []string {
+	return []string{
+		"ls", "cat", "head", "tail", "wc", "grep", "find",
+		"echo", "printf", "pwd", "cd", "mkdir", "touch", "cp", "mv", "rm",
+		"chmod", "chown", "ln", "tar", "gzip", "gunzip", "zip", "unzip",
+		"git", "svn", "hg",
+		"python", "python3", "pip", "pip3", "node", "npm", "npx",
+		"go", "cargo", "rustc",
+		"make", "cmake", "gcc", "g++", "clang", "clang++",
+		"docker", "kubectl", "helm",
+		"curl", "wget", "ssh", "scp", "rsync",
+		"ps", "top", "htop", "kill", "killall", "pgrep", "pkill",
+		"df", "du", "free", "uname", "date", "whoami", "id",
+		"env", "export", "source", "alias", "which", "type", "file",
+		"sed", "awk", "sort", "uniq", "cut", "tr", "tee", "xargs",
+		"jq", "yq",
+		"test", "[[", "true", "false", "exit", "return",
+		"sleep", "wait", "bg", "fg", "jobs", "nohup", "disown",
+		"basename", "dirname", "realpath", "readlink",
+		"sha256sum", "md5sum", "sha1sum", "shasum",
+		"openssl", "gpg", "ssh-keygen",
+	}
+}
+
+// extractBaseCommand extracts the base command from a shell command string.
+func extractBaseCommand(command string) string {
+	matches := baseCommandPattern.FindStringSubmatch(strings.TrimSpace(command))
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// isCommandWhitelisted checks if the command's base executable is in the whitelist.
+func (t *BashTool) isCommandWhitelisted(command string) bool {
+	baseCmd := extractBaseCommand(command)
+	if baseCmd == "" {
+		return false
+	}
+
+	if len(t.customWhitelist) > 0 {
+		return t.customWhitelist[baseCmd]
+	}
+
+	defaultWL := getDefaultWhitelist()
+	for _, allowed := range defaultWL {
+		if baseCmd == allowed {
 			return true
 		}
 	}

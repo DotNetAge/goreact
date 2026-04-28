@@ -201,7 +201,8 @@ func BuildSummaryToolsUsed(steps []Step) string {
 
 // ToolInfosToLLMTools converts goreact core.ToolInfo slice into gochat core.Tool slice
 // for native function calling via LLM's Tools parameter.
-// Each ToolInfo's Parameters are converted to JSON Schema format.
+// Each ToolInfo's Parameters are converted to full JSON Schema format.
+// Use this for L2/L3 stages where the model needs complete parameter definitions.
 func ToolInfosToLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
 	if len(infos) == 0 {
 		return nil
@@ -216,6 +217,59 @@ func ToolInfosToLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
 		})
 	}
 	return tools
+}
+
+// ToolInfosToMinimalLLMTools converts ToolInfo slice into gochat core.Tool slice
+// with MINIMAL parameter schema (empty properties {}).
+//
+// Verified by Experiment 1 (TestExp1_QwenAcceptsMinimalNativeTools_EmptyParams):
+// Qwen 3.5 Flash accepts this format and returns structured tool_calls correctly.
+// Token savings: ~29% vs full schema (~50 tokens/tool vs ~70+ tokens/tool).
+//
+// Use this for L1 (routing) stage where the model only needs Name+Description
+// to make routing decisions — full parameter schemas are unnecessary overhead.
+func ToolInfosToMinimalLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
+	if len(infos) == 0 {
+		return nil
+	}
+	emptyParams := json.RawMessage(`{"type":"object","properties":{}}`)
+	tools := make([]gochatcore.Tool, 0, len(infos))
+	for _, info := range infos {
+		tools = append(tools, gochatcore.Tool{
+			Name:        info.Name,
+			Description: info.Description,
+			Parameters:  emptyParams,
+		})
+	}
+	return tools
+}
+
+// UpgradeToolsToFullSchema takes a list of tool names and returns only those tools
+// with FULL parameter JSON Schema. Tools not in the source list are omitted.
+//
+// This is the L3 stage: after L2 has identified which tools are needed via
+// semantic capability matching, we re-inject only those tools with complete
+// schemas so the LLM can generate correct tool_call arguments.
+func UpgradeToolsToFullSchema(selectedNames []string, allInfos []core.ToolInfo) []gochatcore.Tool {
+	if len(selectedNames) == 0 || len(allInfos) == 0 {
+		return nil
+	}
+	nameSet := make(map[string]bool, len(selectedNames))
+	for _, n := range selectedNames {
+		nameSet[n] = true
+	}
+	var upgraded []gochatcore.Tool
+	for _, info := range allInfos {
+		if nameSet[info.Name] {
+			params := buildJSONSchemaParams(info.Parameters)
+			upgraded = append(upgraded, gochatcore.Tool{
+				Name:        info.Name,
+				Description: info.Description,
+				Parameters:  params,
+			})
+		}
+	}
+	return upgraded
 }
 
 // buildJSONSchemaParams converts core.Parameter slice into JSON Schema RawMessage.
