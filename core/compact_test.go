@@ -94,17 +94,21 @@ func TestMicroCompact_ShortInput(t *testing.T) {
 }
 
 func TestDefaultTokenEstimator(t *testing.T) {
+	// NewDefaultTokenEstimator now delegates to EstimateTokens (tiktoken-backed)
 	e := NewDefaultTokenEstimator(4.0)
-	if e.Estimate("hello world") != 2 {
-		t.Errorf("expected 2 tokens, got %d", e.Estimate("hello world"))
+	count := e.Estimate("hello world")
+	// "hello world" = 2 tokens in BPE (or ~3 with heuristic fallback)
+	if count < 1 || count > 5 {
+		t.Errorf("expected reasonable token count for 'hello world', got %d", count)
 	}
+	// Verify backward-compatible constructor works
 	e2 := NewDefaultTokenEstimator(-1)
-	if e2.CharsPerToken != 3.0 {
-		t.Errorf("negative charsPerToken should default to 3.0, got %f", e2.CharsPerToken)
+	if e2.Estimate("test") < 1 {
+		t.Errorf("negative charsPerToken should still produce valid estimate, got %d", e2.Estimate("test"))
 	}
 	e3 := NewDefaultTokenEstimator(0)
-	if e3.CharsPerToken != 3.0 {
-		t.Errorf("zero charsPerToken should default to 3.0, got %f", e3.CharsPerToken)
+	if e3.Estimate("test") < 1 {
+		t.Errorf("zero charsPerToken should still produce valid estimate, got %d", e3.Estimate("test"))
 	}
 }
 

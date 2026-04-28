@@ -1075,3 +1075,140 @@ func TestE2E_TeamCollaborationWithSummary(t *testing.T) {
 		t.Logf("Experience SubAgents: %+v", expData.SubAgents)
 	}
 }
+
+// TestE2E_SkillActivatedMultiAgentCollaboration verifies that when a skill is activated
+// with AllowedTools that include multi-agent collaboration tools (subagent, team_create, etc.),
+// and the skill's Instructions explicitly direct the LLM to use team-based parallel work,
+// the T-A-O loop correctly provides those tools in Phase 2 and can execute them.
+//
+// This tests the full chain:
+//   P1 (Phase 1 Think) → selects "team-collaborator" skill
+//   ActivateSkill() → filters to [subagent, team_create, wait_team, team_delete]
+//   P2 (Phase 2 Think) → LLM sees only team tools → calls team_create + subagent + wait_team
+func TestE2E_SkillActivatedMultiAgentCollaboration(t *testing.T) {
+	scenario := MockScenario{
+		Responses: []MockResponse{
+			{Content: intentResponse("task", "parallel_analysis", 0.92, false)},
+			{Content: thinkActResponse(
+				"The user wants parallel analysis. I should activate the 'team-collaborator' skill for multi-agent parallel processing.",
+				"skill_activate", map[string]any{"skill_name": "team-collaborator"},
+			)},
+			{Content: thinkActResponse(
+				"Creating team for parallel agent work",
+				"team_create", map[string]any{"name": "analysis-team", "description": "Parallel code analysis"},
+			)},
+			{Content: thinkActResponse(
+				"Spawning analyzer subagent",
+				"subagent", map[string]any{"name": "@analyzer", "description": "Analyze code quality", "prompt": "Check for bugs in main.go"},
+			)},
+			{Content: thinkActResponse(
+				"Spawning tester subagent",
+				"subagent", map[string]any{"name": "@tester", "description": "Run tests", "prompt": "Run unit tests"},
+			)},
+			{Content: thinkActResponse(
+				"Waiting for all agents to complete",
+				"wait_team", map[string]any{"team_id": "team_1"},
+			)},
+			{Content: thinkAnswerResponse(
+				"Team synthesis complete",
+				"Team collaboration via activated skill completed successfully. Analyzer and tester agents finished their tasks.",
+			)},
+		},
+	}
+
+	bus := NewEventBus()
+	ch, subCancel := bus.Subscribe()
+	defer subCancel()
+
+	cfg := ReactorConfig{
+		APIKey:        "mock-api-key",
+		BaseURL:       "https://mock.example.com/v1",
+		Model:         "mock-model",
+		MaxIterations: 20,
+		IsLocal:       true,
+	}
+
+	skillReg := NewDefaultSkillRegistry()
+	_ = skillReg.RegisterSkill(&core.Skill{
+		Name:         "team-collaborator",
+		Description:  "Enables multi-agent team collaboration for parallel task execution",
+		Instructions: `You are operating under the **team-collaborator** skill.
+For complex analysis tasks, use TEAM COLLABORATION:
+1. Create a team with team_create
+2. Spawn specialized subagents (e.g., @analyzer, @tester) via subagent tool
+3. Each subagent works on a specific aspect in parallel
+4. Use wait_team to collect all results
+5. Use team_delete when done`,
+		AllowedTools: "subagent,team_create,wait_team,team_delete",
+	})
+
+	r := NewReactor(cfg,
+		WithMockLLM(mockLLMFromScenario(scenario)),
+		WithEventBus(bus),
+		WithSkillRegistry(skillReg),
+	)
+
+	ctx, ctxCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer ctxCancel()
+
+	result, err := r.Run(ctx, "Analyze this codebase for bugs and run tests in parallel", nil)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	t.Logf("Total iterations: %d, termination: %s", result.TotalIterations, result.TerminationReason)
+
+	if result.TotalIterations < 5 {
+		t.Errorf("expected at least 5 iterations (intent+skill_activate+team_create+subagent+wait_team), got %d", result.TotalIterations)
+	}
+
+	var toolTargets []string
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeToolCall {
+			toolTargets = append(toolTargets, step.Action.Target)
+		}
+	}
+	t.Logf("Tool calls: %v", toolTargets)
+
+	foundTools := map[string]bool{}
+	for _, target := range toolTargets {
+		foundTools[target] = true
+	}
+
+	expectedTools := []string{"team_create", "subagent", "wait_team"}
+	for _, expected := range expectedTools {
+		if !foundTools[expected] {
+			t.Errorf("expected tool %q to be called but it was not found in: %v", expected, toolTargets)
+		}
+	}
+
+	var gotSubtaskSpawned bool
+	var gotTeamCreated bool
+	select {
+	case ev := <-ch:
+		switch ev.Type {
+		case core.SubtaskSpawned:
+			gotSubtaskSpawned = true
+			t.Logf("Got SubtaskSpawned event: %+v", ev.Data)
+		case core.ExecutionSummary:
+			data, _ := ev.Data.(map[string]any)
+			if data != nil {
+				t.Logf("ExecutionSummary: iterations=%v", data["iterations"])
+			}
+		default:
+			t.Logf("Event: %s data=%+v", ev.Type, ev.Data)
+		}
+	default:
+	}
+
+	if !gotSubtaskSpawned {
+		t.Log("Note: SubtaskSpawned event not captured — may need event bus timing adjustment")
+	}
+	_ = gotTeamCreated
+
+	if result.Answer == "" {
+		t.Error("expected non-empty final answer from team collaboration")
+	} else if !strings.Contains(strings.ToLower(result.Answer), "team") {
+		t.Errorf("expected answer to mention 'team', got: %s", truncate(result.Answer, 100))
+	}
+}

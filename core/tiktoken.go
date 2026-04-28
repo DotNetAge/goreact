@@ -68,26 +68,6 @@ func CountTokens(text string) (int, error) {
 	return len(tokens), nil
 }
 
-// CountTokensMust is like CountTokens but panics on encoder initialization failure.
-// Use this when the caller expects tiktoken to always be available.
-func CountTokensMust(text string) int {
-	if text == "" {
-		return 0
-	}
-
-	enc, err := getGlobalEncoder()
-	if err != nil {
-		panic(fmt.Sprintf("goreact: tiktoken encoder initialization failed: %v", err))
-	}
-
-	tokens := enc.Encode(text, nil, nil)
-	if tokens == nil {
-		panic(fmt.Sprintf("goreact: tiktoken Encode returned nil for text of length %d", len(text)))
-	}
-
-	return len(tokens)
-}
-
 // EstimateTokens provides a fast token count estimate using tiktoken with
 // automatic fallback to character-class heuristics. It never returns an error,
 // making it suitable as a drop-in replacement for the old heuristic-only version.

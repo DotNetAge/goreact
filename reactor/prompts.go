@@ -94,6 +94,7 @@ type systemPromptData struct {
 	Name        string
 	Domain      string
 	Description string
+	Rules       string // formatted rules from RuleRegistry (or defaults)
 }
 
 // summaryPromptData holds template variables for the task summary prompt.
@@ -133,21 +134,38 @@ func renderThinkPrompt(data thinkPromptData) (string, error) {
 }
 
 // RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
-// It accepts the agent's name, domain, and description as template variables.
-func RenderDefaultSystemPrompt(name, domain, description string) (string, error) {
+// It accepts the agent's name, domain, description, and formatted behavior rules.
+// When rules is empty string, default behavioral rules are used.
+func RenderDefaultSystemPrompt(name, domain, description, rules string) (string, error) {
 	t := defaultSystemPromptTemplate.Lookup(tmplSystem)
 	if t == nil {
 		return "", template.ExecError{Name: tmplSystem, Err: nil}
+	}
+	if rules == "" {
+		rules = DefaultBehavioralRules()
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, systemPromptData{
 		Name:        name,
 		Domain:      domain,
 		Description: description,
+		Rules:       rules,
 	}); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// DefaultBehavioralRules returns the built-in behavioral rules used when
+// no custom RuleRegistry is configured.
+func DefaultBehavioralRules() string {
+	return `1. Language Consistency: Always respond in the same language as the user's input.
+2. Concise & Precise: Answer directly to the point, avoid redundancy without sacrificing completeness.
+3. Tool-first: When a tool can significantly improve answer quality, proactively use it instead of relying solely on memory.
+4. Honest & Transparent: Explicitly state uncertainty, never fabricate facts; proactively ask when more information is needed.
+5. Safety Boundaries: Do not execute destructive operations that risk data loss or security breaches; high-risk operations require user consent.
+6. Context Awareness: Maintain understanding of prior conversation context, leverage context rather than asking users to repeat information.
+7. Memory-driven: Prefer known facts from memory; when memory conflicts with prior knowledge, defer to memory.`
 }
 
 // renderSummaryPrompt renders the task summary prompt using the embedded template.
@@ -342,6 +360,10 @@ func (r *Reactor) ActivateSkill(skillName string, allToolInfos []core.ToolInfo) 
 	filteredInfos := filterToolsByAllowed(allToolInfos, chosen.AllowedTools)
 	llmTools := ToolInfosToLLMTools(filteredInfos)
 
+	if chosen.AllowedTools != "" && chosen.AllowedTools != "*" {
+		warnMentionedButNotAllowed(chosen.Name, chosen.Instructions, chosen.AllowedTools, filteredInfos)
+	}
+
 	return &ActivatedSkillContext{
 		Skill:            chosen,
 		Instructions:     chosen.Instructions,
@@ -373,6 +395,115 @@ func filterToolsByAllowed(infos []core.ToolInfo, allowedTools string) []core.Too
 		}
 	}
 	return filtered
+}
+
+// warnMentionedButNotAllowed checks if a skill's Instructions text mentions tool names
+// that are NOT in its AllowedTools list. This catches configuration errors where
+// the SKILL.md tells the LLM to use tools it won't have access to in Phase 2.
+func warnMentionedButNotAllowed(skillName, instructions, allowedTools string, filtered []core.ToolInfo) {
+	mentioned := extractMentionedToolNames(instructions)
+	if len(mentioned) == 0 {
+		return
+	}
+
+	allowedSet := make(map[string]bool)
+	for _, name := range strings.Split(allowedTools, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			allowedSet[name] = true
+			allowedSet[strings.ToLower(name)] = true
+		}
+	}
+
+	filteredSet := make(map[string]bool)
+	for _, info := range filtered {
+		filteredSet[info.Name] = true
+		filteredSet[strings.ToLower(info.Name)] = true
+	}
+
+	var missing []string
+	for _, m := range mentioned {
+		lower := strings.ToLower(m)
+		if !allowedSet[m] && !allowedSet[lower] && !filteredSet[m] && !filteredSet[lower] {
+			missing = append(missing, m)
+		}
+	}
+
+	if len(missing) > 0 {
+		logger.Warn("skill Instructions mention tools not in AllowedTools",
+			"skill", skillName,
+			"allowedTools", allowedTools,
+			"missing", missing)
+	}
+}
+
+// extractMentionedToolNames scans text for known tool name patterns.
+// It matches words that look like tool names (lowercase with underscores, e.g., "read", "web_search").
+func extractMentionedToolNames(text string) []string {
+	var names []string
+	seen := make(map[string]bool)
+
+	knownToolPatterns := []string{
+		// File operations
+		"bash", "read", "write", "glob", "grep", "file_edit",
+		// Execution
+		"run_script", "repl",
+		// Network
+		"web_search", "web_fetch",
+		// Task management
+		"todo_write", "todo_read", "todo_execute",
+		// Memory
+		"memory_save", "memory_search",
+		// Communication
+		"email", "ask_user", "ask_permission",
+		// Orchestration
+		"subagent", "subagent_result",
+		"task_create", "task_result", "task_list",
+		"team_create", "send_message", "receive_messages",
+		"team_status", "team_delete", "wait_team",
+		"skill_create", "skill_list",
+		// Platform-specific (not registered by default but may be added)
+		"crontab", "launchd", "systemd",
+	}
+
+	for _, pattern := range knownToolPatterns {
+		if containsWord(text, pattern) && !seen[pattern] {
+			names = append(names, pattern)
+			seen[pattern] = true
+		}
+	}
+
+	return names
+}
+
+// containsWord checks if `word` appears as a whole word (not a substring) in text.
+func containsWord(text, word string) bool {
+	text = strings.ToLower(text)
+	word = strings.ToLower(word)
+	for {
+		idx := strings.Index(text, word)
+		if idx == -1 {
+			return false
+		}
+		before := 0
+		if idx > 0 {
+			before = idx - 1
+		}
+		after := idx + len(word)
+		if after < len(text) {
+			after++
+		}
+		beforeOK := before < 0 || !isWordChar(rune(text[before]))
+		afterOK := after >= len(text) || !isWordChar(rune(text[after-1]))
+		if beforeOK && afterOK {
+			return true
+		}
+		text = text[idx+len(word):]
+	}
+}
+
+func isWordChar(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 // BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.

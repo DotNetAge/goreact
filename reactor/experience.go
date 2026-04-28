@@ -1,10 +1,7 @@
 package reactor
 
 import (
-	"context"
-	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -12,48 +9,36 @@ import (
 // orchestrationToolNames identifies tools that spawn or manage subagents/teams.
 var orchestrationToolNames = map[string]bool{
 	// Task tools
-	"task_create":     true,
-	"task_result":     true,
+	"task_create": true,
+	"task_result": true,
 	// SubAgent tools
 	"subagent":        true,
 	"subagent_result": true,
 	// Team tools
-	"team_create":  true,
-	"team_delete":  true,
-	"team_status":  true,
-	"wait_team":    true,
+	"team_create": true,
+	"team_delete": true,
+	"team_status": true,
+	"wait_team":   true,
 	// Communication
-	"send_message":      true,
-	"receive_messages":  true,
+	"send_message":     true,
+	"receive_messages": true,
 }
 
-// saveExperience saves the execution trace as an experience memory record
-// when the task completed successfully (has answer, no critical errors).
-// This is called at the end of Run, after the execution summary is emitted.
+// buildExperienceCandidate evaluates whether a completed T-A-O execution produced
+// reusable experience, and if so returns a structured *core.ExperienceData.
+// Returns nil when the execution is not worth persisting (no answer, errors, trivial).
 //
-// The experience is structured as:
-//   - Title (problem): the user's original input / task description
-//   - Tags: extracted keywords from the problem for semantic matching
-//   - Content (solution): JSON with analysis, tools used, subagents, steps, and answer
-//   - Meta: typed *core.ExperienceData for direct access by Memory implementations
-//
-// Future runs with similar problems will Retrieve this experience during
-// the Think phase, allowing the LLM to skip redundant analysis.
-func (r *Reactor) saveExperience(ctx *ReactContext, result *RunResult) {
-	// Skip if no memory configured
-	if r.memory == nil {
-		return
-	}
-
-	// Only save on successful completion (has answer, not from error/cancellation)
+// The Reactor does NOT store experience — it only produces candidates.
+// The caller (Agent or client code) decides whether and how to persist,
+// allowing custom evaluation logic (quality scoring, dedup, format conversion).
+func (r *Reactor) buildExperienceCandidate(ctx *ReactContext, result *RunResult) *core.ExperienceData {
 	if result.Answer == "" {
-		return
+		return nil
 	}
 	if strings.Contains(result.TerminationReason, "error") {
-		return
+		return nil
 	}
 
-	// Skip trivially short tasks (single iteration with no tool calls = no reusable experience)
 	if result.TotalIterations <= 1 {
 		hasToolCall := false
 		for _, step := range ctx.History {
@@ -63,49 +48,19 @@ func (r *Reactor) saveExperience(ctx *ReactContext, result *RunResult) {
 			}
 		}
 		if !hasToolCall {
-			return
+			return nil
 		}
 	}
 
-	// Build experience data
 	exp := buildExperienceData(ctx.Input, ctx.History, result)
 
-	// Serialize to JSON for Content field
-	contentBytes, err := json.Marshal(exp)
-	if err != nil {
-		return // non-fatal: don't break the run
-	}
-
-	// Extract tags from intent and input for semantic matching
-	tags := extractExperienceTags(ctx.Input, ctx.Intent)
-
-	record := core.MemoryRecord{
-		Type:    core.MemoryTypeExperience,
-		Title:   ctx.Input,            // Problem description (semantic index)
-		Content: string(contentBytes), // Solution (analysis + steps) as JSON
-		Meta:    exp,                  // Typed metadata for Memory implementations
-		Scope:   core.MemoryScopeTeam, // Experiences are shared across the team
-		Tags:    tags,
-	}
-
-	// Store asynchronously — don't block the Run return
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// non-fatal: experience storage panic should not crash the reactor
-			}
-		}()
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = r.memory.Store(bgCtx, record)
-	}()
-
-	// Emit event so external listeners can observe experience saves
 	ctx.EmitEvent(core.ExperienceSaved, core.ExperienceSavedData{
 		Problem:    ctx.Input,
 		Iterations: result.TotalIterations,
 		ToolsUsed:  exp.Tools,
 	})
+
+	return exp
 }
 
 // buildExperienceData extracts the reusable analysis from a completed T-A-O execution.
@@ -170,48 +125,4 @@ func buildExperienceData(input string, history []Step, result *RunResult) *core.
 	exp.Analysis = truncate(strings.Join(reasoningParts, "\n---\n"), 2000)
 
 	return exp
-}
-
-// extractExperienceTags generates tags from the user input and intent
-// to improve semantic matching when recalling this experience later.
-func extractExperienceTags(input string, intent *Intent) []string {
-	var tags []string
-	seen := make(map[string]bool)
-
-	addTag := func(tag string) {
-		tag = strings.ToLower(strings.TrimSpace(tag))
-		if len(tag) >= 2 && !seen[tag] {
-			tags = append(tags, tag)
-			seen[tag] = true
-		}
-	}
-
-	// From intent
-	if intent != nil {
-		if intent.Topic != "" {
-			addTag(intent.Topic)
-		}
-		if intent.Type != "" {
-			addTag(string(intent.Type))
-		}
-		for k := range intent.Entities {
-			addTag(k)
-		}
-	}
-
-	// From input: extract meaningful words (simple heuristic)
-	words := strings.Fields(input)
-	for _, w := range words {
-		w = strings.ToLower(strings.TrimSpace(w))
-		if len(w) >= 3 {
-			addTag(w)
-		}
-	}
-
-	// Limit tags
-	if len(tags) > 10 {
-		tags = tags[:10]
-	}
-
-	return tags
 }

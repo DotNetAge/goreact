@@ -46,6 +46,7 @@ func LoadModels(path string) (*ModelRegistry, error) {
 func (m *ModelRegistry) Get(name string) *core.ModelConfig {
 	return m.models[name]
 }
+
 func (m *ModelRegistry) List() []*core.ModelConfig {
 	var result []*core.ModelConfig
 	for _, model := range m.models {

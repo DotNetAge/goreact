@@ -71,22 +71,34 @@ type TokenEstimator interface {
 	Estimate(text string) int
 }
 
-// DefaultTokenEstimator provides a simple heuristic-based token estimate.
-type DefaultTokenEstimator struct {
-	CharsPerToken float64
+// defaultTokenEstimator is the default implementation backed by EstimateTokens
+// (tiktoken BPE with fallback heuristic). This ensures all token accounting
+// in the Reactor uses a single, consistent counting strategy.
+type defaultTokenEstimator struct{}
+
+// NewDefaultTokenEstimator creates an estimator using the shared EstimateTokens function.
+// EstimateTokens is backed by tiktoken BPE tokenizer with automatic fallback
+// to character-class heuristics when tiktoken is unavailable.
+//
+// The charsPerToken parameter is accepted for backward compatibility but is no longer
+// used — actual counting always goes through EstimateTokens().
+//
+// Deprecated: Use NewTokenEstimator() for new code, or simply rely on the
+// zero-value of *defaultTokenEstimator which correctly delegates to EstimateTokens.
+func NewDefaultTokenEstimator(charsPerToken float64) *defaultTokenEstimator {
+	return &defaultTokenEstimator{}
 }
 
-// NewDefaultTokenEstimator creates an estimator with the given chars-per-token ratio.
-func NewDefaultTokenEstimator(charsPerToken float64) *DefaultTokenEstimator {
-	if charsPerToken <= 0 {
-		charsPerToken = 3.0
-	}
-	return &DefaultTokenEstimator{CharsPerToken: charsPerToken}
+// NewTokenEstimator returns the standard token estimator that uses tiktoken BPE
+// tokenization with automatic fallback. This is the recommended constructor.
+func NewTokenEstimator() *defaultTokenEstimator {
+	return &defaultTokenEstimator{}
 }
 
-// Estimate returns the approximate token count.
-func (e *DefaultTokenEstimator) Estimate(text string) int {
-	return int(float64(len(text)) / e.CharsPerToken)
+// Estimate returns the token count using the shared EstimateTokens function
+// (tiktoken BPE with heuristic fallback).
+func (e *defaultTokenEstimator) Estimate(text string) int {
+	return EstimateTokens(text)
 }
 
 // TrimJSONResult attempts to trim a JSON result by removing large array elements

@@ -67,7 +67,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 			"If no skill clearly matches, set selected_skill to empty string."
 
 		selectContent, selectTokens, err := r.callLLMStream(
-			ctx, selectInstructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns, nil, skillsSection,
+			ctx, selectInstructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection,
 		)
 		if err != nil {
 			return totalTokens + selectTokens, fmt.Errorf("think phase1 (skill select) failed: %w", err)
@@ -98,7 +98,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	accountTokens(instructions)
 	r.checkSlide(ctx.Ctx())
 
-	content, tokens, err := r.callLLMStream(ctx, instructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns, llmTools, skillsSection)
+	content, tokens, err := r.callLLMStream(ctx, instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), llmTools, skillsSection)
 	if err != nil {
 		return totalTokens + tokens, fmt.Errorf("think phase2 (tool plan) failed: %w", err)
 	}
@@ -163,6 +163,14 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 		if execErr != nil {
 			action.Error = execErr
 			action.ErrorMsg = execErr.Error()
+		} else if execResult.Interaction != nil {
+			answer, interactErr := r.interactionHandler.HandleInteraction(ctx.Ctx(), execResult.Interaction)
+			if interactErr != nil {
+				action.Error = interactErr
+				action.ErrorMsg = interactErr.Error()
+			} else {
+				action.Result = answer
+			}
 		} else {
 			action.Result = execResult.Result
 		}

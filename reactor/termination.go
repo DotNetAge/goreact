@@ -57,8 +57,10 @@ func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 	return false, ""
 }
 
-const maxDestructiveLoopCount = 3
-const maxStuckCount = 4
+const (
+	maxDestructiveLoopCount = 3
+	maxStuckCount         = 4
+)
 
 func isToolErrorIrrecoverable(obs *Observation) bool {
 	if obs == nil || obs.Error == "" {

@@ -88,7 +88,7 @@ func (b *InProcessEventBus) SubscribeFiltered(filter func(core.ReactEvent) bool)
 	b.nextID++
 
 	sub := &subscriber{
-		ch:     make(chan core.ReactEvent, 256), // buffer for burst events
+		ch:     make(chan core.ReactEvent, StreamChannelBufferSize), // buffer for burst events
 		filter: filter,
 	}
 	b.subscribers[idStr(id)] = sub

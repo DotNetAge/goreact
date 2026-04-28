@@ -101,11 +101,7 @@ func (r *Reactor) runSubAgentAsync(ctx context.Context, taskID string, subConfig
 
 // runSubAgentCore is the shared execution logic for both sync and async subagent runs.
 func (r *Reactor) runSubAgentCore(ctx context.Context, taskID string, subConfig ReactorConfig, prompt string, resultCh chan<- any) {
-	subReactor := NewReactor(subConfig,
-		WithMemory(r.memory),
-		WithMessageBus(r.messageBus),
-		WithEventBus(r.eventBus),
-	)
+	subReactor := r.CloneReactor(subConfig)
 
 	tm := r.taskManager
 	result, runErr := subReactor.Run(ctx, prompt, nil)

@@ -140,7 +140,7 @@ func TestDataFlow_BuildLLMBuilderLayering(t *testing.T) {
 		instruction,
 		userInput,
 		nil,
-		MaxHistoryTurns,
+		defaultMaxHistoryTurns,
 	)
 
 	if !strings.Contains(capturedSystem, instruction) {
@@ -288,7 +288,7 @@ func TestDataFlow_SystemPromptIntegrityThroughPipeline(t *testing.T) {
 		"Classify this request.",
 		"write a hello world program",
 		nil,
-		MaxHistoryTurns,
+		defaultMaxHistoryTurns,
 	)
 
 	if callCount == 0 {

@@ -9,10 +9,11 @@ import (
 )
 
 type ToolExecutionResult struct {
-	Result   string
-	Duration time.Duration
-	Error    error
-	ToolName string
+	Result      string
+	Duration    time.Duration
+	Error       error
+	ToolName    string
+	Interaction *InteractionRequest // non-nil when tool requests human interaction
 }
 
 type ToolExecutor interface {
@@ -193,6 +194,15 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 		return &ToolExecutionResult{ToolName: name, Duration: duration, Error: err}, nil
 	}
 
+	var interaction *InteractionRequest
+	if m, ok := result.(map[string]any); ok {
+		if ir, exists := m["_interaction"]; exists {
+			if req, ok := ir.(*InteractionRequest); ok && req != nil {
+				interaction = req
+			}
+		}
+	}
+
 	str, ok := result.(string)
 	if !ok {
 		b, marshalErr := json.Marshal(result)
@@ -206,9 +216,10 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 	str = e.processResult(name, str, toolInfo)
 
 	return &ToolExecutionResult{
-		Result:   str,
-		Duration: duration,
-		ToolName: name,
+		Result:      str,
+		Duration:    duration,
+		ToolName:    name,
+		Interaction: interaction,
 	}, nil
 }
 

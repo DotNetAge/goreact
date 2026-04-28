@@ -87,6 +87,19 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 		Temperature(r.config.Temperature).
 		MaxTokens(r.config.MaxTokens)
 
+	if r.config.TopP > 0 {
+		builder.TopP(r.config.TopP)
+	}
+	if r.config.TopK > 0 {
+		builder.TopK(r.config.TopK)
+	}
+	if r.config.PresencePenalty != 0 {
+		builder.PresencePenalty(r.config.PresencePenalty)
+	}
+	if r.config.FrequencyPenalty != 0 {
+		builder.FrequencyPenalty(r.config.FrequencyPenalty)
+	}
+
 	if r.config.SystemPrompt != "" {
 		builder.SystemMessage(r.config.SystemPrompt)
 	}
@@ -99,7 +112,7 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 		builder.SystemMessage(systemPrompt)
 	}
 
-	maxTokensForHistory := int64(float64(r.config.MaxTokens) * 0.7)
+	maxTokensForHistory := int64(float64(r.config.MaxTokens) * historyTokenBudgetRatio)
 
 	var chatMessages []gochatcore.Message
 	messages := history
@@ -142,7 +155,7 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 func (r *Reactor) classifyIntent(ctx *ReactContext) (*Intent, int, error) {
 	instructions := BuildIntentPrompt(ctx.Input, "", r.intentRegistry)
 
-	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, MaxHistoryTurns)
+	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns())
 	if err != nil {
 		return nil, 0, fmt.Errorf("intent classification LLM call failed: %w", err)
 	}

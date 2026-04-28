@@ -60,6 +60,10 @@ const (
 	// TaskSummary signals a natural-language summary of the completed task.
 	// This is emitted after the T-A-O loop finishes for non-trivial tasks.
 	TaskSummary ReactEventType = "task_summary"
+
+	// AgentSwitched signals that an Agent has switched its identity (config/model)
+	// via Agent.Switch(). The Data field contains name, model, and description.
+	AgentSwitched ReactEventType = "agent_switched"
 )
 
 // ReactEvent is the unit of data published by the Reactor's event bus.

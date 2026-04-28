@@ -175,3 +175,15 @@ func WithSessionStore(store core.SessionStore) ReactorOption {
 		s.sessionStore = store
 	}
 }
+
+// WithRuleRegistry sets a custom RuleRegistry for behavior rule management.
+// Rules are injected into the System Prompt's <behavioral_rules> section,
+// allowing runtime customization of agent behavior without code changes.
+//
+// If not set, a new empty DefaultRuleRegistry is created (no custom rules,
+// default behavioral rules from template are used).
+func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.ruleRegistry = reg
+	}
+}

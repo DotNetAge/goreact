@@ -3,6 +3,7 @@ package reactor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -13,17 +14,47 @@ import (
 	"github.com/DotNetAge/goreact/tools"
 )
 
-// MaxHistoryTurns limits conversation history turns sent to LLM.
-const MaxHistoryTurns = 10
+var logger = slog.Default()
+
+const (
+	historyTokenBudgetRatio = 0.7
+	StreamChannelBufferSize = 256
+
+	defaultMaxHistoryTurns = 8
+	tokensPerTurnEstimate  = 500
+	minMaxHistoryTurns     = 3
+	maxMaxHistoryTurns     = 20
+)
+
+func maxHistoryTurnsForConfig(maxTokens int) int {
+	if maxTokens <= 0 {
+		return defaultMaxHistoryTurns
+	}
+	estimated := int(float64(maxTokens) * historyTokenBudgetRatio / float64(tokensPerTurnEstimate))
+	if estimated < minMaxHistoryTurns {
+		return minMaxHistoryTurns
+	}
+	if estimated > maxMaxHistoryTurns {
+		return maxMaxHistoryTurns
+	}
+	return estimated
+}
 
 // ReactorConfig holds the configuration for creating a Reactor.
+// Generation parameters are aligned with core.ModelConfig for full LLM control.
 type ReactorConfig struct {
-	APIKey      string
-	BaseURL     string
-	Model       string
-	ClientType  gochat.ClientType
-	Temperature float64
-	MaxTokens   int
+	APIKey     string
+	BaseURL    string
+	AuthToken  string
+	Model      string
+	ClientType gochat.ClientType
+
+	Temperature      float64
+	TopP             float64
+	TopK             int
+	PresencePenalty  float64
+	FrequencyPenalty float64
+	MaxTokens        int
 
 	SystemPrompt  string
 	MaxIterations int
@@ -33,16 +64,17 @@ type ReactorConfig struct {
 
 // RunResult holds the complete output of a Run invocation.
 type RunResult struct {
-	Answer                string        `json:"answer" yaml:"answer"`
-	Intent                *Intent       `json:"intent,omitempty" yaml:"intent,omitempty"`
-	Steps                 []Step        `json:"steps,omitempty" yaml:"steps,omitempty"`
-	TotalIterations       int           `json:"total_iterations" yaml:"total_iterations"`
-	TerminationReason     string        `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
-	Confidence            float64       `json:"confidence" yaml:"confidence"`
-	ClarificationNeeded   bool          `json:"clarification_needed" yaml:"clarification_needed"`
-	ClarificationQuestion string        `json:"clarification_question,omitempty" yaml:"clarification_question,omitempty"`
-	TokensUsed            int           `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
-	TotalDuration         time.Duration `json:"total_duration_ms,omitempty" yaml:"total_duration_ms,omitempty"`
+	Answer                string               `json:"answer" yaml:"answer"`
+	Intent                *Intent              `json:"intent,omitempty" yaml:"intent,omitempty"`
+	Steps                 []Step               `json:"steps,omitempty" yaml:"steps,omitempty"`
+	TotalIterations       int                  `json:"total_iterations" yaml:"total_iterations"`
+	TerminationReason     string               `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
+	Confidence            float64              `json:"confidence" yaml:"confidence"`
+	ClarificationNeeded   bool                 `json:"clarification_needed" yaml:"clarification_needed"`
+	ClarificationQuestion string               `json:"clarification_question,omitempty" yaml:"clarification_question,omitempty"`
+	TokensUsed            int                  `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
+	TotalDuration         time.Duration        `json:"total_duration_ms,omitempty" yaml:"total_duration_ms,omitempty"`
+	Experience            *core.ExperienceData `json:"experience,omitempty" yaml:"experience,omitempty"`
 }
 
 // ReActor is the public interface for the T-A-O reactor.
@@ -70,16 +102,17 @@ type Reactor struct {
 	toolRegistry   core.ToolRegistry
 	toolExecutor   core.ToolExecutor
 	skillRegistry  core.SkillRegistry
+	ruleRegistry   core.RuleRegistry
 	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder
 
 	memory         core.Memory
 	tokenEstimator core.TokenEstimator
 
-	askUser       *tools.AskUser
-	askPermission *tools.AskPermission
-	eventBus      EventBus
-	messageBus    *core.AgentMessageBus
+	interactionHandler HumanInteractionHandler
+	askPermission      *tools.AskPermission
+	eventBus           EventBus
+	messageBus         *core.AgentMessageBus
 
 	pendingTasks   map[string]chan any
 	pendingTasksMu sync.RWMutex
@@ -103,11 +136,7 @@ func (r *Reactor) EventBus() EventBus { return r.eventBus }
 
 func (r *Reactor) MessageBus() *core.AgentMessageBus { return r.messageBus }
 
-func (r *Reactor) AskUser() *tools.AskUser { return r.askUser }
-
-func (r *Reactor) SetAskUser(t *tools.AskUser) { r.askUser = t }
-
-func (r *Reactor) AskPermission() *tools.AskPermission { return r.askPermission }
+func (r *Reactor) InteractionHandler() HumanInteractionHandler { return r.interactionHandler }
 
 func (r *Reactor) Memory() core.Memory { return r.memory }
 
@@ -172,6 +201,7 @@ type reactorSetup struct {
 	intentRegistry    IntentRegistry
 	toolRegistry      core.ToolRegistry
 	skillRegistry     core.SkillRegistry
+	ruleRegistry      core.RuleRegistry
 }
 
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
@@ -197,7 +227,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	r := &Reactor{
 		config:         config,
 		taskManager:    core.NewInMemoryTaskManager(),
-		tokenEstimator: core.NewDefaultTokenEstimator(3.0),
+		tokenEstimator: core.NewTokenEstimator(),
 		memory:         setup.memory,
 		mockLLM:        setup.mockLLM,
 		sessionStore:   setup.sessionStore,
@@ -219,6 +249,11 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	} else {
 		r.skillRegistry = NewDefaultSkillRegistry()
 	}
+	if setup.ruleRegistry != nil {
+		r.ruleRegistry = setup.ruleRegistry
+	} else {
+		r.ruleRegistry = NewDefaultRuleRegistry()
+	}
 
 	if setup.eventBus != nil {
 		r.eventBus = setup.eventBus
@@ -239,7 +274,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	if !setup.skipBundledSkills {
 		if err := RegisterBundledSkills(r.skillRegistry); err != nil {
-			fmt.Printf("[goreact] warning: failed to register bundled skills: %v\n", err)
+			logger.Warn("failed to register bundled skills", "error", err)
 		}
 	}
 
@@ -247,25 +282,26 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		loader := core.NewFileSystemSkillLoader(dir)
 		skills, err := loader.Load()
 		if err != nil {
-			fmt.Printf("[goreact] warning: failed to load skills from %q: %v\n", dir, err)
+			logger.Warn("failed to load skills", "dir", dir, "error", err)
 			continue
 		}
 		for _, skill := range skills {
 			if err := r.skillRegistry.RegisterSkill(skill); err != nil {
-				fmt.Printf("[goreact] warning: failed to register skill %q: %v\n", skill.Name, err)
+				logger.Warn("failed to register skill", "name", skill.Name, "error", err)
 			}
 		}
 	}
 
 	r.registerOrchestrationTools()
 
-	r.askUser = tools.NewAskUserTool().(*tools.AskUser)
-	r.askUser.SetEventEmitter(func(e core.ReactEvent) {
+	r.interactionHandler = NewDefaultInteractionHandler(func(e core.ReactEvent) {
 		if r.eventBus != nil {
 			r.eventBus.Emit(e)
 		}
 	})
-	_ = r.RegisterTool(r.askUser)
+	if err := r.RegisterTool(tools.NewAskUserTool()); err != nil {
+		logger.Warn("failed to register ask_user tool", "error", err)
+	}
 
 	r.askPermission = tools.NewAskPermission()
 	r.askPermission.SetEventEmitter(func(e core.ReactEvent) {
@@ -289,30 +325,39 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			name string
 			tool core.FuncTool
 		}{
+			// --- File operations ---
 			{"grep", tools.NewGrepTool()},
 			{"glob", tools.NewGlobTool()},
+			{"read", tools.NewReadTool()},
+			{"write", tools.NewWriteTool()},
+			{"file_edit", tools.NewFileEditTool()},
+
+			// --- Execution ---
 			{"bash", tools.NewBashTool()},
+			{"run_script", tools.NewRunScriptTool()},
+
+			// --- Network ---
 			{"web_search", tools.NewWebSearchTool()},
 			{"web_fetch", tools.NewWebFetchTool()},
+
+			// --- Knowledge & Memory ---
+			{"memory_save", tools.NewMemorySaveTool()},
+			{"memory_search", tools.NewMemorySearchTool()},
+
+			// --- Task management ---
 			{"todo_write", tools.NewTodoWriteTool()},
 			{"todo_read", tools.NewTodoReadTool()},
 			{"todo_execute", tools.NewTodoExecuteTool()},
-			{"file_edit", tools.NewFileEditTool()},
-			{"repl", tools.NewREPLTool()},
-			{"read", tools.NewReadTool()},
-			{"write", tools.NewWriteTool()},
-			{"ls", tools.NewLsTool()},
-			{"echo", tools.NewEchoTool()},
-			{"calculator", tools.NewCalculatorTool()},
-			{"replace", tools.NewReplaceTool()},
-			{"memory_save", tools.NewMemorySaveTool()},
-			{"memory_search", tools.NewMemorySearchTool()},
+
+			// --- Communication ---
 			{"email", tools.NewEmailTool(tools.EmailConfig{})},
 			{"ask_user", tools.NewAskUserTool()},
 		}
 		for _, bt := range bundledTools {
 			if !setup.skipTools[bt.name] {
-				_ = r.RegisterTool(bt.tool)
+				if err := r.RegisterTool(bt.tool); err != nil {
+					logger.Warn("failed to register bundled tool", "name", bt.name, "error", err)
+				}
 			}
 		}
 
@@ -320,7 +365,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	}
 
 	for _, tool := range setup.extraTools {
-		_ = r.RegisterTool(tool)
+		if err := r.RegisterTool(tool); err != nil {
+			logger.Warn("failed to register extra tool", "error", err)
+		}
 	}
 
 	if setup.tokenEstimator != nil {
@@ -337,19 +384,120 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 func (r *Reactor) SkillRegistry() core.SkillRegistry         { return r.skillRegistry }
 func (r *Reactor) IntentRegistry() IntentRegistry            { return r.intentRegistry }
 func (r *Reactor) ToolRegistry() core.ToolRegistry           { return r.toolRegistry }
-func (r *Reactor) ToolExecutor() core.ToolExecutor             { return r.toolExecutor }
+func (r *Reactor) ToolExecutor() core.ToolExecutor           { return r.toolExecutor }
+func (r *Reactor) RuleRegistry() core.RuleRegistry           { return r.ruleRegistry }
 func (r *Reactor) TaskManager() core.TaskManager             { return r.taskManager }
 func (r *Reactor) SessionStore() core.SessionStore           { return r.sessionStore }
 func (r *Reactor) ContextWindow() *core.ContextWindow        { return r.contextWindow }
 func (r *Reactor) SetContextWindow(cw *core.ContextWindow)   { r.contextWindow = cw }
 func (r *Reactor) RegisterTool(tool core.FuncTool) error     { return r.toolRegistry.Register(tool) }
 func (r *Reactor) RegisterIntent(def IntentDefinition) error { return r.intentRegistry.Register(def) }
+func (r *Reactor) maxHistoryTurns() int                      { return maxHistoryTurnsForConfig(r.config.MaxTokens) }
+
+// CloneReactor creates a child Reactor that inherits all registries, infrastructure,
+// and execution pipeline from the parent, but with an independent config, task manager,
+// LLM client, and conversation context.
+//
+// Shared (same reference as parent):
+//   - intentRegistry, toolRegistry, skillRegistry (tool/skill/intent definitions)
+//   - toolExecutor (permission chain, hooks, result limits)
+//   - memory, eventBus, messageBus (communication & persistence)
+//   - tokenEstimator, sessionStore (context management)
+//   - mockLLM (testing support)
+//
+// Independent (new instances for child):
+//   - config (Model, SystemPrompt, Temperature, etc. — can override)
+//   - taskManager (child's own task tracking)
+//   - llmClient (child's own API connection)
+//   - contextWindow (child's own conversation history)
+//   - pendingTasks (child's own async task channels)
+//   - askUser, askPermission (child's own interaction tools)
+//
+// Use case: SubAgent creation where the child needs parent's tools/skills/memory
+// but runs its own T-A-O loop with possibly a different model or system prompt.
+func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
+	childConfig := r.config
+	if configOverride.Model != "" {
+		childConfig.Model = configOverride.Model
+	}
+	if configOverride.SystemPrompt != "" {
+		childConfig.SystemPrompt = configOverride.SystemPrompt
+	}
+	if configOverride.APIKey != "" {
+		childConfig.APIKey = configOverride.APIKey
+	}
+	if configOverride.BaseURL != "" {
+		childConfig.BaseURL = configOverride.BaseURL
+	}
+	if configOverride.AuthToken != "" {
+		childConfig.AuthToken = configOverride.AuthToken
+	}
+	if configOverride.Temperature > 0 {
+		childConfig.Temperature = configOverride.Temperature
+	}
+	if configOverride.TopP > 0 {
+		childConfig.TopP = configOverride.TopP
+	}
+	if configOverride.TopK > 0 {
+		childConfig.TopK = configOverride.TopK
+	}
+	if configOverride.PresencePenalty != 0 {
+		childConfig.PresencePenalty = configOverride.PresencePenalty
+	}
+	if configOverride.FrequencyPenalty != 0 {
+		childConfig.FrequencyPenalty = configOverride.FrequencyPenalty
+	}
+	if configOverride.MaxTokens > 0 {
+		childConfig.MaxTokens = configOverride.MaxTokens
+	}
+	if configOverride.IsLocal {
+		childConfig.IsLocal = configOverride.IsLocal
+	}
+
+	child := &Reactor{
+		config:         childConfig,
+		intentRegistry: r.intentRegistry,
+		toolRegistry:   r.toolRegistry,
+		toolExecutor:   r.toolExecutor,
+		skillRegistry:  r.skillRegistry,
+		ruleRegistry:   r.ruleRegistry,
+		memory:         r.memory,
+		tokenEstimator: r.tokenEstimator,
+		eventBus:       r.eventBus,
+		messageBus:     r.messageBus,
+		sessionStore:   r.sessionStore,
+		slideConfig:    r.slideConfig,
+		mockLLM:        r.mockLLM,
+		taskManager:    core.NewInMemoryTaskManager(),
+		pendingTasks:   make(map[string]chan any),
+	}
+
+	child.llmClient = gochat.Client().Config(
+		gochat.WithAPIKey(childConfig.APIKey),
+		gochat.WithBaseURL(childConfig.BaseURL),
+	)
+
+	child.interactionHandler = NewDefaultInteractionHandler(func(e core.ReactEvent) {
+		if child.eventBus != nil {
+			child.eventBus.Emit(e)
+		}
+	})
+
+	child.askPermission = tools.NewAskPermission()
+	child.askPermission.SetEventEmitter(func(e core.ReactEvent) {
+		if child.eventBus != nil {
+			child.eventBus.Emit(e)
+		}
+	})
+
+	return child
+}
 
 func (r *Reactor) Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error) {
 	r.persistMessage(ctx, "user", input)
 
 	if r.sessionStore != nil && r.contextWindow != nil {
-		maxTokensForHistory := int64(float64(r.config.MaxTokens) * 0.7)
+		maxTokensForHistory := int64(float64(r.config.MaxTokens) * historyTokenBudgetRatio)
 		if msgs, err := r.sessionStore.CurrentContext(ctx, r.contextWindow.SessionID, maxTokensForHistory); err == nil && len(msgs) > 0 {
 			history = ConversationHistory(msgs)
 		}
@@ -383,9 +531,6 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 	result, err := r.runTAOLoop(reactCtx, tokens, time.Now())
 	if err == nil && result != nil && result.Answer != "" {
 		r.persistMessage(ctx, "assistant", result.Answer)
-		if r.contextWindow != nil {
-			r.contextWindow.AddTokens(int64(result.TokensUsed))
-		}
 		r.checkSlide(ctx)
 	}
 	return result, err
@@ -552,7 +697,7 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		r.setSnapshot(snap)
 	}
 
-	r.saveExperience(reactCtx, result)
+	result.Experience = r.buildExperienceCandidate(reactCtx, result)
 
 	if result.TotalIterations > 1 && result.Answer != "" &&
 		!strings.Contains(result.TerminationReason, "error") {

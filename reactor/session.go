@@ -59,6 +59,12 @@ func (r *Reactor) checkSlide(ctx context.Context) {
 			Remaining: r.contextWindow.MessageCount(),
 			Timestamp: time.Now().Unix(),
 		}
+		r.sessionStore.SetSlideHandler(func(ctx context.Context, e core.SlideEvent) {
+			logger.Debug("context window slid",
+				"sessionID", e.SessionID,
+				"slidedCount", len(e.Slided),
+				"remaining", e.Remaining)
+		})
 		core.EmitSlideEvent(nil, ctx, event)
 	}
 }

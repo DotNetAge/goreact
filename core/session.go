@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"errors"
+	"time"
 )
 
 // SlideEvent is emitted when the ContextWindow slides out old messages.
@@ -17,6 +19,15 @@ type SlideEvent struct {
 // SlideHandler is the callback type for consuming slide events.
 // Implementations can store slid messages into RAG or other long-term storage.
 type SlideHandler func(ctx context.Context, event SlideEvent)
+
+// SessionInfo holds metadata about a session, used by ListSessions and GetByRole.
+type SessionInfo struct {
+	SessionID      string    `json:"session_id"`
+	Role           string    `json:"role,omitempty"`
+	MessageCount   int       `json:"message_count"`
+	LastActivityAt time.Time `json:"last_activity_at"`
+	CreatedAt      time.Time `json:"created_at"`
+}
 
 // SessionStore is the persistence interface for conversation history (WAL mode).
 // It stores messages in order and provides token-budget-aware context retrieval.
@@ -49,6 +60,15 @@ type SessionStore interface {
 
 	// Close releases any resources held by the store.
 	Close() error
+
+	// GetByRole returns the most recent SessionInfo for the given role,
+	// or ErrSessionNotFound if no session exists for that role.
+	// This is used by Agent.Switch() to resume the latest session for a role
+	// instead of creating a new one each time.
+	GetByRole(ctx context.Context, role string) (*SessionInfo, error)
+
+	// ListSessions returns metadata for all sessions, sorted by LastActivityAt descending (newest first).
+	ListSessions(ctx context.Context) ([]SessionInfo, error)
 }
 
 // NoopSlideHandler is a no-op SlideHandler for implementations that don't need it.
@@ -60,3 +80,6 @@ func EmitSlideEvent(handler SlideHandler, ctx context.Context, event SlideEvent)
 		handler(ctx, event)
 	}
 }
+
+// ErrSessionNotFound is returned by GetByRole when no session exists for the given role.
+var ErrSessionNotFound = errors.New("session not found for role")

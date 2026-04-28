@@ -3,7 +3,7 @@ package core
 // Default configuration values
 const (
 	// Reactor defaults
-	DefaultMaxSteps = 10
+	DefaultMaxSteps = 30
 
 	// Thinker defaults
 	DefaultMaxTokens   = 4096

@@ -2,9 +2,7 @@ package tools
 
 import (
 	"context"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -32,136 +30,61 @@ func TestAskUser_Info(t *testing.T) {
 	if !hasQuestion {
 		t.Error("expected 'question' parameter to be required")
 	}
+
+	if len(info.Tags) == 0 {
+		t.Error("expected Tags to be defined")
+	}
 }
 
-func TestAskUser_ExecuteBlocking(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
+func TestAskUser_ExecuteReturnsInteractionRequest(t *testing.T) {
+	tool := NewAskUserTool()
 
-	var wg sync.WaitGroup
-	var result string
-	var execErr error
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		res, err := tool.Execute(context.Background(), map[string]any{
-			"question": "What is your name?",
-		})
-		execErr = err
-		if res != nil {
-			result = res.(string)
-		}
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-
-	if !tool.IsWaiting() {
-		t.Error("expected tool to be waiting for input")
-	}
-
-	err := tool.Respond("Alice")
+	result, err := tool.Execute(context.Background(), map[string]any{
+		"question": "What is your name?",
+	})
 	if err != nil {
-		t.Fatalf("Respond failed: %v", err)
+		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	wg.Wait()
-
-	if execErr != nil {
-		t.Fatalf("Execute returned error: %v", execErr)
+	m, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", result)
 	}
-	if result == "" {
-		t.Error("expected non-empty result")
+
+	if m["status"] != "waiting_for_user" {
+		t.Errorf("expected status 'waiting_for_user', got %v", m["status"])
 	}
-}
 
-func TestAskUser_RespondWithoutBlocking(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
-
-	err := tool.Respond("answer")
-	if err == nil {
-		t.Error("expected error when responding to a non-blocking tool")
+	interaction, ok := m["_interaction"].(*core.InteractionRequest)
+	if !ok {
+		t.Fatalf("expected _interaction to be *core.InteractionRequest, got %T", m["_interaction"])
 	}
-}
 
-func TestAskUser_CancelViaContext(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var execErr error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, execErr = tool.Execute(ctx, map[string]any{
-			"question": "test?",
-		})
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-
-	<-done
-
-	if execErr == nil {
-		t.Error("expected error from context cancellation")
+	if interaction.Type != core.InteractionAskUser {
+		t.Errorf("expected type %s, got %s", core.InteractionAskUser, interaction.Type)
 	}
-	if tool.IsWaiting() {
-		t.Error("tool should not be waiting after cancellation")
+	if interaction.Question != "What is your name?" {
+		t.Errorf("expected question 'What is your name?', got %s", interaction.Question)
+	}
+	if interaction.ToolName != "ask_user" {
+		t.Errorf("expected tool_name 'ask_user', got %s", interaction.ToolName)
 	}
 }
 
-func TestAskUser_RespondError(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
-
-	var execErr error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, execErr = tool.Execute(context.Background(), map[string]any{
-			"question": "test?",
-		})
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-
-	_ = tool.RespondError(context.DeadlineExceeded)
-
-	<-done
-
-	if execErr == nil {
-		t.Error("expected error from RespondError")
-	}
-}
-
-func TestAskUser_WaitWithTimeout(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
-
-	err := tool.WaitWithTimeout(1 * time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func TestAskUser_ExecuteIsNonBlocking(t *testing.T) {
+	tool := NewAskUserTool()
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		tool.Execute(context.Background(), map[string]any{"question": "test?"})
+		tool.Execute(context.Background(), map[string]any{"question": "test"})
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
-	err = tool.WaitWithTimeout(50 * time.Millisecond)
-	if err == nil {
-		t.Error("expected timeout error")
+	select {
+	case <-done:
+	case <-context.Background().Done():
+		t.Fatal("Execute blocked - expected non-blocking return")
 	}
-
-	tool.Respond("done")
-
-	err = tool.WaitWithTimeout(2 * time.Second)
-	if err != nil {
-		t.Fatalf("unexpected error after respond: %v", err)
-	}
-
-	<-done
 }
 
 func TestAskUser_MissingParam(t *testing.T) {
@@ -173,37 +96,24 @@ func TestAskUser_MissingParam(t *testing.T) {
 	}
 }
 
-func TestAskUser_WithEventEmitter(t *testing.T) {
-	tool := NewAskUserTool().(*AskUser)
+func TestAskUser_EmptyQuestion(t *testing.T) {
+	tool := NewAskUserTool()
 
-	var receivedEvent core.ReactEvent
-	var mu sync.Mutex
-	tool.SetEventEmitter(func(e core.ReactEvent) {
-		mu.Lock()
-		receivedEvent = e
-		mu.Unlock()
+	_, err := tool.Execute(context.Background(), map[string]any{
+		"question": "",
 	})
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tool.Execute(context.Background(), map[string]any{
-			"question": "What color is the sky?",
-		})
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
-	if receivedEvent.Type != core.ClarifyNeeded {
-		t.Errorf("expected ClarifyNeeded event, got %s", receivedEvent.Type)
+	if err == nil {
+		t.Error("expected error for empty question parameter")
 	}
-	if receivedEvent.Data != "What color is the sky?" {
-		t.Errorf("unexpected event data: %v", receivedEvent.Data)
-	}
-	mu.Unlock()
+}
 
-	tool.Respond("Blue")
-	wg.Wait()
+func TestAskUser_NoReactorDependency(t *testing.T) {
+	tool := NewAskUserTool()
+
+	if _, ok := tool.(interface{ SetEventEmitter(any) }); ok {
+		t.Error("AskUser should not have SetEventEmitter method after decoupling")
+	}
+	if _, ok := tool.(interface{ Respond(string) error }); ok {
+		t.Error("AskUser should not have Respond method after decoupling")
+	}
 }

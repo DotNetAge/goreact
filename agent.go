@@ -7,6 +7,7 @@ import (
 
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/reactor"
+	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -104,9 +105,12 @@ type agentSetup struct {
 	skillDirs      []string
 
 	// Event streaming & security
-	eventBus       reactor.EventBus
+	eventBus reactor.EventBus
 
 	sessionStore core.SessionStore
+
+	// Behavior rules
+	ruleRegistry core.RuleRegistry
 }
 
 // AgentOption configures an Agent during creation via NewAgent.
@@ -211,9 +215,52 @@ func WithSessionStore(store core.SessionStore) AgentOption {
 	}
 }
 
+// WithRules registers behavior rules that are injected into the System Prompt's
+// <behavioral_rules> section. Rules control agent behavior at runtime without
+// code changes.
+//
+// Example:
+//
+//	agent := NewAgent(apiKey,
+//	    WithRules([]core.Rule{
+//	        {ID: "no-delete", Name: "Data Protection", Scope: core.ScopeGlobal,
+//	         Priority: 100, Content: "Never delete production data files."},
+//	        {ID: "chinese-only", Name: "Chinese Response", Scope: core.ScopeConversation,
+//	         Priority: 50, Content: "Always respond in Chinese during this session."},
+//	    }),
+//	)
+func WithRules(rules []core.Rule) AgentOption {
+	return func(s *agentSetup) {
+		reg := reactor.NewDefaultRuleRegistry()
+		for _, rule := range rules {
+			_ = reg.Register(rule)
+		}
+		s.ruleRegistry = reg
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
+
+// buildReactorConfig creates a ReactorConfig from ModelConfig and AgentConfig.
+// This centralizes the field mapping to avoid duplication across NewAgent, Clone, and Switch.
+func buildReactorConfig(model *core.ModelConfig, systemPrompt string) reactor.ReactorConfig {
+	return reactor.ReactorConfig{
+		APIKey:           model.APIKey,
+		BaseURL:          model.BaseURL,
+		AuthToken:        model.AuthToken,
+		Model:            model.Name,
+		SystemPrompt:     systemPrompt,
+		IsLocal:          model.IsLocal,
+		Temperature:      model.Temperature,
+		TopP:             model.TopP,
+		TopK:             int(model.TopK),
+		PresencePenalty:  model.RepetitionPenalty,
+		FrequencyPenalty: model.RepetitionPenalty,
+		MaxTokens:        int(model.MaxTokens),
+	}
+}
 
 // DefaultAgent creates a ready-to-use Agent with sensible defaults.
 // It only requires an API key to start working. The agent uses qwen3.5-flash
@@ -285,8 +332,12 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	// Resolve system prompt: AgentConfig.SystemPrompt > template render > fallback
 	systemPrompt := config.SystemPrompt
 	if systemPrompt == "" {
+		rulesText := ""
+		if setup.ruleRegistry != nil {
+			rulesText = setup.ruleRegistry.FormatPromptSection()
+		}
 		if rendered, err := reactor.RenderDefaultSystemPrompt(
-			config.Name, config.Domain, config.Description,
+			config.Name, config.Domain, config.Description, rulesText,
 		); err == nil {
 			systemPrompt = rendered
 		} else {
@@ -326,14 +377,8 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	}
 	reactorOpts = append(reactorOpts, reactor.WithSessionStore(setup.sessionStore))
 
-	// Build ReactorConfig from ModelConfig
-	reactorConfig := reactor.ReactorConfig{
-		APIKey:       model.APIKey,
-		BaseURL:      model.BaseURL,
-		Model:        model.Name,
-		SystemPrompt: systemPrompt,
-		IsLocal:      model.IsLocal,
-	}
+	// Build ReactorConfig from ModelConfig — align all generation parameters
+	reactorConfig := buildReactorConfig(model, systemPrompt)
 
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)
 
@@ -411,9 +456,36 @@ func (a *Agent) SessionStore() core.SessionStore {
 // ---------------------------------------------------------------------------
 
 // NewSession starts a new conversation session, replacing any existing one.
-// The previous context is discarded.
+// The session is automatically bound to the agent's current config name as its role,
+// so that sessions are isolated per role and never shared across agents.
 func (a *Agent) NewSession(sessionID string, maxTokens int64) {
-	a.reactor.SetContextWindow(core.NewContextWindow(sessionID, maxTokens))
+	cw := core.NewContextWindowWithRole(sessionID, a.config.Name, maxTokens)
+	a.reactor.SetContextWindow(cw)
+
+	// Register the role binding in the session store for later lookup by Switch()
+	if ss, ok := a.sessionStore.(*core.MemorySessionStore); ok {
+		ss.RegisterRole(sessionID, a.config.Name)
+	}
+}
+
+// Role returns the current session's bound role (i.e., the agent's identity name).
+func (a *Agent) Role() string {
+	if cw := a.reactor.ContextWindow(); cw != nil {
+		return cw.Role
+	}
+	return ""
+}
+
+// GetSessionByRole returns the most recent session ID and context window
+// for the given role. This is used internally by Agent.Switch() to resume
+// the latest session for a role instead of creating a new one each time.
+func (a *Agent) GetSessionByRole(role string) (*core.SessionInfo, error) {
+	return a.sessionStore.GetByRole(context.Background(), role)
+}
+
+// ListSessions returns all known sessions from the store, sorted by most recent.
+func (a *Agent) ListSessions() ([]core.SessionInfo, error) {
+	return a.sessionStore.ListSessions(context.Background())
 }
 
 // SessionID returns the current session ID, or empty string if no session.
@@ -501,49 +573,78 @@ func (a *Agent) AskStream(question string) (<-chan string, func(), error) {
 
 // AskStreamWithContext is like AskStream but accepts an explicit context.Context.
 func (a *Agent) AskStreamWithContext(ctx context.Context, question string) (<-chan string, func(), error) {
-	// Subscribe to thinking_delta events for text streaming
-	ch, cancel := a.eventBus.SubscribeFiltered(func(e core.ReactEvent) bool {
+	ctx, cancel := context.WithCancel(ctx)
+
+	eventCh, eventCancel := a.eventBus.SubscribeFiltered(func(e core.ReactEvent) bool {
 		return e.Type == core.ThinkingDelta || e.Type == core.FinalAnswer
 	})
 
-	textCh := make(chan string, 256)
+	textCh := make(chan string, reactor.StreamChannelBufferSize)
+	closeOnce := sync.Once{}
+	closeTextCh := func() {
+		closeOnce.Do(func() { close(textCh) })
+	}
 
-	// Run reactor in background, forwarding text fragments
+	done := make(chan struct{})
+
 	go func() {
-		defer cancel()
-		defer close(textCh)
+		defer close(done)
+		defer eventCancel()
+		defer closeTextCh()
 
 		result, err := a.AskWithContext(ctx, question)
 		if err != nil {
-			textCh <- fmt.Sprintf("[error] %v", err)
+			select {
+			case textCh <- fmt.Sprintf("[error] %v", err):
+			case <-ctx.Done():
+			}
 			return
 		}
-		// If nothing was streamed (e.g. short answer without streaming), push final answer
 		select {
 		case <-ctx.Done():
 			return
 		default:
 			if result.Answer != "" {
-				textCh <- result.Answer
-			}
-		}
-	}()
-
-	// Forward event text to the output channel
-	go func() {
-		for event := range ch {
-			switch data := event.Data.(type) {
-			case string:
 				select {
-				case textCh <- data:
+				case textCh <- result.Answer:
 				case <-ctx.Done():
-					return
 				}
 			}
 		}
 	}()
 
+	go func() {
+		defer closeTextCh()
+		for {
+			select {
+			case event, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				switch data := event.Data.(type) {
+				case string:
+					select {
+					case textCh <- data:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case <-done:
+				drainEvents(eventCh)
+				return
+			case <-ctx.Done():
+				drainEvents(eventCh)
+				return
+			}
+		}
+	}()
+
 	return textCh, func() { cancel() }, nil
+}
+
+func drainEvents(ch <-chan core.ReactEvent) {
+	for range ch {
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -573,12 +674,11 @@ func (a *Agent) Pause() {
 	if !a.isRunning {
 		return
 	}
-	// Signal the reactor to save a snapshot when the Run loop detects cancellation
 	a.reactor.SetPauseRequested()
-	// Cancel the context to interrupt the Run
 	if a.cancelFunc != nil {
 		a.cancelFunc()
 	}
+	a.snapshot = nil
 }
 
 // Resume continues a previously paused task. If newInput is non-empty, it is
@@ -588,12 +688,11 @@ func (a *Agent) Pause() {
 func (a *Agent) Resume(newInput ...string) (*Result, error) {
 	a.interruptMu.Lock()
 	snap := a.snapshot
-	a.interruptMu.Unlock()
-
 	if snap == nil {
-		// Try the reactor-level snapshot holder (set by runTAOLoop on pause)
 		snap = a.reactor.ConsumeSnapshot()
 	}
+	a.interruptMu.Unlock()
+
 	if snap == nil {
 		return nil, fmt.Errorf("goreact: cannot Resume — no paused snapshot available. Call Pause() first while a Run is in progress")
 	}
@@ -687,4 +786,136 @@ func (a *Agent) Events() (<-chan core.ReactEvent, func()) {
 //	defer cancel()
 func (a *Agent) EventsFiltered(filter func(core.ReactEvent) bool) (<-chan core.ReactEvent, func()) {
 	return a.eventBus.SubscribeFiltered(filter)
+}
+
+// Clone creates a child Agent that inherits all runtime state from the parent
+// except identity (Config) and model backend. The child shares memory, event bus,
+// session store, and all registries with the parent, but has its own independent
+// T-A-O loop, conversation context, and task tracking.
+//
+// When childConfig is nil, inherits parent's config.
+// When childModel is nil, inherits parent's model.
+//
+// Use cases:
+//   - SubAgent creation: Clone with a different system prompt for a subtask
+//   - Role switching: Use Switch() instead when only changing identity within same session
+//
+// The difference between Clone() and Switch():
+//   - Clone(): creates a NEW Agent with INDEPENDENT conversation history (new ContextWindow)
+//   - Switch(): reuses existing Agent's conversation history (shared ContextWindow)
+func (a *Agent) Clone(childConfig *core.AgentConfig, childModel *core.ModelConfig) *Agent {
+	config := childConfig
+	if config == nil {
+		cp := *a.config
+		config = &cp
+	}
+	model := childModel
+	if model == nil {
+		mp := *a.model
+		model = &mp
+	}
+
+	subReactorConfig := buildReactorConfig(model, config.SystemPrompt)
+
+	childReactor := a.reactor.CloneReactor(subReactorConfig)
+
+	childSessionID := fmt.Sprintf("%s-%s", config.Name, uuid.New().String()[:8])
+	childMaxTokens := int64(model.MaxTokens)
+	if childMaxTokens <= 0 {
+		childMaxTokens = 8192
+	}
+	childReactor.SetContextWindow(core.NewContextWindow(childSessionID, childMaxTokens))
+
+	return &Agent{
+		config:       config,
+		model:        model,
+		memory:       a.memory,
+		reactor:      childReactor,
+		eventBus:     a.eventBus,
+		sessionStore: a.sessionStore,
+		snapshot:     nil,
+		lastResult:   nil,
+	}
+}
+
+// Switch changes the Agent's identity (Config) and/or model backend while preserving
+// all runtime state including memory, event bus, and all registries. This is used for
+// in-session role switching — e.g., switching from "developer" to "code-reviewer".
+//
+// Session handling:
+//
+//	Switch attempts to resume the most recent session for the target role via
+//	GetSessionByRole(). If a previous session exists for that role, its context
+//	window is restored so the LLM maintains continuity. If no prior session exists,
+//	a fresh context window is created and bound to the new role.
+//
+// When config is nil, only the model is changed.
+// When model is nil, only the config is changed.
+//
+// Unlike Clone(), Switch() does NOT create a new Agent — it mutates the existing one.
+func (a *Agent) Switch(config *core.AgentConfig, model *core.ModelConfig) {
+	a.interruptMu.Lock()
+	defer a.interruptMu.Unlock()
+
+	if config != nil {
+		a.config = config
+	}
+	if model != nil {
+		a.model = model
+	}
+
+	switchConfig := buildReactorConfig(a.model, a.config.SystemPrompt)
+	existingCW := a.resolveSessionForRole(a.config.Name)
+
+	newReactor := a.reactor.CloneReactor(switchConfig)
+
+	if existingCW != nil {
+		newReactor.SetContextWindow(existingCW)
+	} else {
+		sessionID := fmt.Sprintf("%s-%s", a.config.Name, uuid.New().String()[:8])
+		newCW := core.NewContextWindowWithRole(sessionID, a.config.Name, int64(a.model.MaxTokens))
+		newReactor.SetContextWindow(newCW)
+		if ss, ok := a.sessionStore.(*core.MemorySessionStore); ok {
+			ss.RegisterRole(sessionID, a.config.Name)
+		}
+	}
+
+	a.reactor = newReactor
+
+	a.emitSwitchEvent()
+}
+
+// resolveSessionForRole attempts to restore the most recent session for the given role.
+// Returns the ContextWindow with messages loaded, or falls back to current/new window.
+func (a *Agent) resolveSessionForRole(role string) *core.ContextWindow {
+	if sessInfo, err := a.sessionStore.GetByRole(context.Background(), role); err == nil && sessInfo != nil {
+		if msgs, err2 := a.sessionStore.Get(context.Background(), sessInfo.SessionID); err2 == nil && len(msgs) > 0 {
+			cw := core.NewContextWindowWithRole(sessInfo.SessionID, role, int64(a.model.MaxTokens))
+			for _, m := range msgs {
+				cw.AddMessageWithTimestamp(m.Role, m.Content, m.Timestamp)
+			}
+			if ss, ok := a.sessionStore.(*core.MemorySessionStore); ok {
+				ss.RegisterRole(sessInfo.SessionID, role)
+			}
+			return cw
+		}
+	}
+
+	currentCW := a.reactor.ContextWindow()
+	if currentCW != nil {
+		currentCW.Role = role
+		return currentCW
+	}
+
+	return nil
+}
+
+func (a *Agent) emitSwitchEvent() {
+	if a.eventBus != nil {
+		a.eventBus.Emit(core.ReactEvent{Type: core.AgentSwitched, Data: map[string]any{
+			"name":        a.config.Name,
+			"model":       a.model.Name,
+			"description": a.config.Description,
+		}})
+	}
 }

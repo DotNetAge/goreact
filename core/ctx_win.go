@@ -7,9 +7,14 @@ import (
 
 // ContextWindow manages multi-turn conversation context for a session.
 // It is safe for concurrent use and supports token-aware pruning.
+//
+// The Role field binds this window to an agent identity (e.g., "developer",
+// "code-reviewer"), so sessions are isolated per-role and never shared
+// across different agents.
 type ContextWindow struct {
 	mu             sync.RWMutex
 	SessionID      string    `json:"session_id"`
+	Role           string    `json:"role,omitempty"`            // agent identity for session isolation
 	Messages       []Message `json:"messages"`
 	TokensUsed     int64     `json:"tokens_used"`
 	MaxTokens      int64     `json:"max_tokens"`
@@ -19,12 +24,20 @@ type ContextWindow struct {
 
 // NewContextWindow creates a new ContextWindow for the given session.
 func NewContextWindow(sessionID string, maxTokens int64) *ContextWindow {
+	return NewContextWindowWithRole(sessionID, "", maxTokens)
+}
+
+// NewContextWindowWithRole creates a new ContextWindow bound to a specific agent role.
+// The role is used to isolate sessions — each role has its own independent session
+// history so that switching agents does not leak context between roles.
+func NewContextWindowWithRole(sessionID string, role string, maxTokens int64) *ContextWindow {
 	now := time.Now()
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
 	return &ContextWindow{
 		SessionID:      sessionID,
+		Role:           role,
 		Messages:       make([]Message, 0),
 		MaxTokens:      maxTokens,
 		CreatedAt:      now,
