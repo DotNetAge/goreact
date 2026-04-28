@@ -477,7 +477,7 @@ func NewWebFetchTool() core.FuncTool {
 
 func (t *WebFetchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name: "web_fetch",
+		Name:        "web_fetch",
 		Description: `Fetch and extract content from a web page. Unlike web_search which discovers URLs, web_fetch reads the actual content of a known URL.
 
 Claude-style architecture:
@@ -491,6 +491,7 @@ Use this after web_search to read specific URLs that look relevant.
 Parameters:
 - url: the URL to fetch (required)
 - prompt: what information to extract from the page (optional, helps focus the output)`,
+		Tags:       []string{"web", "fetch", "url", "content", "http"},
 		IsReadOnly: true,
 		Parameters: []core.Parameter{
 			{

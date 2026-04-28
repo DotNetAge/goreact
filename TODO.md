@@ -66,11 +66,32 @@
 ---
 
 - [ ] 不应该在TAO中直接保存经验，而应该由客户端去处理，客户端是通过评估机制来处理这个问题；
-- [ ] ReActor 在Think阶段没有对工具进行过滤，而是全量加载工具这样可能会导致Token消耗瓶颈，需要考虑按意图过滤工具的能力，以及使工具与技能的过滤都可以支持语意化方式筛选过滤；
+- [x] ReActor 在Think阶段没有对工具进行过滤，而是全量加载工具这样可能会导致Token消耗瓶颈，需要考虑按意图过滤工具的能力，以及使工具与技能的过滤都可以支持语意化方式筛选过滤；
 - [ ] 初始化callLLM时要对齐全新的ModelConfig的定义
 - [ ] 在ReActor反向引用了Tool中的内置方法，这种做法有点本末倒置，感觉上是限制了工具机制的通用性与灵活性，就不能仍然沿用 Skill 与 Tool 的机制实现类似  AskUser 和 AskPermission 这类的操作吗？
-- [ ] 增加"滑动窗口"的机制, `ContextWindow`定义了"短期记忆"，是大模型完成一次完整对话的上下文窗口；当前的上下文窗口只是一个临时变量，在对话完成后会被清空，下一次对话又会从头开始。
+- [x] 增加"滑动窗口"的机制, `ContextWindow`定义了"短期记忆"，是大模型完成一次完整对话的上下文窗口；当前的上下文窗口只是一个临时变量，在对话完成后会被清空，下一次对话又会从头开始。
   - 增加SessionStore接口，用于存储与恢复对话上下文窗口，可以采用文件存储或数据库存储，也可以采用RAG存储。
   - 框架内默认提供 `MemorySessionStore` 与 `BoltSessionStore` 两种实现，`Agent` 在没有设置 `SessionStore`实现时 Fallback 到 `MemorySessionStore` 为默认会话实现；
   - 每次向LLM发送请求时，都要将当前的`Message`存入至`SessionStore`
   - 当 `ContextWindow` Tokens 的大小达到其最大容纳边界时，会触发【滚动】，有了`SessionStore`的加持后被就不会丢失对话内容，当内容被【滑出】上下文窗口后，可以触发`SessionStore`上的“滑动”方法，被滑出的一条或多条消息在掉落出上下文窗口时，客户端可以将这些被滑出的内容存入RAG或其它存储进行语义化成为“知识”，在用户当前上下文中按语义反向注入，这就避免了“上下文腐烂”的问题，同时也可以支持了无限的上下文，以及长期记忆与短期记忆的完美融合。
+- [ ] 为`Agent` 增加一个`Switch`方法，用于切换成其它的Agent，切换的内容仅限于 AgentConfig 与 Model,其它的初始化参数不变；
+- [ ] Think阶段中当选中某个技能时，如果这个技能中的Allows_Tools属性长度>0时，那当前上下文加载的Tools就只能是AllowTools中限定的的工具，因为第一次是全量加载工具，而这一次则是过滤应该加载相关适用的工具。
+- [ ] 补充关于“Tools VS Skills”的文章，论证为何Skills会更优于Tools
+  1. 对于绝大多数大模型，Tools并无法实现延时加载，而一次性加载更多的Tools会使模型的注意力下降，Token消耗增加。
+  2. Skill 采用三级“渐进式加载”机制，当Skill被激活时才会从`AllowedTools`中加载工具，相比之下会降低思考链的的复杂度，同时也可以降低Token消耗；
+  3. 对于实用场景如文件内容查找，网络搜索往往不是只靠一个工具完成，而是依赖于多个工具同时配合协同完成，因而基础Skill会显得更加具有灵活性与可扩展性。
+  4. 增加Tools的代价比增加Skill的代价要高，每个Tools的加入就意味着要重新编译，而Skill仅是复制文件；
+- [ ] 补充实用型的基础Skill
+  - [ ] 技能：文件内容查找 AllowedTools: [Glob, FileRead, Grep]
+  - [ ] 技能：网络搜索 AllowedTools: [WebSearch, WebFetch]
+- [ ] 要核查当技能被激活后，如果技能中明确说明需要采用多Agent协作，T-A-O是否能正确调起多Agent进行协作？
+- [ ] **重点**: 当SubAgent被创建时，SubAgent的全部参数除了 AgentConfig 与 Model 之外，其它的一切参数都应从父Agent中继承，或者说`Agent`类要提供一个`Clone`方法，用`Clone`的方式来创建子Agent，同时`Switch`方法让Agent切换身份更换Model.
+- [ ] **重点**:当Skill完全被激活时，如果Skill中有明确说明调用Skill目录下的 `scripts`的脚本时，如 `python m.scripts/<function_name>`, 那么这就需要解决python环境的问题，以及如何让python环境能找到脚本文件。
+  - [ ] 采用全局环境还是采用虚拟环境？
+  - [ ] 是在Skills的根目录下 `.../skills` 还是在Skill自身目录下建立虚环境确保可能不同版本的python依赖又或python自身版本差异导致脚本无法正确执行的问题；
+  - [ ] scripts中引用到的依赖应该如何安装，用pip freeze 成 requirements.txt 文件？
+  - [ ] 遇到python脚本当前项目是否会默认采用 Bash 运行脚本？还是采用其它的方式？
+  - [ ] 想办法建立一个集成测试证明python脚本可以正确执行；
+- [ ] 增加 `Rule`,`RuleRegistry` 用于定义Agent的行为规约，Rule的注册可以有内部的，也可以在客户端暴露界面给用户去设置自定义的Rule，所有的Rule条目都会被应用Agent当中。Rule 应该有一个比较重要的属性，就是“Scope”(适用范围)，可以有 Global(全部Agent) , Local(当前Agent), Conversation(当前会话)三种选择。
+  - 向LLM发起会话时就要检查是否应向SystemPrompt插入Rules；
+  

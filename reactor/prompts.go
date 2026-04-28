@@ -72,6 +72,8 @@ type thinkPromptData struct {
 	MemorySection string
 	Input         string
 
+	IntentRules string // dynamically generated from IntentRegistry.FormatDecisionRules()
+
 	HasActiveSkill          bool
 	ActiveSkillName         string
 	ActiveSkillDesc         string
@@ -376,7 +378,12 @@ func filterToolsByAllowed(infos []core.ToolInfo, allowedTools string) []core.Too
 // BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.
 // It includes classified intent, memory records, user input, and optionally
 // an activated skill's L2 instructions with filtered tool list.
-func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext) string {
+// The registry parameter controls intent-specific decision rules; if nil, defaults are used.
+func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry) string {
+	if registry == nil {
+		registry = NewDefaultIntentRegistry()
+	}
+
 	intentSection := "(no intent)"
 	if intent != nil {
 		b, _ := json.Marshal(intent)
@@ -392,6 +399,7 @@ func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryR
 		IntentSection: intentSection,
 		MemorySection: memorySection,
 		Input:         input,
+		IntentRules:   registry.FormatDecisionRules(),
 	}
 
 	if actCtx != nil && actCtx.Skill != nil {

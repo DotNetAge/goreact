@@ -50,6 +50,7 @@ func (t *BashTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:          "bash",
 		Description:   bashDescription,
+		Tags:         []string{"shell", "execute", "system", "command", "process"},
 		SecurityLevel: core.LevelHighRisk,
 		Parameters: []core.Parameter{
 			{

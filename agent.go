@@ -52,7 +52,6 @@ type Agent struct {
 	reactor      *reactor.Reactor
 	eventBus     reactor.EventBus
 	lastResult   *Result
-	scheduler    *core.CronScheduler
 	sessionStore core.SessionStore
 
 	interruptMu sync.Mutex
@@ -106,12 +105,7 @@ type agentSetup struct {
 
 	// Event streaming & security
 	eventBus       reactor.EventBus
-	securityPolicy core.SecurityPolicy
 
-	// Scheduler for cron-based scheduled tasks
-	scheduler *core.CronScheduler
-
-	// Session store for conversation persistence (sliding window backing store)
 	sessionStore core.SessionStore
 }
 
@@ -209,35 +203,6 @@ func WithEventBus(bus reactor.EventBus) AgentOption {
 // WithSecurityPolicy sets a custom security policy for tool execution.
 // The policy is a function that receives (toolName, securityLevel) and returns
 // true to allow or false to block execution.
-//
-//	goreact.WithSecurityPolicy(func(name string, level core.SecurityLevel) bool {
-//	    return name != "bash" // block bash tool
-//	})
-func WithSecurityPolicy(policy core.SecurityPolicy) AgentOption {
-	return func(s *agentSetup) {
-		s.securityPolicy = policy
-	}
-}
-
-// WithScheduler enables cron-based scheduled task management.
-// The scheduler allows the agent to register, list, and manage cron-based tasks.
-// When a scheduled task fires, the provided callback is invoked to trigger agent execution.
-//
-// Usage:
-//
-//	scheduler := core.NewCronScheduler()
-//	agent := goreact.NewAgent(
-//	    goreact.WithModel(model),
-//	    goreact.WithScheduler(scheduler),
-//	)
-//	scheduler.Start(context.Background())
-//	defer scheduler.Stop()
-func WithScheduler(scheduler *core.CronScheduler) AgentOption {
-	return func(s *agentSetup) {
-		s.scheduler = scheduler
-	}
-}
-
 // WithSessionStore sets a SessionStore for conversation persistence.
 // If not set, NewAgent falls back to MemorySessionStore (in-memory, no persistence).
 func WithSessionStore(store core.SessionStore) AgentOption {
@@ -352,12 +317,6 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	for name := range setup.skipToolNames {
 		reactorOpts = append(reactorOpts, reactor.WithoutTool(name))
 	}
-	if setup.securityPolicy != nil {
-		reactorOpts = append(reactorOpts, reactor.WithSecurityPolicy(setup.securityPolicy))
-	}
-	if setup.scheduler != nil {
-		reactorOpts = append(reactorOpts, reactor.WithScheduler(setup.scheduler))
-	}
 	for _, dir := range setup.skillDirs {
 		reactorOpts = append(reactorOpts, reactor.WithSkillDir(dir))
 	}
@@ -384,7 +343,6 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 		memory:       setup.memory,
 		reactor:      r,
 		eventBus:     r.EventBus(),
-		scheduler:    setup.scheduler,
 		sessionStore: setup.sessionStore,
 	}
 
@@ -441,12 +399,6 @@ func (a *Agent) ContextWindow() *core.ContextWindow {
 // registries, or fine-tuning defense mechanisms).
 func (a *Agent) Reactor() *reactor.Reactor {
 	return a.reactor
-}
-
-// Scheduler returns the agent's CronScheduler, or nil if not configured.
-// Use WithScheduler() during agent creation to enable scheduled tasks.
-func (a *Agent) Scheduler() *core.CronScheduler {
-	return a.scheduler
 }
 
 // SessionStore returns the agent's session store, or nil if not configured.

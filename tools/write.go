@@ -28,6 +28,7 @@ func NewWriteTool() core.FuncTool {
 		info: &core.ToolInfo{
 			Name:          "write",
 			Description:   writeDescription,
+			Tags:         []string{"file", "filesystem", "write", "create"},
 			SecurityLevel: core.LevelSensitive,
 		},
 	}

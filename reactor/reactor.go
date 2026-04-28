@@ -68,6 +68,7 @@ type Reactor struct {
 	config         ReactorConfig
 	intentRegistry IntentRegistry
 	toolRegistry   core.ToolRegistry
+	toolExecutor   core.ToolExecutor
 	skillRegistry  core.SkillRegistry
 	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder
@@ -82,8 +83,6 @@ type Reactor struct {
 
 	pendingTasks   map[string]chan any
 	pendingTasksMu sync.RWMutex
-
-	scheduler *core.CronScheduler
 
 	sessionStore  core.SessionStore
 	contextWindow *core.ContextWindow
@@ -160,8 +159,6 @@ type reactorSetup struct {
 	skipTools         map[string]bool
 	skipAllBundled    bool
 	extraTools        []core.FuncTool
-	securityPolicy    core.SecurityPolicy
-	resultStorage     core.ToolResultStorage
 	resultLimits      core.ToolResultLimits
 	tokenEstimator    core.TokenEstimator
 	eventBus          EventBus
@@ -171,7 +168,6 @@ type reactorSetup struct {
 	messageBus        *core.AgentMessageBus
 	memory            core.Memory
 	mockLLM           func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
-	scheduler         *core.CronScheduler
 	sessionStore      core.SessionStore
 	intentRegistry    IntentRegistry
 	toolRegistry      core.ToolRegistry
@@ -236,10 +232,6 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.messageBus = core.NewAgentMessageBus()
 	}
 
-	if setup.scheduler != nil {
-		r.scheduler = setup.scheduler
-	}
-
 	r.llmClient = gochat.Client().Config(
 		gochat.WithAPIKey(config.APIKey),
 		gochat.WithBaseURL(config.BaseURL),
@@ -281,12 +273,16 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			r.eventBus.Emit(e)
 		}
 	})
-	r.toolRegistry.SetPermissionChecker(r.askPermission)
-	r.toolRegistry.SetEventEmitter(func(e core.ReactEvent) {
-		if r.eventBus != nil {
-			r.eventBus.Emit(e)
-		}
-	})
+	r.toolExecutor = core.NewToolExecutor(
+		r.toolRegistry,
+		core.WithPermissionChecker(r.askPermission),
+		core.WithResultLimits(setup.resultLimits),
+		core.WithEventEmitter(func(e core.ReactEvent) {
+			if r.eventBus != nil {
+				r.eventBus.Emit(e)
+			}
+		}),
+	)
 
 	if !setup.skipAllBundled {
 		bundledTools := []struct {
@@ -309,7 +305,6 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			{"echo", tools.NewEchoTool()},
 			{"calculator", tools.NewCalculatorTool()},
 			{"replace", tools.NewReplaceTool()},
-			{"cron", tools.NewCronTool()},
 			{"memory_save", tools.NewMemorySaveTool()},
 			{"memory_search", tools.NewMemorySearchTool()},
 			{"email", tools.NewEmailTool(tools.EmailConfig{})},
@@ -321,12 +316,6 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			}
 		}
 
-		if cronTool, ok := r.toolRegistry.Get("cron"); ok {
-			if ct, ok := cronTool.(*tools.Cron); ok {
-				ct.SetAccessor(r)
-			}
-		}
-
 		r.registerOrchestrationTools()
 	}
 
@@ -334,23 +323,12 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		_ = r.RegisterTool(tool)
 	}
 
-	if setup.securityPolicy != nil {
-		r.toolRegistry.SetSecurityPolicy(setup.securityPolicy)
-	}
-
-	if setup.resultStorage != nil {
-		r.toolRegistry.SetResultStorage(setup.resultStorage)
-	}
-	if setup.resultLimits.MaxResultSizeChars > 0 {
-		r.toolRegistry.SetResultLimits(setup.resultLimits)
-	}
 	if setup.tokenEstimator != nil {
 		r.tokenEstimator = setup.tokenEstimator
 	}
 
 	if r.memory != nil {
 		tools.SetMemory(r.memory)
-		r.toolRegistry.SetMemory(r.memory)
 	}
 
 	return r
@@ -359,8 +337,8 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 func (r *Reactor) SkillRegistry() core.SkillRegistry         { return r.skillRegistry }
 func (r *Reactor) IntentRegistry() IntentRegistry            { return r.intentRegistry }
 func (r *Reactor) ToolRegistry() core.ToolRegistry           { return r.toolRegistry }
+func (r *Reactor) ToolExecutor() core.ToolExecutor             { return r.toolExecutor }
 func (r *Reactor) TaskManager() core.TaskManager             { return r.taskManager }
-func (r *Reactor) Scheduler() *core.CronScheduler            { return r.scheduler }
 func (r *Reactor) SessionStore() core.SessionStore           { return r.sessionStore }
 func (r *Reactor) ContextWindow() *core.ContextWindow        { return r.contextWindow }
 func (r *Reactor) SetContextWindow(cw *core.ContextWindow)   { r.contextWindow = cw }
@@ -441,7 +419,7 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		}
 
 		cycleStart := time.Now()
-		r.toolRegistry.ResetMessageCharCounter()
+		r.toolExecutor.ResetCycle()
 
 		tokens, err := r.Think(reactCtx)
 		totalTokens += tokens

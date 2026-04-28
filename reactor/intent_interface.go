@@ -15,4 +15,7 @@ type IntentRegistry interface {
 
 	// FormatPromptSection renders intents into the classification prompt.
 	FormatPromptSection() string
+
+	// FormatDecisionRules renders intent-specific decision rules for the Think phase.
+	FormatDecisionRules() string
 }

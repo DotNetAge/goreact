@@ -52,6 +52,7 @@ Parameters:
 - instructions: the skill's instructional content (required)
 - category: skill category for organization (optional)
 - save_to: specific directory path to save the skill (optional, auto-generated if omitted)`,
+		Tags: []string{"skill", "knowledge", "module", "reusable", "create"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "name",
@@ -223,6 +224,7 @@ func (t *SkillListTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "skill_list",
 		Description: "List all available skills with their names, descriptions, and trigger keywords. Skills are reusable knowledge modules that inject specialized instructions when activated.",
+		Tags:        []string{"skill", "knowledge", "module", "list"},
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{
 			{

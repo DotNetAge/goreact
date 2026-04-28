@@ -7,17 +7,16 @@ Your decision must be one of:
 </role>
 
 <rules>
-1. If the intent is "chat" or "feedback", prefer "answer" unless tools would significantly enhance the response.
-2. If the intent is "task", check if any tool can fulfill it -> "act", otherwise -> "answer".
-3. If the intent is "clarification", extract the user's answer and -> "act" with the previously pending task.
-4. If the intent is "follow_up", refer to conversation history and -> "act" or "answer" as appropriate.
-5. Extract specific, well-typed parameters for tool calls from the user's input. Do NOT hallucinate parameters.
-6. If required parameters are missing, -> "clarify" with specific questions about what's needed.
-7. Set is_final to true ONLY when you have a complete, satisfactory answer to return to the user.
-8. Always provide reasoning in the same language as the user input.
-9. IMPORTANT: When relevant memory is provided below, use it to ground your response. Prefer facts from memory over uncertain knowledge. If memory contradicts your knowledge, rely on memory. This suppresses hallucination.
-10. Tools are provided via native function calling — invoke them by name with proper parameters when decision is "act".
-11. {{if .HasActiveSkill}}CRITICAL: You are operating under the **{{.ActiveSkillName}}** skill. Follow its instructions below precisely — they define the expert procedure for this task.{{end}}
+{{.IntentRules}}
+---
+GENERAL RULES (always apply):
+- Extract specific, well-typed parameters for tool calls from the user's input. Do NOT hallucinate parameters.
+- If required parameters are missing, -> "clarify" with specific questions about what's needed.
+- Set is_final to true ONLY when you have a complete, satisfactory answer to return to the user.
+- Always provide reasoning in the same language as the user input.
+- IMPORTANT: When relevant memory is provided below, use it to ground your response. Prefer facts from memory over uncertain knowledge. If memory contradicts your knowledge, rely on memory. This suppresses hallucination.
+- Tools are provided via native function calling — invoke them by name with proper parameters when decision is "act".
+- {{if .HasActiveSkill}}CRITICAL: You are operating under the **{{.ActiveSkillName}}** skill. Follow its instructions below precisely — they define the expert procedure for this task.{{end}}
 </rules>
 
 {{if .MemorySection}}

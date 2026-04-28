@@ -36,6 +36,7 @@ func (t *GrepTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "grep",
 		Description: grepDescription,
+		Tags:         []string{"file", "search", "content", "regex", "text"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "pattern",

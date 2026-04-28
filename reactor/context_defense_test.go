@@ -3,30 +3,26 @@ package reactor
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/DotNetAge/goreact/core"
 )
 
 func TestToolResultPersistence(t *testing.T) {
-	storage := core.NewDiskToolResultStorage(
-		core.WithMaxResultChars(100),
-		core.WithPreviewChars(50),
-	)
+	tmpDir := t.TempDir()
 
-	// Small result should NOT be persisted
 	smallResult := "hello world"
-	persisted := storage.Persist("test_tool", smallResult)
+	persisted := core.PersistToDisk("test_tool", smallResult, tmpDir, 100, 50)
 	if persisted != nil {
 		t.Error("small result should not be persisted")
 	}
 
-	// Large result SHOULD be persisted
 	largeResult := string(make([]byte, 500))
 	for i := range largeResult {
 		largeResult = largeResult[:i] + "x" + largeResult[i+1:]
 	}
-	persisted = storage.Persist("test_tool", largeResult)
+	persisted = core.PersistToDisk("test_tool", largeResult, tmpDir, 100, 50)
 	if persisted == nil {
 		t.Fatal("large result should be persisted")
 	}
@@ -37,16 +33,14 @@ func TestToolResultPersistence(t *testing.T) {
 		t.Error("persisted result should have a file path")
 	}
 
-	// Read back the full result
-	fullContent, err := storage.Read(persisted.FilePath)
+	fullContent, err := os.ReadFile(persisted.FilePath)
 	if err != nil {
 		t.Fatalf("failed to read persisted result: %v", err)
 	}
-	if fullContent != largeResult {
+	if string(fullContent) != largeResult {
 		t.Error("persisted content does not match original")
 	}
 
-	// Generate the tag for LLM context
 	tag := core.PersistedResultTag(persisted)
 	if tag == "" {
 		t.Error("tag should not be empty")
@@ -114,19 +108,21 @@ func joinStrings(items []string, sep string) string {
 
 func TestExecuteToolWithPersistence(t *testing.T) {
 	registry := NewToolRegistry()
-	storage := core.NewDiskToolResultStorage(core.WithMaxResultChars(100))
-	registry.SetResultStorage(storage)
 
-	// Register a tool that returns a large result
+	executor := core.NewToolExecutor(
+		registry,
+		core.WithMaxPersistChars(100),
+	)
+
 	largeTool := &mockLargeResultTool{size: 500}
 	_ = registry.Register(largeTool)
 
-	result, _, err := registry.ExecuteTool(nil, "mock_large", nil)
+	execResult, err := executor.Execute(nil, "mock_large", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The result should be a persisted tag, not the full content
+	result := execResult.Result
 	originalSize := 500
 	if len(result) > 1000 {
 		t.Errorf("result should be truncated/persisted (got %d chars), not the full %d chars", len(result), originalSize)

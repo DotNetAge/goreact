@@ -31,6 +31,7 @@ func (t *FileEditTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "file_edit",
 		Description: editDescription,
+		Tags:         []string{"file", "edit", "code", "replace", "modification"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "path",

@@ -19,8 +19,13 @@ import (
 func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	estimateFn := r.tokenEstimator.Estimate
 	totalTokens := 0
+	// 匹配与当前上下文意图中相关的工具
+	ts := r.toolRegistry.FindAvailable(&core.ToolFilter{
+		Terms:    ctx.Intent.Summary,
+		Keywords: []string{ctx.Intent.Topic},
+	})
 
-	toolInfos := r.toolRegistry.ToToolInfos()
+	toolInfos := core.ToToolInfos(ts)
 	llmTools := ToolInfosToLLMTools(toolInfos)
 
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
@@ -89,7 +94,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		}
 	}
 
-	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx)
+	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry)
 	accountTokens(instructions)
 	r.checkSlide(ctx.Ctx())
 
@@ -154,14 +159,16 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 			break
 		}
 
-		result, duration, err := r.toolRegistry.ExecuteTool(ctx.Ctx(), action.Target, action.Params)
-		if err != nil {
-			action.Error = err
-			action.ErrorMsg = err.Error()
+		execResult, execErr := r.toolExecutor.Execute(ctx.Ctx(), action.Target, action.Params)
+		if execErr != nil {
+			action.Error = execErr
+			action.ErrorMsg = execErr.Error()
 		} else {
-			action.Result = result
+			action.Result = execResult.Result
 		}
-		action.Duration = duration
+		if execResult != nil {
+			action.Duration = execResult.Duration
+		}
 
 	default:
 		action.Type = ActionTypeAnswer

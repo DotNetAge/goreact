@@ -41,8 +41,9 @@ func NewAskUserTool() core.FuncTool {
 	return &AskUser{
 		info: &core.ToolInfo{
 			Name:        "ask_user",
-			Description: "Ask the user a clarifying question when information is missing or ambiguous. The tool will block until the user provides an answer. Use this when you are uncertain about the user's intent, need more details, or want to confirm your understanding before proceeding. Prefer concise, specific questions.",
-			IsReadOnly:  true,
+		Description: "Ask the user a clarifying question when information is missing or ambiguous. The tool will block until the user provides an answer. Use this when you are uncertain about the user's intent, need more details, or want to confirm your understanding before proceeding. Prefer concise, specific questions.",
+		Tags:        []string{"interaction", "question", "clarify", "human"},
+		IsReadOnly:  true,
 			Parameters: []core.Parameter{
 				{
 					Name:        "question",

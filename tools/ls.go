@@ -21,6 +21,7 @@ func NewLsTool() core.FuncTool {
 		info: &core.ToolInfo{
 			Name:          "ls",
 			Description:   "列出目录内容。支持树形结构、过滤、详细信息。Params: {path?: '目录路径', recursive?: false, show_hidden?: false}",
+			Tags:         []string{"file", "filesystem", "list", "directory"},
 			SecurityLevel: core.LevelSafe,
 		},
 	}

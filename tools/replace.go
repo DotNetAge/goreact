@@ -20,6 +20,7 @@ func NewReplaceTool() core.FuncTool {
 		info: &core.ToolInfo{
 			Name:          "replace",
 			Description:   "在文件中查找并替换文本内容。支持全局替换或限定次数。Params: {path: '文件路径', search: '查找文本', replace: '替换文本', limit?: 最大替换次数 (-1 表示全部)}",
+			Tags:         []string{"file", "text", "replace", "search"},
 			SecurityLevel: core.LevelSensitive,
 		},
 	}

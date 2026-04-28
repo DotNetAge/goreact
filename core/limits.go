@@ -67,18 +67,3 @@ type PersistedToolResult struct {
 	// FilePath is the path to the persisted file on disk.
 	FilePath string `json:"file_path" yaml:"file_path"`
 }
-
-// ToolResultStorage is the interface for persisting tool results to disk
-// when they exceed the configured size threshold.
-type ToolResultStorage interface {
-	// Persist saves a tool result to disk and returns a PersistedToolResult
-	// with a preview and file path. Returns nil if the result is small enough
-	// to keep inline.
-	Persist(toolName string, result string) *PersistedToolResult
-
-	// Read retrieves the full content of a previously persisted result.
-	Read(filePath string) (string, error)
-
-	// Cleanup removes persisted files that are no longer needed.
-	Cleanup(sessionID string) error
-}

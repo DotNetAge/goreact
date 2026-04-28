@@ -22,6 +22,7 @@ func (t *REPLTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "repl",
 		Description: "Execute a Go code snippet and return the output. Useful for verifying logic or data structures.",
+		Tags:       []string{"code", "execute", "go", "debug", "evaluate"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "code",

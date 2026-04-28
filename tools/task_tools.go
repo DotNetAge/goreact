@@ -46,6 +46,7 @@ Key behaviors:
 - Task output is injected into the current conversation for continuity.
 - Use 'task_list' to view all tasks and their statuses.
 - Use 'task_result' to retrieve the result of a previously completed task.`,
+		Tags: []string{"task", "subtask", "orchestration", "sync"},
 		Parameters: []core.Parameter{
 			{Name: "description", Type: "string", Description: "A short description of the task.", Required: true},
 			{Name: "prompt", Type: "string", Description: "Detailed instructions for the task. Be specific about what output is expected.", Required: true},
@@ -126,6 +127,7 @@ func (t *TaskResultTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "task_result",
 		Description: "Retrieve the result of a previously completed task by its ID.",
+		Tags:        []string{"task", "result", "query"},
 		Parameters: []core.Parameter{
 			{Name: "task_id", Type: "string", Description: "The ID of the task to retrieve results for.", Required: true},
 		},
@@ -181,6 +183,7 @@ func (t *TaskListTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "task_list",
 		Description: "List all tasks and their current statuses. Use this to track plan execution progress after using task_create.",
+		Tags:        []string{"task", "list", "status", "tracking"},
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{
 			{Name: "parent_id", Type: "string", Description: "Optional: filter tasks by parent task ID.", Required: false},

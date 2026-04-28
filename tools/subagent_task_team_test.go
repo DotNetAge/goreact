@@ -45,8 +45,7 @@ func (m *mockReactorAccessor) RunInline(_ context.Context, prompt string) (strin
 func (m *mockReactorAccessor) RunSubAgent(_ context.Context, _ string, _, _ string, _ string, resultCh chan<- any) {
 	resultCh <- map[string]string{"status": "completed", "output": "subagent done"}
 }
-func (m *mockReactorAccessor) Scheduler() *core.CronScheduler { return nil }
-func (m *mockReactorAccessor) Config() ReactorConfig          { return ReactorConfig{} }
+func (m *mockReactorAccessor) Config() ReactorConfig { return ReactorConfig{} }
 
 // ============================================================
 // SubAgent Tool Tests

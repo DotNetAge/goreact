@@ -30,6 +30,7 @@ func (t *TeamCreateTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "team_create",
 		Description: "Create a new team for multi-agent collaboration. After creating a team, spawn SubAgents with the team_name parameter to have them join the team automatically.",
+		Tags:        []string{"team", "multi-agent", "collaboration", "orchestration"},
 		Parameters: []core.Parameter{
 			{Name: "name", Type: "string", Description: "Team name (lowercase, hyphens allowed, e.g. 'refactor-team').", Required: true},
 			{Name: "description", Type: "string", Description: "Brief description of the team's purpose and goals.", Required: true},
@@ -94,6 +95,7 @@ Types:
 - "broadcast": send to all team members (omit 'to' parameter).
 - "shutdown_request": ask an agent to terminate gracefully.
 - "shutdown_response": respond to a shutdown request (provide 'to').`,
+		Tags: []string{"team", "message", "communication", "multi-agent"},
 		Parameters: []core.Parameter{
 			{Name: "type", Type: "string", Description: "Message type: 'message', 'broadcast', 'shutdown_request', or 'shutdown_response'.", Required: true},
 			{Name: "to", Type: "string", Description: "Recipient agent name (required for 'message' and 'shutdown_request'). Use 'main' for the lead agent.", Required: false},
@@ -166,6 +168,7 @@ func (t *ReceiveMessagesTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "receive_messages",
 		Description: "Read all pending messages from this agent's mailbox. Returns immediately with whatever messages are available.",
+		Tags:        []string{"team", "message", "mailbox", "communication"},
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{
 			{Name: "wait_seconds", Type: "integer", Description: "Optional: block up to N seconds waiting for at least one message (default: 0, non-blocking).", Required: false},
@@ -245,6 +248,7 @@ func (t *TeamStatusTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "team_status",
 		Description: "Show the current status of a team and all its members.",
+		Tags:        []string{"team", "status", "monitor", "multi-agent"},
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{
 			{Name: "team_id", Type: "string", Description: "The team ID to check status for.", Required: true},
@@ -315,6 +319,7 @@ func (t *TeamDeleteTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "team_delete",
 		Description: "Delete a team and clean up all member mailboxes. Only call this after all team members have completed their work.",
+		Tags:        []string{"team", "cleanup", "management"},
 		Parameters: []core.Parameter{
 			{Name: "team_id", Type: "string", Description: "The team ID to delete.", Required: true},
 		},
@@ -362,6 +367,7 @@ func (t *WaitTeamTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "wait_team",
 		Description: `Wait for all team members to complete and collect their results. This is the primary tool for the lead agent to gather team output for final synthesis. The tool blocks until all members have status "completed" or "failed", or the timeout expires.`,
+		Tags:        []string{"team", "wait", "synchronize", "collect"},
 		Parameters: []core.Parameter{
 			{Name: "team_id", Type: "string", Description: "The team ID to wait for.", Required: true},
 			{Name: "timeout_seconds", Type: "integer", Description: "Maximum time to wait in seconds (default: 300).", Required: false},

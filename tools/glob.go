@@ -29,6 +29,7 @@ func (t *GlobTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:          "glob",
 		Description:   globDescription,
+		Tags:         []string{"file", "search", "pattern", "filesystem", "discovery"},
 		SecurityLevel: core.LevelSafe,
 		Parameters: []core.Parameter{
 			{

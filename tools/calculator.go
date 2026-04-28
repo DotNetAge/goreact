@@ -19,6 +19,7 @@ func (c *Calculator) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:          "calculator",
 		Description:   "Performs basic arithmetic operations. Params: {operation: 'add'|'subtract'|'multiply'|'divide', a: number, b: number}",
+		Tags:         []string{"math", "compute", "arithmetic"},
 		SecurityLevel: core.LevelSafe,
 	}
 }

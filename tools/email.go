@@ -50,8 +50,10 @@ type IMAPConfig struct {
 func NewEmailTool(config EmailConfig) core.FuncTool {
 	return &Email{config: config,
 		info: &core.ToolInfo{
-			Name:        "email",
-			Description: "Email operations: send, send_html, list, read, search, delete, move, mark_read, mark_unread",
+			Name:          "email",
+			Description:   "Email operations: send, send_html, list, read, search, delete, move, mark_read, mark_unread",
+			Tags:         []string{"communication", "message", "mail", "smtp"},
+			SecurityLevel: core.LevelSensitive,
 		},
 	}
 }

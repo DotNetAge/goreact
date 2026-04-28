@@ -37,6 +37,7 @@ type IntentDefinition struct {
 	Type          string `json:"type" yaml:"type"`                     // Intent identifier (e.g. "task", "chat")
 	Description   string `json:"description" yaml:"description"`       // English description
 	DescriptionCN string `json:"description_cn" yaml:"description_cn"` // Chinese description
+	DecisionHint  string `json:"decision_hint,omitempty" yaml:"decision_hint,omitempty"` // How Think phase should handle this intent
 }
 
 // DefaultIntentDefinitions returns the 5 built-in intent types with bilingual descriptions.
@@ -46,26 +47,31 @@ func DefaultIntentDefinitions() []IntentDefinition {
 			Type:          "chat",
 			Description:   "Casual conversation, greetings, emotional expression, general knowledge questions with no actionable goal",
 			DescriptionCN: "日常闲聊、问候寒暄、情感表达、无具体可执行目标的通用知识提问",
+			DecisionHint:  "prefer \"answer\" unless tools would significantly enhance the response",
 		},
 		{
 			Type:          "task",
 			Description:   "The user wants the system to perform a concrete action: query data, execute an operation, create/modify/delete something, compute something",
 			DescriptionCN: "用户希望系统执行具体操作：查询数据、执行操作、创建/修改/删除内容、进行计算",
+			DecisionHint:  "check if any tool can fulfill it -> \"act\", otherwise -> \"answer\"",
 		},
 		{
 			Type:          "clarification",
 			Description:   "The user is directly answering a previous question asked by the system. This is NOT general dialogue - it's a specific response to a system prompt.",
 			DescriptionCN: "用户直接回答了系统之前提出的问题。这不是普通对话——而是对系统提问的明确回应。",
+			DecisionHint:  "extract the user's answer and -> \"act\" with the previously pending task",
 		},
 		{
 			Type:          "follow_up",
 			Description:   "The user wants to drill deeper into, refine, or get more details about a previous result or topic. They reference something discussed earlier.",
 			DescriptionCN: "用户希望对之前的结果或话题进行深入探讨、细化或获取更多细节，引用了之前讨论过的内容。",
+			DecisionHint:  "refer to conversation history and -> \"act\" or \"answer\" as appropriate",
 		},
 		{
 			Type:          "feedback",
 			Description:   "The user is evaluating a previous result: expressing satisfaction, dissatisfaction, or requesting corrections.",
 			DescriptionCN: "用户对之前的结果进行评价：表达满意、不满意或请求修正。",
+			DecisionHint:  "prefer \"answer\" unless tools would significantly enhance the response",
 		},
 	}
 }
@@ -112,6 +118,23 @@ func (r *DefaultIntentRegistry) FormatPromptSection() string {
 	var sb strings.Builder
 	for i, d := range defs {
 		fmt.Fprintf(&sb, "%d. **%s** - %s\n", i+1, d.Type, d.Description)
+	}
+	return sb.String()
+}
+
+// FormatDecisionRules renders intent-specific decision rules for the Think phase.
+// Each registered intent with a DecisionHint becomes a numbered rule.
+// Intents without a DecisionHint get a generic fallback rule.
+// This keeps think_prompt.tmpl dynamically synchronized with intent_registry.go.
+func (r *DefaultIntentRegistry) FormatDecisionRules() string {
+	defs := r.All()
+	var sb strings.Builder
+	for i, d := range defs {
+		if d.DecisionHint != "" {
+			fmt.Fprintf(&sb, "%d. If the intent is \"%s\", %s\n", i+1, d.Type, d.DecisionHint)
+		} else {
+			fmt.Fprintf(&sb, "%d. If the intent is \"%s\", evaluate context and choose \"act\" or \"answer\" appropriately\n", i+1, d.Type)
+		}
 	}
 	return sb.String()
 }

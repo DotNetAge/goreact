@@ -41,6 +41,7 @@ func NewReadToolWithLimits(limits core.FileReadingLimits) core.FuncTool {
 		info: &core.ToolInfo{
 			Name:          "read",
 			Description:   readDescription,
+			Tags:         []string{"file", "filesystem", "read", "content"},
 			SecurityLevel: core.LevelSafe,
 			IsReadOnly:    true,
 			// Read tool gets special treatment: MaxResultSizeChars = -1 means

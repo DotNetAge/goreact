@@ -150,6 +150,7 @@ func (t *todoReadTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "todo_read",
 		Description: "Read the current todo list. Returns all items and their statuses, sorted by priority.",
+		Tags:         []string{"task", "plan", "read", "status"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "status",

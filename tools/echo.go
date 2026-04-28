@@ -18,6 +18,7 @@ func NewEchoTool() core.FuncTool {
 		info: &core.ToolInfo{
 			Name:          "echo",
 			Description:   "Echoes back the input message. Useful for testing and debugging. Params: {message: string}",
+			Tags:         []string{"test", "debug", "utility"},
 			SecurityLevel: core.LevelSafe,
 		},
 	}

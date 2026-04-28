@@ -42,6 +42,7 @@ Team collaboration:
 3. Agents communicate via 'send_message' (channel-based messaging).
 4. Lead agent uses 'wait_team' to collect all results.
 5. Lead agent uses 'team_delete' to clean up.`,
+		Tags: []string{"agent", "subagent", "orchestration", "delegation"},
 		Parameters: []core.Parameter{
 			{Name: "name", Type: "string", Description: "Agent name within the team. Use the format @{role_name} (e.g., '@researcher', '@reviewer'). The @ prefix helps the LLM identify agent references in skills and prompts. Must be unique within the team.", Required: true},
 			{Name: "description", Type: "string", Description: "Brief description of this agent's task.", Required: true},
@@ -134,6 +135,7 @@ func (t *SubAgentResultTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "subagent_result",
 		Description: "Retrieve the result of a specific SubAgent by task ID. Blocks until the SubAgent completes or times out.",
+		Tags:        []string{"agent", "subagent", "result", "orchestration"},
 		Parameters: []core.Parameter{
 			{Name: "task_id", Type: "string", Description: "The SubAgent's task ID.", Required: true},
 			{Name: "wait_seconds", Type: "integer", Description: "How long to wait in seconds (default: 60).", Required: false},

@@ -49,6 +49,7 @@ func (t *MemorySave) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "memory_save",
 		Description: "Save important knowledge, conventions, or findings to long-term memory. Use this to persist information that should be remembered across conversations. Params: {title: string, content: string (required), type: 'session'|'user'|'longterm'|'reflexive'|'experience', scope: 'private'|'team', tags: 'comma,separated', id: 'existing_id_to_update'}",
+		Tags:       []string{"knowledge", "memory", "persist", "store"},
 	}
 }
 

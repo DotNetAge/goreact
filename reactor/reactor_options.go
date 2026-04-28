@@ -32,22 +32,6 @@ func WithoutTool(name string) ReactorOption {
 	}
 }
 
-// WithSecurityPolicy sets a custom security policy for tool execution.
-// The policy is called before executing a tool; return false to block execution.
-func WithSecurityPolicy(policy core.SecurityPolicy) ReactorOption {
-	return func(s *reactorSetup) {
-		s.securityPolicy = policy
-	}
-}
-
-// WithResultStorage enables tool result persistence (second layer defense).
-// Large tool results will be saved to disk and only a preview kept in context.
-func WithResultStorage(storage core.ToolResultStorage) ReactorOption {
-	return func(s *reactorSetup) {
-		s.resultStorage = storage
-	}
-}
-
 // WithResultLimits configures tool result size thresholds (second layer defense).
 func WithResultLimits(limits core.ToolResultLimits) ReactorOption {
 	return func(s *reactorSetup) {
@@ -115,25 +99,6 @@ func WithMemory(mem core.Memory) ReactorOption {
 	}
 }
 
-// WithScheduler enables cron-based scheduled task management.
-// The scheduler runs a background loop that checks for due tasks every 30 seconds.
-// When a task fires, it invokes agent.Run() with the task's prompt.
-// The scheduler is started automatically with the reactor's context.
-//
-// Usage:
-//
-//	scheduler := core.NewCronScheduler()
-//	scheduler.SetCallback(func(ctx context.Context, task core.ScheduledTask) {
-//	    result, err := agent.AskWithContext(ctx, task.Prompt)
-//	    // handle result...
-//	})
-//	reactor := reactor.NewReactor(config, reactor.WithScheduler(scheduler))
-func WithScheduler(scheduler *core.CronScheduler) ReactorOption {
-	return func(s *reactorSetup) {
-		s.scheduler = scheduler
-	}
-}
-
 // MockLLMFunc is the signature for a mock LLM function used in testing.
 // When provided via WithMockLLM, the reactor delegates all LLM calls
 // to this function instead of the real API client.
@@ -186,7 +151,7 @@ func WithIntentRegistry(reg IntentRegistry) ReactorOption {
 //	    *reactor.DefaultToolRegistry
 //	    mcpClient *mcp.Client
 //	}
-//	func (m *MCPToolRegistry) ToToolInfos() []core.ToolInfo { /* merge local+remote */ }
+//	func (m *MCPToolRegistry) FindAvailable(filter core.ToolFilter) []core.FuncTool { /* merge local+remote */ }
 func WithToolRegistry(reg core.ToolRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.toolRegistry = reg

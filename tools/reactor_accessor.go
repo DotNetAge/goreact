@@ -42,10 +42,6 @@ type ReactorAccessor interface {
 	// This enables true async SubAgent execution.
 	RunSubAgent(ctx context.Context, taskID string, systemPrompt, prompt string, model string, resultCh chan<- any)
 
-	// Scheduler returns the reactor's CronScheduler for scheduled task management.
-	// Returns nil if scheduling is not configured.
-	Scheduler() *core.CronScheduler
-
 	// Config returns the reactor's configuration (model, API key, etc.).
 	Config() ReactorConfig
 }
