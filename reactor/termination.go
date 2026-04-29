@@ -59,7 +59,7 @@ func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 
 const (
 	maxDestructiveLoopCount = 3
-	maxStuckCount         = 4
+	maxStuckCount           = 4
 )
 
 func isToolErrorIrrecoverable(obs *Observation) bool {
@@ -189,6 +189,7 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 		Duration:          durationStr,
 		TerminationReason: result.TerminationReason,
 	})
+
 	if err != nil {
 		return
 	}
@@ -198,6 +199,9 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 			if r := recover(); r != nil {
 			}
 		}()
+
+		// TODO: 这个prompt又同样漏了原始的system prompt, 应该插入到原始的system prompt中，并且输入Tokens在哪里计算？
+
 		resp, err := r.callLLMWithHistory(prompt, "Summarize this task execution.", nil, 0)
 		if err != nil || resp == nil || resp.Content == "" {
 			return

@@ -107,10 +107,10 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 	if nameVal, ok := meta["name"].(string); ok {
 		agent.Name = nameVal
 	}
-	if domainVal, ok := meta["domain"].(string); ok {
-		agent.Domain = domainVal
+	if roleVal, ok := meta["role"].(string); ok {
+		agent.Role = roleVal
 	} else if titleVal, ok := meta["title"].(string); ok {
-		agent.Domain = titleVal
+		agent.Role = titleVal
 	}
 	if descVal, ok := meta["description"].(string); ok {
 		agent.Description = descVal
@@ -118,43 +118,26 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 	if modelVal, ok := meta["model"].(string); ok {
 		agent.Model = modelVal
 	}
-	// tools can be a string (comma-separated) or a slice
-	if toolsVal, ok := meta["tools"]; ok {
-		switch v := toolsVal.(type) {
+	// capabilities can be a string (comma-separated) or a slice
+	if capsVal, ok := meta["capabilities"]; ok {
+		switch v := capsVal.(type) {
 		case string:
 			// split by comma and trim spaces
 			if v != "" {
 				parts := strings.Split(v, ",")
 				for _, p := range parts {
-					agent.Tools = append(agent.Tools, strings.TrimSpace(p))
+					agent.Capabilities = append(agent.Capabilities, strings.TrimSpace(p))
 				}
 			}
 		case []any:
 			for _, item := range v {
 				if s, ok := item.(string); ok {
-					agent.Tools = append(agent.Tools, s)
+					agent.Capabilities = append(agent.Capabilities, s)
 				}
 			}
 		}
 	}
-	// also check for "allowed-tools" as alternative key
-	if allowedVal, ok := meta["allowed-tools"]; ok && len(agent.Tools) == 0 {
-		switch v := allowedVal.(type) {
-		case string:
-			if v != "" {
-				parts := strings.Split(v, ",")
-				for _, p := range parts {
-					agent.Tools = append(agent.Tools, strings.TrimSpace(p))
-				}
-			}
-		case []any:
-			for _, item := range v {
-				if s, ok := item.(string); ok {
-					agent.Tools = append(agent.Tools, s)
-				}
-			}
-		}
-	}
+
 	agent.SystemPrompt = body
 	return agent, nil
 }
@@ -203,8 +186,8 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	// prepare frontmatter
 	meta := make(map[string]any)
 	meta["name"] = agent.Name
-	if agent.Domain != "" {
-		meta["domain"] = agent.Domain
+	if agent.Role != "" {
+		meta["role"] = agent.Role
 	}
 	if agent.Description != "" {
 		meta["description"] = agent.Description
@@ -212,8 +195,8 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	if agent.Model != "" {
 		meta["model"] = agent.Model
 	}
-	if len(agent.Tools) > 0 {
-		meta["tools"] = agent.Tools
+	if len(agent.Capabilities) > 0 {
+		meta["capabilities"] = agent.Capabilities
 	}
 
 	yamlData, err := yaml.Marshal(meta)

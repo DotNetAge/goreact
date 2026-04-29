@@ -79,6 +79,15 @@ func WithoutBundledSkills() ReactorOption {
 	}
 }
 
+// WithSkills specifies which skills to load. If empty, all skills are loaded.
+// If specified, only skills with matching names will be loaded.
+// This applies to both bundled skills and skills loaded from skill directories.
+func WithSkills(skillNames ...string) ReactorOption {
+	return func(s *reactorSetup) {
+		s.skills = append(s.skills, skillNames...)
+	}
+}
+
 // WithMessageBus sets an AgentMessageBus for inter-agent team communication.
 // SubAgents spawned with a team_name will join teams and can communicate
 // via send_message/receive_messages tools. The bus is shared across the

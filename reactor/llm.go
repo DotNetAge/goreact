@@ -153,8 +153,10 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 
 // classifyIntent runs intent classification on the user's input.
 func (r *Reactor) classifyIntent(ctx *ReactContext) (*Intent, int, error) {
+	// TODO: 这里的上下文信息被格式化进IntentPrompt的 <current_context> 永远是空的！
 	instructions := BuildIntentPrompt(ctx.Input, "", r.intentRegistry)
-
+	// TODO: 这里漏了原始的system prompt, instructions 应该插入到原始的system prompt 中
+	// TODO: 如果这里补充SystemPrompt那么输入Tokens就会不同！变成漏算了！
 	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns())
 	if err != nil {
 		return nil, 0, fmt.Errorf("intent classification LLM call failed: %w", err)

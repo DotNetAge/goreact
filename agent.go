@@ -28,9 +28,9 @@ func DefaultModel() *core.ModelConfig {
 // DefaultConfig returns an AgentConfig with sensible defaults for a general-purpose agent.
 func DefaultConfig() *core.AgentConfig {
 	return &core.AgentConfig{
-		Name:        "default-agent",
-		Domain:      "general",
-		Description: "A general-purpose AI agent powered by GoReAct",
+		Name:        "mindx",
+		Role:        "assistant",
+		Description: "A helpful AI assistant for personal use. It can answer questions, summarize conversations, and perform tasks.",
 	}
 }
 
@@ -337,7 +337,7 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 			rulesText = setup.ruleRegistry.FormatPromptSection()
 		}
 		if rendered, err := reactor.RenderDefaultSystemPrompt(
-			config.Name, config.Domain, config.Description, rulesText,
+			config.Name, config.Role, config.Description, rulesText,
 		); err == nil {
 			systemPrompt = rendered
 		} else {
@@ -420,8 +420,8 @@ func (a *Agent) Name() string {
 	return a.config.Name
 }
 
-func (a *Agent) Domain() string {
-	return a.config.Domain
+func (a *Agent) Role() string {
+	return a.config.Role
 }
 
 func (a *Agent) Description() string {
@@ -466,14 +466,6 @@ func (a *Agent) NewSession(sessionID string, maxTokens int64) {
 	if ss, ok := a.sessionStore.(*core.MemorySessionStore); ok {
 		ss.RegisterRole(sessionID, a.config.Name)
 	}
-}
-
-// Role returns the current session's bound role (i.e., the agent's identity name).
-func (a *Agent) Role() string {
-	if cw := a.reactor.ContextWindow(); cw != nil {
-		return cw.Role
-	}
-	return ""
 }
 
 // GetSessionByRole returns the most recent session ID and context window

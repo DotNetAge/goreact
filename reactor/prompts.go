@@ -92,7 +92,7 @@ type skillSelectPromptData struct {
 // systemPromptData holds template variables for the default agent system prompt.
 type systemPromptData struct {
 	Name        string
-	Domain      string
+	Role        string
 	Description string
 	Rules       string // formatted rules from RuleRegistry (or defaults)
 }
@@ -136,7 +136,7 @@ func renderThinkPrompt(data thinkPromptData) (string, error) {
 // RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
 // It accepts the agent's name, domain, description, and formatted behavior rules.
 // When rules is empty string, default behavioral rules are used.
-func RenderDefaultSystemPrompt(name, domain, description, rules string) (string, error) {
+func RenderDefaultSystemPrompt(name, role, description, rules string) (string, error) {
 	t := defaultSystemPromptTemplate.Lookup(tmplSystem)
 	if t == nil {
 		return "", template.ExecError{Name: tmplSystem, Err: nil}
@@ -147,7 +147,7 @@ func RenderDefaultSystemPrompt(name, domain, description, rules string) (string,
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, systemPromptData{
 		Name:        name,
-		Domain:      domain,
+		Role:        role,
 		Description: description,
 		Rules:       rules,
 	}); err != nil {

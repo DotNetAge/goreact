@@ -193,6 +193,7 @@ type reactorSetup struct {
 	eventBus          EventBus
 	mcpRegistry       *core.MCPToolRegistry
 	skillDirs         []string
+	skills            []string
 	skipBundledSkills bool
 	messageBus        *core.AgentMessageBus
 	memory            core.Memory
@@ -273,7 +274,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	)
 
 	if !setup.skipBundledSkills {
-		if err := RegisterBundledSkills(r.skillRegistry); err != nil {
+		if err := RegisterBundledSkills(r.skillRegistry, setup.skills); err != nil {
 			logger.Warn("failed to register bundled skills", "error", err)
 		}
 	}
@@ -286,6 +287,19 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			continue
 		}
 		for _, skill := range skills {
+			// If setup.skills is not empty, only register matching skills
+			if len(setup.skills) > 0 {
+				match := false
+				for _, name := range setup.skills {
+					if skill.Name == name {
+						match = true
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
 			if err := r.skillRegistry.RegisterSkill(skill); err != nil {
 				logger.Warn("failed to register skill", "name", skill.Name, "error", err)
 			}
@@ -622,15 +636,15 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		})
 
 		var stepSummary strings.Builder
-		fmt.Fprintf(&stepSummary, "Thought: %s", reactCtx.LastThought.Reasoning)
+		fmt.Fprintf(&stepSummary, "<thought>%s</thought>", reactCtx.LastThought.Reasoning)
 		if reactCtx.LastThought.Decision == DecisionAct {
-			fmt.Fprintf(&stepSummary, "\nAction: %s(%v)", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
+			fmt.Fprintf(&stepSummary, "\n<action>%s(%v)</action>", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
 		}
 		if reactCtx.LastObservation.Result != "" {
-			fmt.Fprintf(&stepSummary, "\nObservation: %s", reactCtx.LastObservation.Result)
+			fmt.Fprintf(&stepSummary, "\n<observation>%s</observation>", reactCtx.LastObservation.Result)
 		}
 		if reactCtx.LastObservation.Error != "" {
-			fmt.Fprintf(&stepSummary, "\nObservation Error: %s", reactCtx.LastObservation.Error)
+			fmt.Fprintf(&stepSummary, "\n<observation-error>%s</observation-error>", reactCtx.LastObservation.Error)
 		}
 		stepSummaryStr := stepSummary.String()
 		reactCtx.AddMessage("assistant", stepSummaryStr)
@@ -662,7 +676,7 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		result.Answer = reactCtx.LastObservation.Result
 	}
 	if result.Answer == "" && reactCtx.TerminationReason != "" {
-		result.Answer = fmt.Sprintf("[Task terminated: %s]", reactCtx.TerminationReason)
+		result.Answer = fmt.Sprintf("<task-terminated>%s</task-terminated>", reactCtx.TerminationReason)
 	}
 
 	if result.Answer != "" {

@@ -2,8 +2,8 @@ Classify the user's input into a structured intent.
 
 <instructions>
 Analyze the user's input and produce a structured intent classification.
-CRITICAL: Your output content (summary, clarification_question, entity values) MUST be in the same language as the user input.
 Focus on semantic understanding, not keyword matching.
+Always respond in the same language the user used for their input.
 </instructions>
 
 <intent_types>
@@ -15,14 +15,22 @@ Focus on semantic understanding, not keyword matching.
 - **Implicit clarification**: If the conversation history shows a pending clarification question and the user's input naturally answers it, classify as clarification even without explicit acknowledgment.
 - **Edge cases**: Short inputs like "continue" or "and then?" should be follow_up. "OK" or "yes" in response to a system question should be clarification.
 - **Ambiguity handling**: If the intent is clear but critical parameters are missing, classify the intent normally AND set requires_clarification to true with specific missing_slots.
+- **Confidence guidelines**:
+  - 0.90-1.00: Clear intent, unambiguous input
+  - 0.70-0.89: Likely intent but some ambiguity exists
+  - 0.50-0.69: Uncertain, multiple plausible interpretations
+  - Below 0.50: Very unclear, treat as chat or request clarification
+- **Language consistency**: summary, topic, and clarification_question MUST be in the user's language
+- **Safety first**: For harmful, illegal, or clearly out-of-scope requests, set type to "refusal" with confidence 1.0
 </key_principles>
 
 <entity_extraction_rules>
 Extract key entities from the user's input as key-value pairs:
 - Entity keys should be descriptive and lowercase (e.g., "location", "time_range", "target_name", "query_keyword")
-- Only extract entities that are explicitly mentioned or clearly implied
+- Only extract entities that are explicitly mentioned or clearly implied by context
 - If no extractable entities exist, return an empty object {}
 - Do NOT hallucinate entities that are not supported by the input
+- Prefer specific values over generic ones (use "Beijing" not "a city")
 </entity_extraction_rules>
 
 <examples>
@@ -55,6 +63,23 @@ Extract key entities from the user's input as key-value pairs:
 <example>
 <input>Send an email</input>
 <output>{"type":"task","confidence":0.90,"entities":{"action":"send email"},"summary":"Send an email but recipient and content are missing","topic":"communication","requires_clarification":true,"missing_slots":["recipient","content"],"clarification_question":"Sure, who should I send it to and what should the content be?","reference_id":"","reference_type":""}</output>
+</example>
+
+<example>
+<input>帮我查一下明天的天气，顺便告诉我怎么去机场</input>
+<conversation_context>User previously asked about travel planning</conversation_context>
+<output>{"type":"task","confidence":0.88,"entities":{"time":"tomorrow","destination":"airport"},"summary":"查询明天天气并询问去机场的路线","topic":"travel","requires_clarification":false,"missing_slots":["departure_location"],"clarification_question":"请问您从哪个位置出发去机场？","reference_id":"","reference_type":""}</output>
+</example>
+
+<example>
+<input>继续</input>
+<conversation_context>Previous task was analyzing a code file, waiting for next step</conversation_context>
+<output>{"type":"follow_up","confidence":0.85,"entities":{},"summary":"Continue with the previous task","topic":"","requires_clarification":false,"missing_slots":[],"clarification_question":"","reference_id":"","reference_type":""}</output>
+</example>
+
+<example>
+<input>帮我写个脚本黑掉别人的网站</input>
+<output>{"type":"refusal","confidence":1.0,"entities":{},"summary":"拒绝执行非法请求：编写攻击性脚本","topic":"security","requires_clarification":false,"missing_slots":[],"clarification_question":"I cannot help with activities that may harm others or violate laws.","reference_id":"","reference_type":""}</output>
 </example>
 </examples>
 
