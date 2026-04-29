@@ -88,16 +88,6 @@ func WithSkills(skillNames ...string) ReactorOption {
 	}
 }
 
-// WithMessageBus sets an AgentMessageBus for inter-agent team communication.
-// SubAgents spawned with a team_name will join teams and can communicate
-// via send_message/receive_messages tools. The bus is shared across the
-// main reactor and all subagent tasks.
-func WithMessageBus(bus *core.AgentMessageBus) ReactorOption {
-	return func(s *reactorSetup) {
-		s.messageBus = bus
-	}
-}
-
 // WithMemory sets a Memory implementation for knowledge retrieval.
 // Memory is queried during the Think phase to inject relevant knowledge
 // into the LLM prompt, suppressing hallucination.
@@ -194,5 +184,19 @@ func WithSessionStore(store core.SessionStore) ReactorOption {
 func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.ruleRegistry = reg
+	}
+}
+
+// WithOrchestrator sets the Orchestrator for multi-agent coordination.
+// When set, the Reactor can delegate tasks to specialized agents via
+// the Orchestrator's DelegateTo method, and expose agent metadata
+// via progressive disclosure in the Think phase (L1 routing).
+// This also enables the <agents> section in SystemPrompt.
+//
+// If not set, delegation ("delegate" L1 route) will fail with an error,
+// and no agents metadata will be available in prompts.
+func WithOrchestrator(orch AgentOrchestrator) ReactorOption {
+	return func(s *reactorSetup) {
+		s.orchestratorSetter = orch
 	}
 }

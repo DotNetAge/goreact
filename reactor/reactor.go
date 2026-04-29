@@ -16,6 +16,31 @@ import (
 
 var logger = slog.Default()
 
+// AgentOrchestrator is the minimal interface Reactor needs for multi-agent coordination.
+// Defined locally to avoid import cycle with the orchestration package.
+// The orchestration.Orchestrator implementation satisfies this interface.
+// Also satisfies tools.AgentOrchestrator (superset with TaskStore method).
+type AgentOrchestrator interface {
+	// Agent listing (for progressive disclosure in Think/L1 routing)
+	ListAgents() []string
+	AgentInfo(name string) *core.AgentConfig
+
+	// Delegation
+	DelegateTo(ctx context.Context, agentName, taskPrompt, parentID string, metadata map[string]any) (*DelegateResult, error)
+	WaitForResult(ctx context.Context, taskID string) (*core.Task, error)
+
+	// Task store access (for tool-layer task queries)
+	ListTasks(parentID string) ([]*core.Task, error)
+	GetTask(taskID string) (*core.Task, error)
+}
+
+// DelegateResult holds the result of a delegation request.
+// Mirrors orchestration.DelegateResult to avoid import cycle.
+type DelegateResult struct {
+	TaskID   string
+	ResultCh <-chan any
+}
+
 const (
 	historyTokenBudgetRatio = 0.7
 	StreamChannelBufferSize = 256
@@ -103,7 +128,6 @@ type Reactor struct {
 	toolExecutor   core.ToolExecutor
 	skillRegistry  core.SkillRegistry
 	ruleRegistry   core.RuleRegistry
-	taskManager    core.TaskManager
 	llmClient      gochat.ClientBuilder
 
 	memory         core.Memory
@@ -112,14 +136,13 @@ type Reactor struct {
 	interactionHandler HumanInteractionHandler
 	askPermission      *tools.AskPermission
 	eventBus           EventBus
-	messageBus         *core.AgentMessageBus
-
-	pendingTasks   map[string]chan any
-	pendingTasksMu sync.RWMutex
 
 	sessionStore  core.SessionStore
 	contextWindow *core.ContextWindow
 	slideConfig   core.SlideConfig
+
+	// === Orchestration (delegated to Orchestrator) ===
+	orchestrator AgentOrchestrator
 
 	mockLLM func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
 
@@ -133,8 +156,6 @@ type Reactor struct {
 }
 
 func (r *Reactor) EventBus() EventBus { return r.eventBus }
-
-func (r *Reactor) MessageBus() *core.AgentMessageBus { return r.messageBus }
 
 func (r *Reactor) InteractionHandler() HumanInteractionHandler { return r.interactionHandler }
 
@@ -195,7 +216,6 @@ type reactorSetup struct {
 	skillDirs         []string
 	skills            []string
 	skipBundledSkills bool
-	messageBus        *core.AgentMessageBus
 	memory            core.Memory
 	mockLLM           func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
 	sessionStore      core.SessionStore
@@ -203,6 +223,7 @@ type reactorSetup struct {
 	toolRegistry      core.ToolRegistry
 	skillRegistry     core.SkillRegistry
 	ruleRegistry      core.RuleRegistry
+	orchestratorSetter AgentOrchestrator
 }
 
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
@@ -227,12 +248,12 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	r := &Reactor{
 		config:         config,
-		taskManager:    core.NewInMemoryTaskManager(),
 		tokenEstimator: core.NewTokenEstimator(),
 		memory:         setup.memory,
 		mockLLM:        setup.mockLLM,
 		sessionStore:   setup.sessionStore,
 		slideConfig:    core.DefaultSlideConfig,
+		orchestrator:   setup.orchestratorSetter,
 	}
 
 	if setup.intentRegistry != nil {
@@ -260,12 +281,6 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.eventBus = setup.eventBus
 	} else {
 		r.eventBus = NewEventBus()
-	}
-
-	if setup.messageBus != nil {
-		r.messageBus = setup.messageBus
-	} else {
-		r.messageBus = core.NewAgentMessageBus()
 	}
 
 	r.llmClient = gochat.Client().Config(
@@ -355,8 +370,8 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			{"web_fetch", tools.NewWebFetchTool()},
 
 			// --- Knowledge & Memory ---
-			{"memory_save", tools.NewMemorySaveTool()},
-			{"memory_search", tools.NewMemorySearchTool()},
+			// {"memory_save", tools.NewMemorySaveTool()},
+			// {"memory_search", tools.NewMemorySearchTool()},
 
 			// --- Task management ---
 			{"todo_write", tools.NewTodoWriteTool()},
@@ -400,10 +415,11 @@ func (r *Reactor) IntentRegistry() IntentRegistry            { return r.intentRe
 func (r *Reactor) ToolRegistry() core.ToolRegistry           { return r.toolRegistry }
 func (r *Reactor) ToolExecutor() core.ToolExecutor           { return r.toolExecutor }
 func (r *Reactor) RuleRegistry() core.RuleRegistry           { return r.ruleRegistry }
-func (r *Reactor) TaskManager() core.TaskManager             { return r.taskManager }
 func (r *Reactor) SessionStore() core.SessionStore           { return r.sessionStore }
 func (r *Reactor) ContextWindow() *core.ContextWindow        { return r.contextWindow }
 func (r *Reactor) SetContextWindow(cw *core.ContextWindow)   { r.contextWindow = cw }
+func (r *Reactor) SlideConfig() core.SlideConfig            { return r.slideConfig }
+func (r *Reactor) EstimateTokens(content string) int         { return r.tokenEstimator.Estimate(content) }
 func (r *Reactor) RegisterTool(tool core.FuncTool) error     { return r.toolRegistry.Register(tool) }
 func (r *Reactor) RegisterIntent(def IntentDefinition) error { return r.intentRegistry.Register(def) }
 func (r *Reactor) maxHistoryTurns() int                      { return maxHistoryTurnsForConfig(r.config.MaxTokens) }
@@ -415,7 +431,7 @@ func (r *Reactor) maxHistoryTurns() int                      { return maxHistory
 // Shared (same reference as parent):
 //   - intentRegistry, toolRegistry, skillRegistry (tool/skill/intent definitions)
 //   - toolExecutor (permission chain, hooks, result limits)
-//   - memory, eventBus, messageBus (communication & persistence)
+//   - memory, eventBus (persistence & events)
 //   - tokenEstimator, sessionStore (context management)
 //   - mockLLM (testing support)
 //
@@ -434,8 +450,15 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 	if configOverride.Model != "" {
 		childConfig.Model = configOverride.Model
 	}
+	// FIX(P0-Safe): CloneReactor creates an independent Reactor for a DIFFERENT Agent
+	// with its own identity (role, rules, constraints). The new Agent will call
+	// Reload(AgentConfig) to inject its own complete SystemPrompt.
+	// Therefore, NEVER inherit or append the parent's SystemPrompt — always use
+	// the override value directly, or clear to prevent identity leakage.
 	if configOverride.SystemPrompt != "" {
 		childConfig.SystemPrompt = configOverride.SystemPrompt
+	} else {
+		childConfig.SystemPrompt = ""
 	}
 	if configOverride.APIKey != "" {
 		childConfig.APIKey = configOverride.APIKey
@@ -478,12 +501,9 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 		memory:         r.memory,
 		tokenEstimator: r.tokenEstimator,
 		eventBus:       r.eventBus,
-		messageBus:     r.messageBus,
 		sessionStore:   r.sessionStore,
 		slideConfig:    r.slideConfig,
 		mockLLM:        r.mockLLM,
-		taskManager:    core.NewInMemoryTaskManager(),
-		pendingTasks:   make(map[string]chan any),
 	}
 
 	child.llmClient = gochat.Client().Config(
@@ -508,15 +528,6 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 }
 
 func (r *Reactor) Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error) {
-	r.persistMessage(ctx, "user", input)
-
-	if r.sessionStore != nil && r.contextWindow != nil {
-		maxTokensForHistory := int64(float64(r.config.MaxTokens) * historyTokenBudgetRatio)
-		if msgs, err := r.sessionStore.CurrentContext(ctx, r.contextWindow.SessionID, maxTokensForHistory); err == nil && len(msgs) > 0 {
-			history = ConversationHistory(msgs)
-		}
-	}
-
 	reactCtx := NewReactContext(ctx, input, history, r.config.MaxIterations)
 
 	if r.eventBus != nil {
@@ -543,10 +554,6 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 	}
 
 	result, err := r.runTAOLoop(reactCtx, tokens, time.Now())
-	if err == nil && result != nil && result.Answer != "" {
-		r.persistMessage(ctx, "assistant", result.Answer)
-		r.checkSlide(ctx)
-	}
 	return result, err
 }
 

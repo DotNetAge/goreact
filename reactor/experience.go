@@ -6,22 +6,16 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// orchestrationToolNames identifies tools that spawn or manage subagents/teams.
+// orchestrationToolNames identifies tools that spawn or manage subagents.
 var orchestrationToolNames = map[string]bool{
 	// Task tools
 	"task_create": true,
-	"task_result": true,
+	"task_result":  true,
+	"task_list":    true,
 	// SubAgent tools
 	"subagent":        true,
 	"subagent_result": true,
-	// Team tools
-	"team_create": true,
-	"team_delete": true,
-	"team_status": true,
-	"wait_team":   true,
-	// Communication
-	"send_message":     true,
-	"receive_messages": true,
+	"subagent_list":   true,
 }
 
 // buildExperienceCandidate evaluates whether a completed T-A-O execution produced

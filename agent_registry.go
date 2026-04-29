@@ -118,27 +118,8 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 	if modelVal, ok := meta["model"].(string); ok {
 		agent.Model = modelVal
 	}
-	// capabilities can be a string (comma-separated) or a slice
-	if capsVal, ok := meta["capabilities"]; ok {
-		switch v := capsVal.(type) {
-		case string:
-			// split by comma and trim spaces
-			if v != "" {
-				parts := strings.Split(v, ",")
-				for _, p := range parts {
-					agent.Capabilities = append(agent.Capabilities, strings.TrimSpace(p))
-				}
-			}
-		case []any:
-			for _, item := range v {
-				if s, ok := item.(string); ok {
-					agent.Capabilities = append(agent.Capabilities, s)
-				}
-			}
-		}
-	}
 
-	agent.SystemPrompt = body
+	agent.Introduction = body
 	return agent, nil
 }
 
@@ -195,16 +176,13 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	if agent.Model != "" {
 		meta["model"] = agent.Model
 	}
-	if len(agent.Capabilities) > 0 {
-		meta["capabilities"] = agent.Capabilities
-	}
 
 	yamlData, err := yaml.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("failed to marshal YAML frontmatter: %w", err)
 	}
 
-	content := fmt.Sprintf("---\n%s---\n%s", string(yamlData), agent.SystemPrompt)
+	content := fmt.Sprintf("---\n%s---\n%s", string(yamlData), agent.Introduction)
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}

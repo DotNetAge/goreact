@@ -80,6 +80,10 @@ type thinkPromptData struct {
 	ActiveSkillInstructions string
 	FilteredToolList        string // comma-separated tool names available to the active skill
 	ResourceBasePath        string // P3: base path for scripts/, references/, assets/
+
+	// Agent metadata for progressive disclosure (L1 delegate routing)
+	HasAgents     bool
+	AgentsSection string // <agents> block with name/role/description for each registered agent
 }
 
 // skillSelectPromptData holds template variables for the Skill Selection prompt (Phase 1).
@@ -91,10 +95,11 @@ type skillSelectPromptData struct {
 
 // systemPromptData holds template variables for the default agent system prompt.
 type systemPromptData struct {
-	Name        string
-	Role        string
-	Description string
-	Rules       string // formatted rules from RuleRegistry (or defaults)
+	Name         string
+	Role         string
+	Description  string
+	Introduction string
+	Rules        string // formatted rules from RuleRegistry (or defaults)
 }
 
 // summaryPromptData holds template variables for the task summary prompt.
@@ -136,7 +141,7 @@ func renderThinkPrompt(data thinkPromptData) (string, error) {
 // RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
 // It accepts the agent's name, domain, description, and formatted behavior rules.
 // When rules is empty string, default behavioral rules are used.
-func RenderDefaultSystemPrompt(name, role, description, rules string) (string, error) {
+func RenderDefaultSystemPrompt(name, role, description, introduction, rules string) (string, error) {
 	t := defaultSystemPromptTemplate.Lookup(tmplSystem)
 	if t == nil {
 		return "", template.ExecError{Name: tmplSystem, Err: nil}
@@ -146,10 +151,11 @@ func RenderDefaultSystemPrompt(name, role, description, rules string) (string, e
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, systemPromptData{
-		Name:        name,
-		Role:        role,
-		Description: description,
-		Rules:       rules,
+		Name:         name,
+		Role:         role,
+		Description:  description,
+		Introduction: introduction,
+		Rules:        rules,
 	}); err != nil {
 		return "", err
 	}
@@ -511,10 +517,8 @@ func extractMentionedToolNames(text string) []string {
 		// Communication
 		"email", "ask_user", "ask_permission",
 		// Orchestration
-		"subagent", "subagent_result",
+		"subagent", "subagent_result", "subagent_list",
 		"task_create", "task_result", "task_list",
-		"team_create", "send_message", "receive_messages",
-		"team_status", "team_delete", "wait_team",
 		"skill_create", "skill_list",
 		// Platform-specific (not registered by default but may be added)
 		"crontab", "launchd", "systemd",
@@ -561,10 +565,11 @@ func isWordChar(c rune) bool {
 }
 
 // BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.
-// It includes classified intent, memory records, user input, and optionally
-// an activated skill's L2 instructions with filtered tool list.
+// It includes classified intent, memory records, user input, optionally
+// an activated skill's L2 instructions with filtered tool list, and agent metadata
+// for progressive disclosure delegate routing.
 // The registry parameter controls intent-specific decision rules; if nil, defaults are used.
-func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry) string {
+func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, agentsSection string) string {
 	if registry == nil {
 		registry = NewDefaultIntentRegistry()
 	}
@@ -585,6 +590,11 @@ func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryR
 		MemorySection: memorySection,
 		Input:         input,
 		IntentRules:   registry.FormatDecisionRules(),
+	}
+
+	if agentsSection != "" {
+		data.HasAgents = true
+		data.AgentsSection = agentsSection
 	}
 
 	if actCtx != nil && actCtx.Skill != nil {

@@ -10,11 +10,11 @@ import (
 
 // SubAgentListTool lists all SubAgent tasks.
 type SubAgentListTool struct {
-	accessor ReactorAccessor
+	accessor OrchestrationAccessor
 }
 
-// SetAccessor sets the reactor accessor.
-func (t *SubAgentListTool) SetAccessor(a ReactorAccessor) {
+// SetAccessor sets the orchestration accessor.
+func (t *SubAgentListTool) SetAccessor(a OrchestrationAccessor) {
 	t.accessor = a
 }
 
@@ -26,7 +26,7 @@ func NewSubAgentListTool() *SubAgentListTool {
 func (t *SubAgentListTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name:        "subagent_list",
-		Description: "List all spawned SubAgents and their statuses. For team-mode agents, prefer 'team_status'.",
+		Description: "List all spawned SubAgent tasks and their statuses.",
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{
 			{Name: "parent_id", Type: "string", Description: "Optional: filter by parent task ID.", Required: false},
@@ -34,20 +34,21 @@ func (t *SubAgentListTool) Info() *core.ToolInfo {
 	}
 }
 
-func (t *SubAgentListTool) Execute(ctx context.Context, params map[string]any) (any, error) {
+func (t *SubAgentListTool) Execute(_ context.Context, params map[string]any) (any, error) {
 	parentID, _ := params["parent_id"].(string)
 	if t.accessor == nil {
-		return nil, fmt.Errorf("reactor accessor not configured")
+		return nil, fmt.Errorf("orchestration accessor not configured")
 	}
 
-	tm := t.accessor.TaskManager()
+	orch := t.accessor.Orchestrator()
+	if orch == nil {
+		return "No SubAgent tasks have been spawned yet (no orchestrator configured).", nil
+	}
+
+	tm := orch
 	var tasks []*core.Task
 	var err error
-	if parentID != "" {
-		tasks, err = tm.ListSubTasks(parentID)
-	} else {
-		tasks, err = tm.ListAllTasks()
-	}
+	tasks, err = tm.ListTasks(parentID)
 	if err != nil {
 		return "", fmt.Errorf("failed to list subagent tasks: %w", err)
 	}

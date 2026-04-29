@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/reactor"
@@ -274,9 +275,10 @@ func DefaultAgent(apiKey string) (*Agent, error) {
 	model := DefaultModel()
 	model.APIKey = apiKey
 
+	// NOTE: 如果MaxTokens小于40K对于一般任务都难以处理
 	return NewAgent(
 		WithModel(model),
-		WithSession("default", 8192),
+		WithSession(uuid.NewString(), 131072),
 	)
 }
 
@@ -330,21 +332,21 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	model := setup.model
 
 	// Resolve system prompt: AgentConfig.SystemPrompt > template render > fallback
-	systemPrompt := config.SystemPrompt
+	systemPrompt := config.Introduction
 	if systemPrompt == "" {
 		rulesText := ""
 		if setup.ruleRegistry != nil {
 			rulesText = setup.ruleRegistry.FormatPromptSection()
 		}
 		if rendered, err := reactor.RenderDefaultSystemPrompt(
-			config.Name, config.Role, config.Description, rulesText,
+			config.Name, config.Role, config.Description, config.Introduction, rulesText,
 		); err == nil {
 			systemPrompt = rendered
-		} else {
-			systemPrompt = "You are a helpful AI assistant powered by a T-A-O agent system."
 		}
+
 	}
-	config.SystemPrompt = systemPrompt
+
+	config.Introduction = systemPrompt
 
 	// Validate required fields
 	if model.APIKey == "" {
@@ -394,7 +396,7 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	if setup.sessionID != "" {
 		maxTokens := setup.sessionTokens
 		if maxTokens <= 0 {
-			maxTokens = 8192
+			maxTokens = 131072
 		}
 		a.reactor.SetContextWindow(core.NewContextWindow(setup.sessionID, maxTokens))
 	}
@@ -489,30 +491,43 @@ func (a *Agent) SessionID() string {
 }
 
 // ---------------------------------------------------------------------------
-// Conversation — the two core methods developers use
+// Conversation — session-aware entry points
 // ---------------------------------------------------------------------------
 
 // Ask sends a question to the Agent and returns a Result with the answer,
 // token usage, and execution statistics.
 //
-// If a ContextWindow is active, the conversation history is automatically
-// managed: user input and assistant response are appended to the window,
-// and the history is pruned if it exceeds the token budget.
+// The sessionID identifies which conversation history to use. Pass empty string
+// to use the currently bound session (set via NewSession or WithSession).
+//
+// Agent layer responsibilities (this is where session identity matters):
+//   - Rebuilds full ConversationHistory from SessionStore using sessionID
+//   - Persists user input and assistant response to SessionStore
+//   - Manages ContextWindow sliding
+//   - Then passes the fully-assembled history to Reactor.Run (pure executor)
 //
 // Usage:
 //
 //	agent := goreact.DefaultAgent("your-api-key")
-//	result, err := agent.Ask("What is the capital of France?")
-//	if err != nil { ... }
-//	fmt.Printf("Answer: %s\nTokens: %d\n", result.Answer, result.Tokens)
-func (a *Agent) Ask(question string) (*Result, error) {
-	return a.AskWithContext(context.TODO(), question)
+//	// Use current bound session:
+//	result, err := agent.Ask("", "What is AI?")
+//	// Or target a specific session:
+//	result, err := agent.Ask("session-abc", "Continue our discussion about AI")
+func (a *Agent) Ask(sessionID string, question string) (*Result, error) {
+	return a.AskWithContext(context.TODO(), sessionID, question)
+}
+
+// AskWithSession is a convenience alias for Ask("", question) that uses
+// the currently bound session. This preserves backward compatibility with
+// the pre-refactor signature agent.Ask(question).
+func (a *Agent) AskWithSession(question string) (*Result, error) {
+	return a.Ask(a.SessionID(), question)
 }
 
 // AskWithContext is like Ask but accepts an explicit context.Context for cancellation
 // and timeout control. Most users should use Ask; this is for advanced scenarios
 // such as request-scoped deadlines or graceful shutdown.
-func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, error) {
+func (a *Agent) AskWithContext(ctx context.Context, sessionID string, question string) (*Result, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 
 	a.interruptMu.Lock()
@@ -528,9 +543,28 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, e
 		a.interruptMu.Unlock()
 	}()
 
-	runResult, err := a.reactor.Run(runCtx, question, nil)
+	// Resolve session identity
+	effectiveSessionID := sessionID
+	if effectiveSessionID == "" {
+		effectiveSessionID = a.SessionID()
+	}
+
+	// 1. Build complete conversation history from SessionStore
+	history := a.buildHistory(ctx, effectiveSessionID)
+
+	// 2. Persist user message before execution
+	a.persistMessage(ctx, effectiveSessionID, "user", question)
+
+	// 3. Execute via Reactor (pure engine — no session awareness)
+	runResult, err := a.reactor.Run(runCtx, question, reactor.ConversationHistory(history))
 	if err != nil {
 		return nil, err
+	}
+
+	// 4. Persist assistant response and manage sliding window
+	if runResult.Answer != "" {
+		a.persistMessage(ctx, effectiveSessionID, "assistant", runResult.Answer)
+		a.checkSlide(ctx, effectiveSessionID)
 	}
 
 	result := &Result{
@@ -545,26 +579,18 @@ func (a *Agent) AskWithContext(ctx context.Context, question string) (*Result, e
 }
 
 // AskStream sends a question and returns a channel that streams text fragments
-// as they are produced by the reactor. The channel is closed when the reactor
-// finishes. Use Events() to receive structured event data (thinking, tool calls, etc.)
-// alongside the text stream.
-//
-// Usage:
-//
-//	ch, cancel, err := agent.AskStream("Explain quantum computing")
-//	if err != nil { ... }
-//	defer cancel()
-//	for text := range ch {
-//	    fmt.Print(text)
-//	}
-//	result := agent.LastResult()
-//	fmt.Printf("\nTokens: %d\n", result.Tokens)
-func (a *Agent) AskStream(question string) (<-chan string, func(), error) {
-	return a.AskStreamWithContext(context.TODO(), question)
+// as they are produced by the reactor. See Ask for session semantics.
+func (a *Agent) AskStream(sessionID string, question string) (<-chan string, func(), error) {
+	return a.AskStreamWithContext(context.TODO(), sessionID, question)
+}
+
+// AskStreamWithSession is a convenience alias using the currently bound session.
+func (a *Agent) AskStreamWithSession(question string) (<-chan string, func(), error) {
+	return a.AskStream(a.SessionID(), question)
 }
 
 // AskStreamWithContext is like AskStream but accepts an explicit context.Context.
-func (a *Agent) AskStreamWithContext(ctx context.Context, question string) (<-chan string, func(), error) {
+func (a *Agent) AskStreamWithContext(ctx context.Context, sessionID string, question string) (<-chan string, func(), error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	eventCh, eventCancel := a.eventBus.SubscribeFiltered(func(e core.ReactEvent) bool {
@@ -584,7 +610,7 @@ func (a *Agent) AskStreamWithContext(ctx context.Context, question string) (<-ch
 		defer eventCancel()
 		defer closeTextCh()
 
-		result, err := a.AskWithContext(ctx, question)
+		result, err := a.AskWithContext(ctx, sessionID, question)
 		if err != nil {
 			select {
 			case textCh <- fmt.Sprintf("[error] %v", err):
@@ -640,6 +666,79 @@ func drainEvents(ch <-chan core.ReactEvent) {
 }
 
 // ---------------------------------------------------------------------------
+// Session-aware helpers (Agent-layer session management)
+// ---------------------------------------------------------------------------
+
+// historyTokenBudgetRatio determines what fraction of MaxTokens is allocated
+// to conversation history when rebuilding context for a session.
+const historyTokenBudgetRatio = 0.7
+
+// buildHistory rebuilds the complete ConversationHistory for a session from
+// the SessionStore. This is called BEFORE each Reactor.Run so the executor
+// receives a fully assembled context window.
+func (a *Agent) buildHistory(ctx context.Context, sessionID string) []core.Message {
+	if a.sessionStore == nil || sessionID == "" {
+		return nil
+	}
+	maxTokensForHistory := int64(float64(a.model.MaxTokens) * historyTokenBudgetRatio)
+	msgs, err := a.sessionStore.CurrentContext(ctx, sessionID, maxTokensForHistory)
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	return msgs
+}
+
+// persistMessage writes a message to both ContextWindow and SessionStore.
+// This replaces the old Reactor.persistMessage — session persistence now lives
+// at the Agent layer where session identity is known.
+func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content string) {
+	if a.sessionStore == nil || sessionID == "" {
+		return
+	}
+
+	cw := a.reactor.ContextWindow()
+	if cw == nil || cw.SessionID != sessionID {
+		cw = core.NewContextWindow(sessionID, int64(a.model.MaxTokens))
+		a.reactor.SetContextWindow(cw)
+	}
+
+	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
+	cw.AddMessageWithTimestamp(role, content, msg.Timestamp)
+	a.sessionStore.Append(ctx, sessionID, msg)
+}
+
+// checkSlide triggers context window sliding if the token budget is exceeded.
+// Moved from Reactor to Agent layer — session state management belongs here.
+func (a *Agent) checkSlide(ctx context.Context, sessionID string) {
+	if a.sessionStore == nil || sessionID == "" {
+		return
+	}
+
+	cw := a.reactor.ContextWindow()
+	if cw == nil {
+		return
+	}
+
+	slideConfig := a.reactor.SlideConfig()
+	if !cw.SlideTriggered(slideConfig) {
+		return
+	}
+
+	estimateFn := func(s string) int { return a.reactor.EstimateTokens(s) }
+	slided := cw.Slide(slideConfig, estimateFn)
+
+	if len(slided.Messages) > 0 {
+		event := core.SlideEvent{
+			SessionID: sessionID,
+			Slided:    slided.Messages,
+			Remaining: cw.MessageCount(),
+			Timestamp: time.Now().Unix(),
+		}
+		core.EmitSlideEvent(nil, ctx, event)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Interruption — Cancel, Pause, Resume
 // ---------------------------------------------------------------------------
 
@@ -675,9 +774,10 @@ func (a *Agent) Pause() {
 
 // Resume continues a previously paused task. If newInput is non-empty, it is
 // appended to the conversation history before resuming (useful for redirect scenarios).
-// Returns the result of the resumed execution.
-// Returns an error if no snapshot is available (nothing was paused).
-func (a *Agent) Resume(newInput ...string) (*Result, error) {
+//
+// The sessionID parameter identifies which session to persist the resumed
+// result into. Pass empty string to use the currently bound session.
+func (a *Agent) Resume(sessionID string, newInput ...string) (*Result, error) {
 	a.interruptMu.Lock()
 	snap := a.snapshot
 	if snap == nil {
@@ -688,13 +788,20 @@ func (a *Agent) Resume(newInput ...string) (*Result, error) {
 	if snap == nil {
 		return nil, fmt.Errorf("goreact: cannot Resume — no paused snapshot available. Call Pause() first while a Run is in progress")
 	}
-
 	input := ""
 	if len(newInput) > 0 {
 		input = newInput[0]
 	}
 
 	ctx := context.Background()
+
+	if input != "" {
+		effectiveSessionID := sessionID
+		if effectiveSessionID == "" {
+			effectiveSessionID = a.SessionID()
+		}
+		a.persistMessage(ctx, effectiveSessionID, "user", input)
+	}
 
 	runResult, err := a.reactor.RunFromSnapshot(ctx, snap, input)
 	if err != nil {
@@ -709,6 +816,16 @@ func (a *Agent) Resume(newInput ...string) (*Result, error) {
 		ToolsUsed: len(runResult.Steps),
 	}
 	a.lastResult = result
+
+	// Persist resumed result to session
+	if runResult.Answer != "" {
+		effectiveSessionID := sessionID
+		if effectiveSessionID == "" {
+			effectiveSessionID = a.SessionID()
+		}
+		a.persistMessage(ctx, effectiveSessionID, "assistant", runResult.Answer)
+		a.checkSlide(ctx, effectiveSessionID)
+	}
 
 	a.interruptMu.Lock()
 	a.snapshot = nil
@@ -807,7 +924,7 @@ func (a *Agent) Clone(childConfig *core.AgentConfig, childModel *core.ModelConfi
 		model = &mp
 	}
 
-	subReactorConfig := buildReactorConfig(model, config.SystemPrompt)
+	subReactorConfig := buildReactorConfig(model, config.Introduction)
 
 	childReactor := a.reactor.CloneReactor(subReactorConfig)
 
@@ -856,7 +973,7 @@ func (a *Agent) Switch(config *core.AgentConfig, model *core.ModelConfig) {
 		a.model = model
 	}
 
-	switchConfig := buildReactorConfig(a.model, a.config.SystemPrompt)
+	switchConfig := buildReactorConfig(a.model, a.config.Introduction)
 	existingCW := a.resolveSessionForRole(a.config.Name)
 
 	newReactor := a.reactor.CloneReactor(switchConfig)

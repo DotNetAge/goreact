@@ -10,9 +10,10 @@ import (
 
 // Decision constants for Thought.Decision
 const (
-	DecisionAct     = "act"
-	DecisionAnswer  = "answer"
-	DecisionClarify = "clarify"
+	DecisionAct      = "act"
+	DecisionAnswer   = "answer"
+	DecisionClarify  = "clarify"
+	DecisionDelegate = "delegate"
 )
 
 // Thought represents the output of the Think phase.
@@ -33,6 +34,10 @@ type Thought struct {
 
 	// Clarification (used when Decision == "clarify")
 	ClarificationQuestion string `json:"clarification_question,omitempty" yaml:"clarification_question"`
+
+	// Delegate (used when Decision == "delegate")
+	DelegateTarget string `json:"delegate_target,omitempty" yaml:"delegate_target"` // agent name to delegate to
+	DelegatePrompt string `json:"delegate_prompt,omitempty" yaml:"delegate_prompt"` // task prompt for the delegate
 
 	// SelectedSkill is the skill chosen in Phase 1 of two-phase thinking.
 	// Empty string means no specific skill was selected (direct tool use / answer mode).
@@ -65,7 +70,7 @@ func ParseThinkResponse(content string) (*Thought, error) {
 	// Normalize decision
 	thought.Decision = strings.ToLower(strings.TrimSpace(thought.Decision))
 	switch thought.Decision {
-	case DecisionAct, DecisionAnswer, DecisionClarify:
+	case DecisionAct, DecisionAnswer, DecisionClarify, DecisionDelegate:
 		// valid
 	default:
 		thought.Decision = DecisionAnswer

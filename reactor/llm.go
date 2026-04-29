@@ -151,28 +151,111 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 	return builder
 }
 
-// classifyIntent runs intent classification on the user's input.
-func (r *Reactor) classifyIntent(ctx *ReactContext) (*Intent, int, error) {
-	// TODO: 这里的上下文信息被格式化进IntentPrompt的 <current_context> 永远是空的！
-	instructions := BuildIntentPrompt(ctx.Input, "", r.intentRegistry)
-	// TODO: 这里漏了原始的system prompt, instructions 应该插入到原始的system prompt 中
-	// TODO: 如果这里补充SystemPrompt那么输入Tokens就会不同！变成漏算了！
-	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns())
-	if err != nil {
-		return nil, 0, fmt.Errorf("intent classification LLM call failed: %w", err)
+// estimateInputTokens calculates the estimated total input tokens for an LLM call.
+// Covers all layers sent via buildLLMBuilder:
+//   - Layer 1: Base SystemPrompt + Skills section + Phase-specific prompt/instructions
+//   - Layer 2: User message
+//   - Layer 3: Conversation history (trimmed by maxHistoryTurns then by token budget)
+//   - Layer 4: Native function calling tool definitions
+//
+// This ensures TokenUsed in RunResult reflects actual API consumption,
+// and ContextWindow sliding decisions are based on accurate data.
+func (r *Reactor) estimateInputTokens(systemPrompt, userMessage string, history ConversationHistory, maxHistoryTurns int, llmTools []gochatcore.Tool, skillsSection string) int {
+	estimateFn := r.tokenEstimator.Estimate
+	total := 0
+
+	// Layer 1a: Base identity SystemPrompt (always sent first in buildLLMBuilder)
+	if r.config.SystemPrompt != "" {
+		total += estimateFn(r.config.SystemPrompt)
 	}
 
-	tokens := 0
+	// Layer 1b: Skills/capabilities section
+	if skillsSection != "" {
+		total += estimateFn(skillsSection)
+	}
+
+	// Layer 1c: Phase-specific prompt or instructions
+	if systemPrompt != "" {
+		total += estimateFn(systemPrompt)
+	}
+
+	// Layer 2: User message
+	if userMessage != "" {
+		total += estimateFn(userMessage)
+	}
+
+	// Layer 3: Conversation history — replicate exact trim logic from buildLLMBuilder
+	messages := history
+	if maxHistoryTurns > 0 && len(messages) > maxHistoryTurns {
+		messages = messages[len(messages)-maxHistoryTurns:]
+	}
+	maxTokensForHistory := int64(float64(r.config.MaxTokens) * historyTokenBudgetRatio)
+	var usedTokens int64
+	for i := len(messages) - 1; i >= 0; i-- {
+		msgTokens := int64(estimateFn(messages[i].Content))
+		if usedTokens+msgTokens > maxTokensForHistory {
+			break
+		}
+		total += int(msgTokens)
+		usedTokens += msgTokens
+	}
+
+	// Layer 4: Native function calling tool definitions
+	if len(llmTools) > 0 {
+		total += int(EstimateTokensForTools(llmTools, estimateFn))
+	}
+
+	return total
+}
+
+// formatConversationContext extracts a compact context summary from conversation history
+// for injection into prompts that benefit from conversational awareness (e.g., intent classification).
+// maxTurns controls how many recent messages to include; 0 means all.
+func formatConversationContext(history ConversationHistory, maxTurns int) string {
+	if len(history) == 0 {
+		return ""
+	}
+	messages := history
+	if maxTurns > 0 && len(messages) > maxTurns {
+		messages = messages[len(messages)-maxTurns:]
+	}
+	var sb strings.Builder
+	for _, msg := range messages {
+		fmt.Fprintf(&sb, "[%s] %s\n", msg.Role, msg.Content)
+	}
+	return sb.String()
+}
+
+// classifyIntent runs intent classification on the user's input.
+// Returns the classified Intent, total token count (input + output), and error.
+func (r *Reactor) classifyIntent(ctx *ReactContext) (*Intent, int, error) {
+	// FIX(P0-#1): Format conversation history into context string so the intent classifier
+	// has awareness of prior dialogue, instead of always passing empty context.
+	contextStr := formatConversationContext(ctx.ConversationHistory, 3)
+
+	instructions := BuildIntentPrompt(ctx.Input, contextStr, r.intentRegistry)
+
+	resp, err := r.callLLMWithHistory(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns())
+	if err != nil {
+		inputTokens := r.estimateInputTokens(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, "")
+		return nil, inputTokens, fmt.Errorf("intent classification LLM call failed: %w", err)
+	}
+
+	// FIX(P0-#2): Calculate input tokens explicitly so totalTokens = input + output,
+	// not just the LLM-reported TotalTokens (which may be output-only for some providers).
+	inputTokens := r.estimateInputTokens(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, "")
+
+	outputTokens := 0
 	if resp.Usage != nil && resp.Usage.TotalTokens > 0 {
-		tokens = resp.Usage.TotalTokens
+		outputTokens = resp.Usage.TotalTokens
 	}
 
 	intent, err := parseIntentResponse(resp.Content)
 	if err != nil {
-		return nil, tokens, fmt.Errorf("intent classification parse failed: %w", err)
+		return intent, inputTokens + outputTokens, fmt.Errorf("intent classification parse failed: %w", err)
 	}
 
-	return intent, tokens, nil
+	return intent, inputTokens + outputTokens, nil
 }
 
 // parseIntentResponse parses an LLM response into an Intent struct.

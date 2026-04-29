@@ -122,6 +122,7 @@ type ActionResultData struct {
 // SubtaskInfo is the payload for SubtaskSpawned events.
 type SubtaskInfo struct {
 	TaskID      string `json:"task_id"`
+	AgentName   string `json:"agent_name,omitempty"`
 	Description string `json:"description"`
 	Timeout     string `json:"timeout,omitempty"`
 }
@@ -183,5 +184,7 @@ func NewReactEvent(sessionID, taskID, parentID string, eventType ReactEventType,
 // TaskSummaryData is the payload for TaskSummary events.
 // It carries a natural-language summary of the task execution produced by the LLM.
 type TaskSummaryData struct {
-	Summary string `json:"summary"` // Natural-language task execution summary
+	Summary      string `json:"summary"`       // Natural-language task execution summary
+	InputTokens  int    `json:"input_tokens"`   // Estimated input tokens for this LLM call
+	OutputTokens int    `json:"output_tokens"`  // Reported output tokens from LLM provider
 }

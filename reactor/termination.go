@@ -200,17 +200,33 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 			}
 		}()
 
-		// TODO: 这个prompt又同样漏了原始的system prompt, 应该插入到原始的system prompt中，并且输入Tokens在哪里计算？
+		// FIX(P2-#3): buildLLMBuilder already injects r.config.SystemPrompt (llm.go:103-105),
+		// so the summary prompt IS sent with base identity. The prompt parameter here serves as
+		// phase-specific instructions layered on top of SystemPrompt — this is consistent with
+		// classifyIntent and Think call patterns.
+		//
+		// FIX(P2-#6): Estimate and emit input tokens so summary LLM cost is visible.
 
 		resp, err := r.callLLMWithHistory(prompt, "Summarize this task execution.", nil, 0)
 		if err != nil || resp == nil || resp.Content == "" {
 			return
 		}
 
+		// Account tokens for visibility
+		inputTokens := r.estimateInputTokens(prompt, "Summarize this task execution.", nil, 0, nil, "")
+		outputTokens := 0
+		if resp.Usage != nil && resp.Usage.TotalTokens > 0 {
+			outputTokens = resp.Usage.TotalTokens
+		}
+
 		summaryText := strings.TrimSpace(resp.Content)
 		summaryText = stripJSONWrappers(summaryText)
 		summaryText = strings.TrimSpace(summaryText)
 
-		ctx.EmitEvent(core.TaskSummary, core.TaskSummaryData{Summary: summaryText})
+		ctx.EmitEvent(core.TaskSummary, core.TaskSummaryData{
+			Summary:    summaryText,
+			InputTokens: inputTokens,
+			OutputTokens: outputTokens,
+		})
 	}()
 }

@@ -16,12 +16,12 @@ import (
 
 // TaskCreateTool executes a subtask synchronously inline.
 type TaskCreateTool struct {
-	accessor   ReactorAccessor
+	accessor   OrchestrationAccessor
 	parentTask *string
 }
 
-// SetAccessor sets the reactor accessor for task management.
-func (t *TaskCreateTool) SetAccessor(a ReactorAccessor) {
+// SetAccessor sets the orchestration accessor for task management.
+func (t *TaskCreateTool) SetAccessor(a OrchestrationAccessor) {
 	t.accessor = a
 }
 
@@ -62,7 +62,7 @@ func (t *TaskCreateTool) Execute(ctx context.Context, params map[string]any) (an
 	}
 
 	if t.accessor == nil {
-		return nil, fmt.Errorf("reactor accessor not configured")
+		return nil, fmt.Errorf("orchestration accessor not configured")
 	}
 
 	parentID := ""
@@ -70,51 +70,30 @@ func (t *TaskCreateTool) Execute(ctx context.Context, params map[string]any) (an
 		parentID = *t.parentTask
 	}
 
-	tm := t.accessor.TaskManager()
-	task, err := tm.CreateTask(parentID, description, prompt)
+	orch := t.accessor.Orchestrator()
+	if orch == nil {
+		return nil, fmt.Errorf("no orchestrator configured; task_create requires an orchestrator")
+	}
+
+	delegateResult, err := orch.DelegateTo(ctx, "inline-executor", prompt, parentID, map[string]any{
+		"source":      "task_create_tool",
+		"description": description,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create task record: %w", err)
+		return fmt.Sprintf("Task creation failed: %v", err), err
 	}
-
-	_ = tm.UpdateTaskStatus(task.ID, core.TaskStatusInProgress, "", "")
-
-	// Emit event
-	if emitter := t.accessor.EventEmitter(); emitter != nil {
-		emitter(core.NewReactEvent("", "main", parentID, core.SubtaskSpawned,
-			core.SubtaskInfo{TaskID: task.ID, Description: description}))
-	}
-
-	// Run synchronously inline using the accessor's RunInline method
-	answer, runErr := t.accessor.RunInline(ctx, prompt)
-
-	if runErr != nil {
-		_ = tm.UpdateTaskStatus(task.ID, core.TaskStatusFailed, "", runErr.Error())
-		if emitter := t.accessor.EventEmitter(); emitter != nil {
-			emitter(core.NewReactEvent("", task.ID, parentID, core.SubtaskCompleted,
-				core.SubtaskResult{TaskID: task.ID, Success: false, Error: runErr.Error()}))
-		}
-		return fmt.Sprintf("Task %q failed: %v", task.ID, runErr), runErr
-	}
-
-	_ = tm.UpdateTaskStatus(task.ID, core.TaskStatusCompleted, answer, "")
-
-	if emitter := t.accessor.EventEmitter(); emitter != nil {
-		emitter(core.NewReactEvent("", task.ID, parentID, core.SubtaskCompleted,
-			core.SubtaskResult{TaskID: task.ID, Success: true, Answer: answer}))
-	}
-
-	return fmt.Sprintf("Task %q completed.\nAnswer: %s", task.ID, answer), nil
+	return fmt.Sprintf("Task created and delegated (task_id: %s). Use subagent_result to retrieve the result.", delegateResult.TaskID), nil
 }
 
 // --- Task Result Tool ---
 
 // TaskResultTool retrieves the result of a previously completed task.
 type TaskResultTool struct {
-	accessor ReactorAccessor
+	accessor OrchestrationAccessor
 }
 
-// SetAccessor sets the reactor accessor.
-func (t *TaskResultTool) SetAccessor(a ReactorAccessor) {
+// SetAccessor sets the orchestration accessor.
+func (t *TaskResultTool) SetAccessor(a OrchestrationAccessor) {
 	t.accessor = a
 }
 
@@ -140,10 +119,15 @@ func (t *TaskResultTool) Execute(ctx context.Context, params map[string]any) (an
 		return "", fmt.Errorf("missing required parameter: task_id")
 	}
 	if t.accessor == nil {
-		return nil, fmt.Errorf("reactor accessor not configured")
+		return nil, fmt.Errorf("orchestration accessor not configured")
 	}
 
-	task, err := t.accessor.TaskManager().GetTask(taskID)
+	orch := t.accessor.Orchestrator()
+	if orch == nil {
+		return nil, fmt.Errorf("no orchestrator configured")
+	}
+
+	task, err := orch.GetTask(taskID)
 	if err != nil {
 		return "", fmt.Errorf("task %q not found", taskID)
 	}
@@ -166,11 +150,11 @@ func (t *TaskResultTool) Execute(ctx context.Context, params map[string]any) (an
 
 // TaskListTool lists all tasks and their statuses.
 type TaskListTool struct {
-	accessor ReactorAccessor
+	accessor OrchestrationAccessor
 }
 
-// SetAccessor sets the reactor accessor.
-func (t *TaskListTool) SetAccessor(a ReactorAccessor) {
+// SetAccessor sets the orchestration accessor.
+func (t *TaskListTool) SetAccessor(a OrchestrationAccessor) {
 	t.accessor = a
 }
 
@@ -194,17 +178,15 @@ func (t *TaskListTool) Info() *core.ToolInfo {
 func (t *TaskListTool) Execute(ctx context.Context, params map[string]any) (any, error) {
 	parentID, _ := params["parent_id"].(string)
 	if t.accessor == nil {
-		return nil, fmt.Errorf("reactor accessor not configured")
+		return nil, fmt.Errorf("orchestration accessor not configured")
 	}
 
-	tm := t.accessor.TaskManager()
-	var tasks []*core.Task
-	var err error
-	if parentID != "" {
-		tasks, err = tm.ListSubTasks(parentID)
-	} else {
-		tasks, err = tm.ListAllTasks()
+	orch := t.accessor.Orchestrator()
+	if orch == nil {
+		return nil, fmt.Errorf("no orchestrator configured")
 	}
+
+	tasks, err := orch.ListTasks(parentID)
 	if err != nil {
 		return "", fmt.Errorf("failed to list tasks: %w", err)
 	}

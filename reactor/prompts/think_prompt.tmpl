@@ -4,7 +4,6 @@ Your decision must be one of:
 - "act": Invoke a tool to fulfill the user's request
 - "answer": Provide a direct answer from your knowledge
 - "clarify": Ask the user for missing information
-</role>
 
 <rules>
 {{.IntentRules}}
@@ -24,6 +23,13 @@ GENERAL RULES (always apply):
 The following knowledge was retrieved from memory as relevant to the current request. Use it to inform your response and avoid making up facts.
 {{.MemorySection}}
 </relevant_memory>
+{{end}}
+
+{{if .HasAgents}}
+<agents>
+The following specialized agents are available for task delegation. When a request matches an agent's role, use the "delegate" decision route instead of "act".
+{{.AgentsSection}}
+</agents>
 {{end}}
 
 {{if .HasActiveSkill}}
@@ -48,5 +54,5 @@ Resource base path: {{.ResourceBasePath}}
 
 <output_format>
 Return ONLY a valid JSON object, no markdown, no code blocks, no explanation:
-{"decision":"act|answer|clarify","reasoning":"<reasoning process>","confidence":<0.0-1.0>,"action_target":"<tool_name or empty>","action_params":{...},"final_answer":"<answer or empty>","clarification_question":"<question or empty>","is_final":<bool>}
+{"decision":"act|answer|clarify|delegate","reasoning":"<reasoning process>","confidence":<0.0-1.0>,"action_target":"<tool_name or empty>","action_params":{...},"final_answer":"<answer or empty>","clarification_question":"<question or empty>","is_final":<bool>,"delegate_target":"<agent_name or empty>","delegate_prompt":"<task prompt for delegated agent or empty>"}
 </output_format>
