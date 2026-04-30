@@ -1,21 +1,58 @@
+<instruction>
 Analyze the user's input and determine the best way to respond.
+</instruction>
 
+<context>
 You see all available tools (with names and descriptions only) and any active capabilities below.
+</context>
 
+<routing_paths>
 Decide which path to take:
-- **"tool"**: The user's request can be fulfilled by directly invoking one or more tools. Set 'selected_tools' to the tool name(s) you need.
-- **"skill"**: The request requires specialized domain expertise. Choose the most applicable skill from <available_capabilities>. Set 'target' to the skill name.
-- **"answer"**: This is a simple question, chitchat, or knowledge query that needs no tools or agents. Provide the answer directly.
 
+<path name="tool">
+The user's request can be fulfilled by directly invoking one or more tools.
+Set 'selected_tools' to the tool name(s) you need.
+</path>
+
+<path name="skill">
+The request requires specialized domain expertise.
+Choose the most applicable skill from &lt;available_capabilities&gt;.
+Set 'target' to the EXACT skill name.
+</path>
+
+<path name="answer">
+This is a simple question, chitchat, or knowledge query that needs no tools or agents.
+Provide the answer directly.
+</path>
+
+<path name="delegate">
+The request is complex, multi-domain, or requires specialized agent capabilities beyond a single tool or skill.
+Delegate to a specialized agent by setting 'target' to the agent name and providing a clear task prompt in 'answer'.
+</path>
+</routing_paths>
+
+<output_format>
 Respond with JSON only:
-{"path":"tool|skill|answer","target":"<skill_or_tool_name>","selected_tools":["tool_name1",...],"answer":"<if answer path>","reasoning":"<brief explanation>"}
+{
+  "path": "tool|skill|answer|delegate",
+  "target": "&lt;skill_name|tool_name|agent_name or empty&gt;",
+  "selected_tools": ["tool_name1", "..."],
+  "answer": "&lt;final_answer or delegate_task_prompt&gt;",
+  "reasoning": "&lt;brief explanation of why this path was chosen&gt;"
+}
+</output_format>
 
-CRITICAL rules:
+<critical_rules>
 - For "tool" path: you MUST populate selected_tools with specific tool names from the available set
 - For "skill" path: set target to the EXACT skill name from available_capabilities
+- For "delegate" path: set target to the agent name and use 'answer' to provide the task description for the delegated agent
 - Select the MINIMUM set of tools sufficient for the task
 - When unsure between tool and skill, prefer "skill" for complex multi-step tasks
-{{if .HasSkills}}
+- When the task spans multiple domains or requires orchestration, prefer "delegate"
+</critical_rules>
 
+{{if .HasSkills}}
+<skill_hint>
 Available capabilities (skills) are listed in the system prompt above — reference them by exact name.
+</skill_hint>
 {{end}}

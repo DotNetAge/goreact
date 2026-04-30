@@ -74,7 +74,7 @@ func TestReactor_TaskIntent_ToolCall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	result, err := r.Run(ctx, "帮我算一下 123 乘以 456 等于多少", nil)
+	result, err := r.Run(ctx, "读取当前目录下的 go.mod 文件内容", nil)
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}

@@ -1,13 +1,13 @@
+<instruction>
 Classify the user's input into a structured intent.
-
-<instructions>
 Analyze the user's input and produce a structured intent classification.
 Focus on semantic understanding, not keyword matching.
 Always respond in the same language the user used for their input.
-</instructions>
+</instruction>
 
 <intent_types>
-{{.IntentTypes}}</intent_types>
+{{.IntentTypes}}
+</intent_types>
 
 <key_principles>
 - **Primary signal is semantic intent**, not surface keywords. "I was wondering if you could..." is a Task, not Chat.
@@ -83,11 +83,28 @@ Extract key entities from the user's input as key-value pairs:
 </example>
 </examples>
 
+{{if .Context}}
+<conversation_context>
+{{.Context}}
+</conversation_context>
+{{end}}
+
 <current_input>
-Conversation context: {{.Context}}
+Classify the current user input according to the guidelines above.
 </current_input>
 
 <output_format>
 Return ONLY a valid JSON object, no markdown, no code blocks, no explanation:
-{"type":"<intent_type>","confidence":<0.0-1.0>,"entities":{...},"summary":"<one sentence>","topic":"<topic tag>","requires_clarification":<bool>,"missing_slots":[...],"clarification_question":"<question or empty>","reference_id":"<id or empty>","reference_type":"<type or empty>"}
+{
+  "type": "&lt;intent_type&gt;",
+  "confidence": &lt;0.0-1.0&gt;,
+  "entities": {...},
+  "summary": "&lt;one sentence&gt;",
+  "topic": "&lt;topic tag&gt;",
+  "requires_clarification": &lt;bool&gt;,
+  "missing_slots": [...],
+  "clarification_question": "&lt;question or empty&gt;",
+  "reference_id": "&lt;id or empty&gt;",
+  "reference_type": "&lt;type or empty&gt;"
+}
 </output_format>

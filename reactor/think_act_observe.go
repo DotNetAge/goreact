@@ -288,7 +288,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	}
 
 	l1Content, l1Tokens, err := r.callLLMStream(
-		ctx, l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), minimalLLMTools, skillsSection,
+		ctx, l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection,
 	)
 	if err != nil {
 		return totalTokens + l1Tokens, fmt.Errorf("think L1 routing failed: %w", err)
@@ -296,7 +296,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	totalTokens += l1Tokens
 
 	// FIX(P1-#4): Add estimated input tokens for L1 call to ContextWindow and return value
-	l1InputTokens := r.estimateInputTokens(l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), minimalLLMTools, skillsSection)
+	l1InputTokens := r.estimateInputTokens(l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection)
 	totalTokens += l1InputTokens
 
 	l1Result, err := parseL1RoutingResponse(l1Content)
