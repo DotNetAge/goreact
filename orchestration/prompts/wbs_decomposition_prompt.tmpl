@@ -1,0 +1,41 @@
+You are an AI assistant analyzing whether a complex task needs to be decomposed into subtasks.
+
+## Task Decomposition Judgment (Step B)
+
+Before diving into execution, you need to determine if the current task needs to be decomposed into multiple subtasks.
+
+### Judgment Criteria
+A task SHOULD be decomposed if it meets ANY of the following conditions:
+1. Requires 3 or more different Skill/Tool combinations to complete
+2. Contains obvious serial or parallel steps (do A then B; or A and B can be done simultaneously)
+3. Different steps may require different domain knowledge
+4. Estimated total duration exceeds 60 seconds
+
+### Decomposition Requirements (if decomposition is needed)
+- Break the task into atomic subtasks, each completable by a single agent independently
+- Specify dependencies between subtasks (DependsOn)
+- Specify desired capability for each subtask (DesiredCapability), leave empty if uncertain
+- Set reasonable priority (Priority, lower number = higher priority)
+- Each subtask description must be detailed enough for another agent to complete independently based on the description alone
+
+## Input Task
+{{.TaskDescription}}
+{{if .AvailableCapabilities}}
+### Available Capabilities
+{{.AvailableCapabilities}}{{end}}
+
+## Output Format (JSON only, no markdown, no code blocks)
+{
+  "requires_decomposition": true/false,
+  "reasoning": "why decomposition is or isn't needed",
+  "sub_tasks": [
+    {
+      "id": "task-001",
+      "title": "brief title",
+      "description": "detailed description including goals, inputs, expected outputs",
+      "capability": "desired capability or empty",
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}

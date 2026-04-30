@@ -48,6 +48,18 @@ Resource base path: {{.ResourceBasePath}}
 </active_skill_instructions>
 {{end}}
 
+{{if or .L3ReferencesContent .L3ReferencesLinks}}
+<resolved_references>
+The following reference materials from the skill's references/ directory are available for deeper context.
+Use them to inform your response when relevant.
+{{if .L3ReferencesContent}}
+{{.L3ReferencesContent}}{{end}}
+{{if .L3ReferencesLinks}}
+Binary or oversized files (metadata only, content not inlined):
+{{.L3ReferencesLinks}}{{end}}
+</resolved_references>
+{{end}}
+
 <intent>
 {{.IntentSection}}
 </intent>

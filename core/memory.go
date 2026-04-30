@@ -30,21 +30,21 @@ type MemoryScope int
 
 const (
 	MemoryScopePrivate MemoryScope = iota // visible only to the current user
-	MemoryScopeTeam                      // shared across the team
+	MemoryScopeTeam                       // shared across the team
 )
 
 // MemoryRecord represents a single piece of stored knowledge.
 type MemoryRecord struct {
-	ID        string       `json:"id"`
-	Type      MemoryType   `json:"type"`
-	Title     string       `json:"title"`
-	Content   string       `json:"content"`
-	Scope     MemoryScope  `json:"scope"`
-	Tags      []string     `json:"tags,omitempty"`
-	Score     float64      `json:"score,omitempty"` // relevance score from Retrieve (0 = unset)
-	Meta      any          `json:"meta,omitempty"`  // typed metadata (e.g., *ExperienceData for Type=Experience)
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	ID        string      `json:"id"`
+	Type      MemoryType  `json:"type"`
+	Title     string      `json:"title"`
+	Content   string      `json:"content"`
+	Scope     MemoryScope `json:"scope"`
+	Tags      []string    `json:"tags,omitempty"`
+	Score     float64     `json:"score,omitempty"` // relevance score from Retrieve (0 = unset)
+	Meta      any         `json:"meta,omitempty"`  // typed metadata (e.g., *ExperienceData for Type=Experience)
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 // Memory is the core interface for knowledge retrieval and storage.
@@ -66,22 +66,6 @@ type Memory interface {
 	// Delete removes a memory record by ID.
 	// If the record does not exist, returns ErrMemoryNotFound.
 	Delete(ctx context.Context, id string) error
-}
-
-// ReNewer is an optional interface that Memory implementations can implement
-// to provide semantic context rebuild capability. When a ContextWindow needs
-// compaction, the Reactor checks if Memory also implements ReNewer.
-// If so, it calls ReNew instead of traditional LLM-based summarization.
-//
-// The Memory implementation is free to use any strategy: semantic search
-// over session history, graph-based context assembly, or hybrid approaches.
-// The Reactor simply replaces ConversationHistory with the returned messages.
-type ReNewer interface {
-	// ReNew rebuilds the context window for the given session.
-	// It receives the current intent and all session messages, and returns
-	// a refined set of messages that preserves the most relevant context.
-	// This is called when the context window exceeds its token budget.
-	ReNew(ctx context.Context, sessionID string, intent string, messages []Message) ([]Message, error)
 }
 
 // --- Experience types (exposed for Memory implementations) ---

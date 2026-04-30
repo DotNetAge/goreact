@@ -596,6 +596,12 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		}
 		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
 
+		// ====== Coordinator Mode: Skip normal Act/Observe, use coord path ======
+		if reactCtx.Mode == ModeCoordinator && reactCtx.LastThought != nil &&
+			reactCtx.LastThought.Decision == DecisionCoordinate {
+			return r.runCoordinatorLoop(reactCtx, totalTokens, cycleStart, runStart)
+		}
+
 		if err := r.Act(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
@@ -726,4 +732,152 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 	}
 
 	return result, nil
+}
+
+// runCoordinatorLoop runs the Coordinator-mode T-A-O loop (Design §4.3 / §10).
+// When Think produces DecisionCoordinate, this method takes over:
+//
+// 1. Act: Reports coordination status
+// 2. Observe: Checks sub-task completion, produces summary when all done
+// 3. Loops with polling interval until all tasks complete or timeout/cancel
+//
+// This is separate from runTAOLoop because Coordinator mode has fundamentally
+// different control flow — it doesn't call tools, it waits for async results.
+func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, coordStart, runStart time.Time) (*RunResult, error) {
+	cs := reactCtx.CoordState
+	if cs == nil {
+		return nil, fmt.Errorf("coordinator mode but no CoordState")
+	}
+
+	logger.Info("entering coordinator wait loop", "parent", cs.ParentTaskID,
+		"tasks", cs.TaskProgress.Count())
+
+	// Poll interval: start at 500ms, adaptive up to 5s
+	pollInterval := 500 * time.Millisecond
+	maxPollInterval := 5 * time.Second
+	coordDeadline := time.Now().Add(10 * time.Minute) // Default coordinator timeout
+
+	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
+		if terminated, reason := r.CheckTermination(reactCtx); terminated {
+			reactCtx.IsTerminated = true
+			reactCtx.TerminationReason = reason
+			break
+		}
+
+		// Check lifecycle state
+		cs.LifecycleState = cs.LifecycleState // read (for potential future locking)
+		if cs.LifecycleState.IsTerminal() {
+			break
+		}
+
+		// Check global deadline
+		if time.Now().After(coordDeadline) {
+			cs.Cancel("coordinator global timeout exceeded")
+			break
+		}
+
+		cycleStart := time.Now()
+
+		// Act (coordination status report)
+		if err := r.Act(reactCtx); err != nil {
+			logger.Warn("coordinator act error", "error", err)
+		}
+		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
+
+		// Observe (check task completion)
+		if err := r.Observe(reactCtx); err != nil {
+			logger.Warn("coordinator observe error", "error", err)
+			break
+		}
+		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
+
+		// Record step in history (for debugging/audit)
+		step := Step{
+			Iteration:   reactCtx.CurrentIteration + 1,
+			Thought:     *reactCtx.LastThought,
+			Action:      *reactCtx.LastAction,
+			Observation: *reactCtx.LastObservation,
+			Timestamp:   time.Now(),
+			Duration:    time.Since(cycleStart),
+		}
+		reactCtx.AppendHistory(step)
+		reactCtx.CurrentIteration++
+
+		// If Observe produced a final answer (all tasks done), exit loop
+		if reactCtx.LastThought != nil && reactCtx.LastThought.Decision == DecisionAnswer &&
+			reactCtx.LastThought.IsFinal {
+			logger.Info("coordinator loop complete", "iterations", reactCtx.CurrentIteration)
+			break
+		}
+
+		// Adaptive poll: increase interval if no new results
+		pending := cs.TaskProgress.PendingCount()
+		if pending > 0 && pollInterval < maxPollInterval {
+			pollInterval *= 2
+			if pollInterval > maxPollInterval {
+				pollInterval = maxPollInterval
+			}
+		}
+
+		// Wait before next poll cycle
+		select {
+		case <-time.After(pollInterval):
+			// Normal poll tick
+		case <-reactCtx.Ctx().Done():
+			// External context cancelled
+			cs.Cancel("external context cancelled")
+			break
+		case ctrl := <-cs.ControlChan:
+			// Lifecycle control command received
+			r.handleCoordinatorControl(cs, ctrl)
+		}
+	}
+
+	// Build result from coordinator state
+	result := &RunResult{
+		Intent:            reactCtx.Intent,
+		Steps:             reactCtx.History,
+		TotalIterations:   reactCtx.CurrentIteration,
+		TerminationReason: reactCtx.TerminationReason,
+		TokensUsed:        totalTokens,
+		Confidence:        reactCtx.Intent.Confidence,
+		TotalDuration:     time.Since(runStart),
+	}
+
+	// Extract final answer from last thought or observation
+	if reactCtx.LastThought != nil && reactCtx.LastThought.FinalAnswer != "" {
+		result.Answer = reactCtx.LastThought.FinalAnswer
+	} else if reactCtx.LastObservation != nil {
+		result.Answer = reactCtx.LastObservation.Result
+	}
+	if result.Answer == "" && cs.TaskProgress != nil {
+		result.Answer = cs.TaskProgress.Summary()
+	}
+	if reactCtx.TerminationReason == "" {
+		reactCtx.TerminationReason = "coordination_complete"
+	}
+
+	// Cleanup coordinator resources
+	cs.Dispose()
+	reactCtx.Mode = ModeExecutor // Reset to executor mode
+
+	result.Experience = r.buildExperienceCandidate(reactCtx, result)
+
+	return result, nil
+}
+
+// handleCoordinatorControl processes an incoming lifecycle control command.
+func (r *Reactor) handleCoordinatorControl(cs *CoordState, cmd *core.ControlCommand) {
+	switch cmd.Action {
+	case core.CmdInterrupt:
+		if err := cs.Interrupt(cmd.Reason); err != nil {
+			logger.Warn("coordinator interrupt failed", "error", err)
+		}
+	case core.CmdCancel:
+		if err := cs.Cancel(cmd.Reason); err != nil {
+			logger.Warn("coordinator cancel failed", "error", err)
+		}
+	default:
+		logger.Info("unknown coordinator control command", "action", cmd.Action)
+	}
 }

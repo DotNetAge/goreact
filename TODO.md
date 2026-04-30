@@ -69,7 +69,7 @@
   - 增加SessionStore接口，用于存储与恢复对话上下文窗口，可以采用文件存储或数据库存储，也可以采用RAG存储。
   - 框架内默认提供 `MemorySessionStore` 与 `BoltSessionStore` 两种实现，`Agent` 在没有设置 `SessionStore`实现时 Fallback 到 `MemorySessionStore` 为默认会话实现；
   - 每次向LLM发送请求时，都要将当前的`Message`存入至`SessionStore`
-  - 当 `ContextWindow` Tokens 的大小达到其最大容纳边界时，会触发【滚动】，有了`SessionStore`的加持后被就不会丢失对话内容，当内容被【滑出】上下文窗口后，可以触发`SessionStore`上的“滑动”方法，被滑出的一条或多条消息在掉落出上下文窗口时，客户端可以将这些被滑出的内容存入RAG或其它存储进行语义化成为“知识”，在用户当前上下文中按语义反向注入，这就避免了“上下文腐烂”的问题，同时也可以支持了无限的上下文，以及长期记忆与短期记忆的完美融合。
+  - 当 `ContextWindow` Tokens 的大小达到其最大容纳边界时，会触发【滚动】，有了`SessionStore`的加持后被就不会丢失对话内容，当内容被【滑出】上下文窗口后，可以触发`SessionStore`上的"滑动"方法，被滑出的一条或多条消息在掉落出上下文窗口时，客户端可以将这些被滑出的内容存入RAG或其它存储进行语义化成为"知识"，在用户当前上下文中按语义反向注入，这就避免了"上下文腐烂"的问题，同时也可以支持了无限的上下文，以及长期记忆与短期记忆的完美融合。
 - [x] ReActor 在Think阶段没有对工具进行过滤，而是全量加载工具这样可能会导致Token消耗瓶颈，需要考虑按意图过滤工具的能力，以及使工具与技能的过滤都可以支持语意化方式筛选过滤；
 - [x] 不应该在TAO中直接保存经验，而应该由客户端去处理，客户端是通过评估机制来处理这个问题；
 - [x] 初始化callLLM时要对齐全新的ModelConfig的定义
@@ -88,9 +88,9 @@
   - [x] 向LLM发起会话时就要检查是否应向SystemPrompt插入Rules；
 
 ---
-- [ ] 补充关于“Tools VS Skills”的文章，论证为何Skills会更优于Tools（由用户手动撰写）
+- [ ] 补充关于"Tools VS Skills"的文章，论证为何Skills会更优于Tools（由用户手动撰写）
   1. 对于绝大多数大模型，Tools并无法实现延时加载，而一次性加载更多的Tools会使模型的注意力下降，Token消耗增加。
-  2. Skill 采用三级“渐进式加载”机制，当Skill被激活时才会从`AllowedTools`中加载工具，相比之下会降低思考链的的复杂度，同时也可以降低Token消耗；
+  2. Skill 采用三级"渐进式加载"机制，当Skill被激活时才会从`AllowedTools`中加载工具，相比之下会降低思考链的的复杂度，同时也可以降低Token消耗；
   3. 对于实用场景如文件内容查找，网络搜索往往不是只靠一个工具完成，而是依赖于多个工具同时配合协同完成，因而基础Skill会显得更加具有灵活性与可扩展性。
   4. 增加Tools的代价比增加Skill的代价要高，每个Tools的加入就意味着要重新编译，而Skill仅是复制文件；
 ---
@@ -134,4 +134,156 @@
   - 当Agent在等待LLM完成执行时，是否还能向Agent发送消息？实现【紧急叫停】功能；
   - 如果SubAgent正在执行，不能够切换身份，只能等待执行完成；
 - [x] 当切换Agent的时候Skill是不共享的，因为每个Agent有自己领域的Skill，因此不能共享。只能通过输入该Agent定义的Skills目录来加载Skill。
+- [x] 在渐进式披露过程中，当进入Skill激活阶段时，
+  - 如果在 Skill 中需要引用其它的Skill的时候，应该如何处理？这是涉及跨Skill的引用，所以在SystemPrompt的skill的元数据列表是不可以不加载的；同样地，全量的工具元数据也不能不加载（但这不就破坏了原有定下的原则）？
+    - 解决办法：当遇到子Skill时，可以利用当前的子Agent编排能力，克隆一个当前的Agent, 然后构造一个任务上下文给该子Agent，主Agent则处于等待状态，直到子Agent完成后，主Agent获取其结果后再继续执行。此方法需要关注以下的问题：
+      - 子Skill是怎么从主Skill的正文中被识别出来的，至少是正确的名字；
+      - 顺带就要检查一项当前Think是怎么样从Skill的正文中识别子需要调用某个指定名子的子Agent的；
+      - 值得研究：由于Skill的嵌套调用可能会导致产生一条很长的"调用链"，Gemini与LangChan据说是采用Graph的方式先构建起一个完整"图"，然后再原子化调用，表达出来的貌似可行但过于抽象，不知道是否可以实现，又应如何实现？
+  - 如果在 Skill的描述中需要进一步让LLM阅读 Skill中的 references 目录中的各类指引或参考文件时应该如何进入第3阶段更深层次的内容披露？
+    - [x] 这里需要增加一特殊的识别，可以借助LLM的推理能力让LLM识别出当前Skill是要加载 references 内的参考文件如："请参考 references/guide.md" 文件，此时就会激会第三阶段的Skill内容披露, 我认为可以分成两类处理：
+      - [x] 如果是文本文件就直接读取文件内容插入到当前会话上下文内"<references>[文件内容1] ...</references>"
+      - [x] 对于文件过长暂时没有想到有什么办法，因为可能会塞爆当前上下文。先做[TODO]标记待有方案再议；
+      - [x] 如果文件是二进制文件则直接将文件名，大小 作为引用列表插入至当前上下文"<referece-links>文件全路径 ，大小 </reference-links>"
+      - [x] 如果是非markdown类型的文件则直接放弃读取，因为这并不符合Skill的定义规范；或者将来可以考虑采用文件分析器来扩展对不同文件格式的文本类文件转换成统一的Markdown文件；
+    
+---
 
+## 编排器智能化改造 (Design §6 / §8 / §12) — 2026-04-30
+
+- [x] **LLM Router 实现** (`orchestration/router.go`)
+  - LLM 驱动的智能路由引擎，语义匹配任务→Agent (§6.3)
+  - 轻量级 prompt 模板（仅加载 Name+Description，不加载 Body）
+  - JSON 输出解析：`RoutingDecision{SelectedAgent, Reasoning, Confidence}`
+  - 带缓存层（TTL=10min，避免重复 LLM 调用）
+  - 置信度阈值机制：<0.4 自动降级为 CREATE_NEW
+  - **关键词 fallback**：LLM 不可用时基于规则的三级降级策略
+    1. Description 关键词命中 + 绩效加权
+    2. 最高分空闲 Agent 选择
+    3. 无可用 Agent → 建议动态创建
+  - Markdown 包装 JSON 自动剥离
+
+- [x] **Agent Factory 实现** (`orchestration/factory.go`)
+  - 动态 Agent 创建工厂，Router 返回 `__CREATE_NEW__` 时触发 (§12)
+  - 两阶段 LLM 生成：Description（≤1024字，面向路由）+ Body（完整指令，面向执行）
+  - 能力需求提取 → Skill 匹配 → 配置构造全流程
+  - 重叠检测：复用已覆盖能力的现有 Agent（避免重复创建）
+  - 数量上限保护（默认 20 个）
+  - 规则降级生成：LLM 不可用时自动生成基础配置
+
+- [x] **ScoreTracker 接入** (`orchestration/score.go` 已有，现接入使用)
+  - `ChannelOrchestrator` 结构体新增 `router`, `factory`, `scoreTracker` 字段
+  - `handleResult()` 新增 `recordScore()` 调用：任务完成时自动记录 0-3 分制绩效
+  - 分数同步更新到 RuntimeDirectory 的 Score 字段 + TaskCount 计数
+  - 冷启动信任分：动态创建的 Agent 初始 Score = 2.0
+
+- [x] **RouteTask() 智能路由公开方法**
+  - 新增 `RouteTask(ctx, taskDescription, desiredCapability, parentID, metadata)` 方法
+  - 与现有 `DelegateTo(agentName, ...)` 形成互补：
+    - `DelegateTo`: 显式指定 Agent 名称（向后兼容，原有路径不变）
+    - `RouteTask`: 不指定名称，由 Router 自动选择/创建最佳 Agent（新增智能路径）
+  - 完整流程：收集候选 → LLM/规则路由决策 → 选择/创建 → DelegateTo 委托执行
+
+- [x] **新增构造选项**
+  - `WithLLMRouter(router)` — 注入自定义 LLM Router
+  - `WithAgentFactory(factory)` — 注入自定义 Agent 工厂
+  - `WithScoreTracker(tracker)` — 注入自定义绩效追踪器
+  - 自动化：提供 WithDefaultModel 时自动创建 Router + Factory + ScoreTracker
+
+- [x] **新增消息类型**
+  - `RouteTaskRequest` — 智能路由请求结构体
+  - `DelegateRequest.AgentName` 为空时的语义变更为"触发智能路由"
+
+- [x] **测试覆盖** (`orchestration/router_test.go`)
+  - Router: 11 个测试（创建、空候选、fallback 关键词/busy 跳过、缓存、JSON 解析、低置信度、Markdown 包装、分词）
+  - ScoreTracker: 6 个测试（记录/查询、epsilon-greedy 优选、单候选/空/全部）
+  - 集成: 2 个测试（组件自动创建、RouteTask fallback 路由端到端）
+
+### 当前编排器 vs 设计文档对照表
+
+| 设计组件 | 设计文档 | 当前状态 |
+|---------|---------|---------|
+| **LLM Router** | §6.3: 完整的 LLM 语义匹配引擎 | ✅ 已实现（含缓存+fallback） |
+| **Dispatcher** | §6.4: Router→选择→状态更新→转发 | ✅ 已实现（handleDelegate + RouteTask） |
+| **AgentFactory** | §12: 动态创建 + 两阶段生成 | ✅ 已实现（含重叠检测+降级） |
+| **ScoreTracker** | §8: 0-3分 + EMA衰减 + 多因子排序 | ⚠️ 基础版接入（多因子排序待集成到 Dispatcher）|
+| **Coordinator 模态** | §4.3/§10: Executor↔Coordinator 转换 | ❌ 未实现（下一阶段） |
+| **事件类型全集** | §7.1: TaskDispatchEvent 等 | ⚠️ 部分已有（core 层已定义）|
+
+### 待实现（Phase 4 范围）
+
+1. **ScoreTracker 多因子排序**: 将 rankAgents()（§8.5）集成到 Dispatcher 的 Agent 选择逻辑中
+2. **Coordinator 模态**: 在 Reactor Think 中插入四步判定门控（§5），支持 WBS 分解和 Observe-Wait 循环
+3. **中断/继续/取消**: 基于 Context 级联传播的生命周期控制（§10.5）
+4. **超时分级**: 三级超时策略（单任务/总体软/总体硬）（§10.3）
+5. **AgentRegistry 接口抽象**: 将 goreact.AgentRegistry 替换为接口引用（降低耦合）
+
+
+---
+
+## Prompt 模板化改造 + 设计文档覆盖率提升 — 2026-04-30 (Phase 3.5)
+
+### Prompt 模板化（遵循 reactor/prompts.go 模式）
+
+- [x] **创建 `orchestration/prompts/` 目录**，4 个 `.tmpl` 文件全部英文
+  - `routing_prompt.tmpl` — LLM Router 系统提示词 (Design §6.3)
+  - `capability_extraction_prompt.tmpl` — Agent Factory 能力提取提示词 (Design §12.2.1)
+  - `body_generation_prompt.tmpl` — Agent Factory System Prompt 生成提示词 (Design §12.2.1)
+  - `wbs_decomposition_prompt.tmpl` — WBS 分解判定提示词 (Design §11.2)
+- [x] **创建 `orchestration/prompts.go`** — 完全遵循 `reactor/prompts.go` 模式
+  - `embed.FS` 嵌入模板文件系统
+  - `template.Must(template.New(...).ParseFS(...))` init 时解析
+  - 定义 Data 结构体: `routingPromptData`, `capabilityExtractionPromptData`, `bodyGenerationPromptData`, `wbsDecompositionPromptData`
+  - 渲染函数: `renderRoutingPrompt()`, `renderCapabilityExtractionPrompt()`, `renderBodyGenerationPrompt()`, `renderWBSDecompositionPrompt()`
+  - 辅助函数: `toAgentViews()`, `formatScore()`
+- [x] **重写 `router.go`** — 移除所有硬编码中文 prompt
+  - `buildRoutingPrompt()` 改为调用 `renderRoutingPrompt(data)` 
+  - 新增 `rankAgents()` 多因子排序方法 (Design §8.5)
+  - 新增 `SelectBest()` epsilon-greedy 优选方法
+  - 新增 `min()` / `minF64()` 辅助函数
+- [x] **重写 `factory.go`** — 移除所有硬编码中文 prompt
+  - `generateWithLLM()` 改为调用模板渲染函数
+  - `generateRuleBased()` 英文化默认 Introduction（含 behavioral principles）
+  - 新增 `truncateStr()` 通用截断工具函数
+
+### WithDefaultModel 自动创建 LLM Router
+
+- [x] **修复构造函数**: 当 `WithDefaultModel(cfg)` 提供了有效 APIKey 时，自动创建 LLMRouter 并注入
+  - 自动创建 AgentFactory（以 Registry 为后端）
+  - 始终创建 ScoreTracker
+  - 日志记录 "LLM Router auto-created from default model"
+
+### 设计文档覆盖率提升
+
+- [x] **§7.1 完整事件类型** (`orchestration/events.go`)
+  - 上行事件: `TaskDispatchEvent`, `QueryStatusEvent`, `AgentScoreEvent`
+  - 下行事件: `TaskAssignedEvent`, `TaskResultEvent`, `TimeoutWarningEvent`
+  - 生命周期控制: `CoordControlCommand`, `CoordLifecycleEvent`, `ResumeTaskEvent`, `TaskPausedEvent`
+  - WBS 类型: `ResponsibilityCheckResult`, `AtomicityCheckResult`, `TaskDecomposition`
+  - Coordinator 类型: `TaskProgressTable`, `TaskEntry`, `TaskState`(8状态), `LifecycleState`(4状态)
+  - 工具方法: `IsFinalState()`, `PendingTaskIDs()`, `CompletedCount()`, `FailedCount()`
+- [x] **§8.5 多因子排序** 集成到 router.go
+  - Factor 1: 绩效分 (40%)
+  - Factor 2: 关键词语义匹配 (30%)
+  - Factor 3: 可用性/空闲度 (20%)
+  - Factor 4: 近期活跃度 10%/30天衰减 (10%)
+- [x] **§11 WBS 分解** 模板已创建（待集成到 Reactor Think 流程）
+- [x] **§12.2.1 Description/Body 分离生成** 通过双模板实现
+
+### 当前设计文档覆盖率
+
+| 设计组件 | 设计文档 | 当前状态 |
+|---------|---------|---------|
+| **LLM Router** | §6.3: LLM 语义匹配 + 缓存 + fallback | ✅ 完整（含模板+多因子排序） |
+| **Dispatcher** | §6.4: Router→选择→状态更新→转发 | ✅ RouteTask + DelegateTo 双路径 |
+| **AgentFactory** | §12: 动态创建 + 双阶段 LLM 生成 | ✅ 完整（含重叠检测+降级+英文模板）|
+| **ScoreTracker** | §8: 0-3分 + EMA衰减 + epsilon-greedy | ✅ 已接入 handleResult + SelectBest |
+| **事件类型全集** | §7.1: 8种上行 + 4种下行 + 控制事件 | ✅ 完整实现 |
+| **多因子排序** | §8.5: 四因子加权排序 | ✅ rankAgents() + SelectBest() |
+| **WBS 分解** | §11: 模板就绪，待接入 Think | ⚠️ 模板完成，待 Reactor 集成 |
+| **Coordinator 模态** | §4.3/§10: TaskProgressTable + Wait 循环 | ⚠️ 数据结构就绪，待行为实现 |
+| **超时分级** | §10.3: 三级超时策略 | ❌ 待实现 |
+| **生命周期控制** | §10.5: Interrupt/Resume/Cancel | ⚠️ 类型定义完成，待行为实现 |
+| **Prompt 模板化** | 遵循项目 embed.FS 模式 | ✅ 全部英文 .tmpl 文件 |
+
+### 测试结果: 34/34 PASS (0.947s)

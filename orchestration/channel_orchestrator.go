@@ -14,9 +14,14 @@ import (
 // ChannelOrchestrator is the default Orchestrator implementation using Go channels
 // as the Actor-model message inbox. It implements all four roles:
 //   - 编排引擎: Actor loop processing Delegate/Query/Cancel/Result messages
-//   - Agent 工厂: GetAgent with Registry cache + Model resolution
+//   - Agent 工厂: GetAgent with Registry cache + Model resolution + dynamic creation (§12)
 //   - 事件聚合器: Unified event stream from all agents
 //   - Model 分配器: Automatic model lookup per agent config
+//
+// 智能路由能力（Design §6.3）：
+//   当 LLM Router 可用时，支持语义匹配任务→Agent 的自动路由。
+//   当 AgentFactory 可用时，支持按需动态创建新 Agent。
+//   当 ScoreTracker 可用时，支持基于历史绩效的优选排序。
 type ChannelOrchestrator struct {
 	// === Configuration (immutable after construction) ===
 	modelRegistry core.ModelRegistry
@@ -26,9 +31,17 @@ type ChannelOrchestrator struct {
 	defaultTimeout time.Duration
 	inboxSize     int
 
+	// === Intelligent Routing Components (Design §6 / §8 / §12) ===
+	router       *LLMRouter     // 智能路由引擎 (nil = 降级为关键词匹配)
+	factory      *AgentFactory   // 动态 Agent 创建工厂 (nil = 不支持动态创建)
+	scoreTracker *ScoreTracker   // 绩效追踪器 (nil = 不记录绩效)
+
 	// === Agent Factory Cache ===
 	agentCache   map[string]*goreact.Agent // name -> cached instance
 	agentCacheMu sync.RWMutex
+
+	// === Runtime State Tracking ===
+	runtimeDir *core.RuntimeDirectory // Agent runtime state (idle/busy/coordinating/error, scores)
 
 	// === Task Management ===
 	store TaskStore
@@ -63,7 +76,11 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 		spawnFunc:    setup.spawnFunc,
 		maxConcurrent: setup.maxConcurrent,
 		inboxSize:     setup.inboxSize,
+		router:       setup.llmRouter,
+		factory:      setup.agentFactory,
+		scoreTracker: setup.scoreTracker,
 		agentCache:    make(map[string]*goreact.Agent),
+		runtimeDir:    core.NewRuntimeDirectory(0), // unlimited
 		store:         NewInMemoryTaskStore(),
 		inbox:         make(chan Message, setup.inboxSize),
 		done:          make(chan struct{}),
@@ -93,6 +110,32 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 	}
 	if o.spawnFunc == nil {
 		o.spawnFunc = defaultSpawnFunction(o)
+	}
+
+	// Auto-create LLMRouter when a ModelConfig is available but no Router was explicitly injected.
+	// This enables RouteTask() intelligent routing out-of-the-box with just WithDefaultModel().
+	if o.router == nil && setup.defaultModel != nil && setup.defaultModel.APIKey != "" {
+		router, err := NewLLMRouter(setup.defaultModel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create LLM router from default model: %w", err)
+		}
+		o.router = router
+
+		// Also log that the router was auto-created
+		o.logger.Info("LLM Router auto-created from default model",
+			"model", setup.defaultModel.Name,
+		)
+	}
+
+	// If Router exists but no Factory, create a default Factory backed by the AgentRegistry.
+	if o.router != nil && o.factory == nil {
+		var adapter goreactRegistryAdapter = &registryAdapterImpl{reg: o.registry}
+		o.factory = NewAgentFactory(o.router, &adapter)
+	}
+
+	// Always create a ScoreTracker if none provided
+	if o.scoreTracker == nil {
+		o.scoreTracker = NewScoreTracker()
 	}
 
 	return o, nil
@@ -364,6 +407,9 @@ func (o *ChannelOrchestrator) handleResult(ctx context.Context, msg Message) {
 	}
 	_ = o.store.UpdateTaskStatus(task.ID, status, answer, errMsg)
 
+	// ★ 新增: 记录绩效分数到 ScoreTracker (Design §8.3/§8.5)
+	o.recordScore(task, success)
+
 	o.emitEvent(core.ReactEvent{
 		Type: core.SubtaskCompleted,
 		Data: core.SubtaskResult{
@@ -373,6 +419,54 @@ func (o *ChannelOrchestrator) handleResult(ctx context.Context, msg Message) {
 			Error:   errMsg,
 		},
 	})
+}
+
+// recordScore 根据任务结果计算并记录绩效分数。
+// 采用 Design §8.1 的 0-3 分制 + §8.3 的混合评分策略（70% 客观 + 30% 主观）。
+func (o *ChannelOrchestrator) recordScore(task *core.Task, success bool) {
+	if o.scoreTracker == nil || task == nil {
+		return
+	}
+
+	score := 0
+	if success {
+		// 自动客观分 (Design §8.3):
+		//   成功完成 → 基础分 2 (ScoreSuccess)
+		//   如果有答案内容 → 满分 3 (ScorePerfect)
+		score = ScoreSuccess
+		if task.Output != "" && len(task.Output) > 20 { // 有实质输出
+			score = ScorePerfect
+		}
+	} else {
+		score = ScoreFailed
+	}
+
+	// 从任务描述中提取 Agent 名称（task.Description 格式为 "agentName: prompt"）
+	agentID := extractAgentNameFromTask(task)
+
+	if agentID != "" {
+		o.scoreTracker.RecordScore(agentID, score, success, task.ID)
+
+		// 同步更新 RuntimeDirectory 的 Score 字段
+		o.runtimeDir.SetScore(agentID, float64(score))
+
+		// 更新 TaskCount
+		o.runtimeDir.IncrementTaskCount(agentID)
+	}
+}
+
+// extractAgentNameFromTask 从任务的 Description 中提取 Agent 名称。
+// Description 格式为 "agentName: taskPrompt"（由 handleDelegate 设置）。
+func extractAgentNameFromTask(task *core.Task) string {
+	if task == nil || task.Description == "" {
+		return ""
+	}
+	for i, ch := range task.Description {
+		if ch == ':' {
+			return task.Description[:i]
+		}
+	}
+	return ""
 }
 
 // --- Public Methods ---
@@ -411,6 +505,94 @@ func (o *ChannelOrchestrator) DelegateTo(
 	}
 }
 
+// RouteTask 是智能路由的公开入口方法 (Design §6.3)。
+//
+// 与 DelegateTo 不同，RouteTask 不要求调用者指定 Agent 名称，
+// 而是通过 LLM Router 语义匹配任务描述与最合适的 Agent：
+//
+//  ① 从 RuntimeDirectory 获取所有 Active Agent 的元数据
+//  ② 调用 LLM Router (或降级为关键词匹配) 进行语义匹配
+//  ③ 如果选中现有 Agent → 委托执行
+//  ④ 如果需要 __CREATE_NEW__ → 通过 AgentFactory 动态创建 → 委托执行
+//  ⑤ 返回结果
+//
+// 使用示例：
+//
+//	result, err := orch.RouteTask(ctx,
+//	    "分析这份 PDF 财务报表并提取关键指标",
+//	    "PDF 分析和财务数据处理",
+//	    "",
+//	    nil,
+//	)
+func (o *ChannelOrchestrator) RouteTask(
+	ctx context.Context,
+	taskDescription, desiredCapability, parentID string,
+	metadata map[string]any,
+) (*DelegateResult, error) {
+	// Step 1: 收集候选 Agent 元数据
+	candidates := o.runtimeDir.ListActive()
+
+	// Step 2: 智能路由决策
+	routeReq := RouteRequest{
+		TaskDescription:   taskDescription,
+		DesiredCapability: desiredCapability,
+	}
+
+	var decision *RoutingDecision
+	if o.router != nil {
+		var err error
+		decision, err = o.router.Route(ctx, routeReq, candidates)
+		if err != nil {
+			return nil, fmt.Errorf("route task failed: %w", err)
+		}
+	} else {
+		// 无 Router 时使用内置 fallback（创建临时 Router 实例来复用 fallbackRoute 逻辑）
+		tempRouter, _ := NewLLMRouter(nil) // 创建无 LLM 的 Router，仅用 fallback
+		decision = tempRouter.fallbackRoute(routeReq, candidates)
+	}
+
+	o.logger.Info("smart routing decision",
+		"selected_agent", decision.SelectedAgent,
+		"confidence", decision.Confidence,
+		"reasoning", decision.Reasoning,
+	)
+
+	// Step 3: 处理路由决策
+	var agentName string
+
+	switch decision.SelectedAgent {
+	case CreateNewAgent:
+		// 需要动态创建新 Agent
+		if o.factory == nil || !o.factory.CanCreate() {
+			return nil, fmt.Errorf("agent factory unavailable or limit reached for task: %s", taskDescription[:min(80, len(taskDescription))])
+		}
+
+		newConfig, err := o.factory.Create(ctx, taskDescription, o.modelRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("dynamic agent creation failed: %w", err)
+		}
+
+		// 注册到 Registry 和 RuntimeDirectory
+		if err := o.registry.SaveTo(newConfig); err != nil {
+			return nil, fmt.Errorf("failed to register new agent: %w", err)
+		}
+		meta := core.NewAgentRuntimeMeta(newConfig)
+		meta.Score = DefaultInitialTrustScore // 冷启动初始信任分 (Design §8.4)
+		if err := o.runtimeDir.Register(meta); err != nil {
+			// 已存在同名 agent，忽略注册错误（可能已被并发创建）
+			o.logger.Warn("runtime dir register failed for new agent", "name", newConfig.Name, "error", err)
+		}
+
+		agentName = newConfig.Name
+
+	default:
+		agentName = decision.SelectedAgent
+	}
+
+	// Step 4: 委托给选中的 Agent 执行（复用现有的 DelegateTo 路径）
+	return o.DelegateTo(ctx, agentName, taskDescription, parentID, metadata)
+}
+
 func (o *ChannelOrchestrator) WaitForResult(ctx context.Context, taskID string) (*core.Task, error) {
 	ch, exists := o.store.GetResultCh(taskID)
 	if !exists {
@@ -439,11 +621,21 @@ func (o *ChannelOrchestrator) CancelTask(taskID string) error {
 	}
 	select {
 	case o.inbox <- msg:
-	case <-replyCh:
-			// Will be processed by handleCancel
+	default:
+		return fmt.Errorf("orchestrator: inbox full, cannot send cancel for task %q", taskID)
 	}
-	err := o.store.CancelTask(taskID)
-	return err
+
+	// Wait for handleCancel to process the message and return its result.
+	// Do NOT call store.CancelTask again here — handleCancel already does that.
+	select {
+	case resp := <-replyCh:
+		if resp.Error != nil {
+			return resp.Error
+		}
+		return nil
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("orchestrator: timeout waiting for cancel confirmation for task %q", taskID)
+	}
 }
 
 // --- Agent Factory ---
@@ -594,3 +786,45 @@ func (o *ChannelOrchestrator) GetTask(taskID string) (*core.Task, error) {
 }
 
 func (o *ChannelOrchestrator) ModelRegistry() core.ModelRegistry { return o.modelRegistry }
+
+// RuntimeDir returns the runtime state directory for agent lifecycle tracking.
+// This is used by agents to register themselves and by the orchestrator to track
+// agent states (idle/busy/coordinating/error) and performance scores.
+func (o *ChannelOrchestrator) RuntimeDir() *core.RuntimeDirectory {
+	return o.runtimeDir
+}
+
+// RegisterAgent registers an agent's runtime metadata. Delegates to RuntimeDirectory.
+func (o *ChannelOrchestrator) RegisterAgent(meta *core.AgentRuntimeMeta) error {
+	return o.runtimeDir.Register(meta)
+}
+
+// RegisterAgentFromConfig is a convenience method that creates AgentRuntimeMeta
+// from an AgentConfig and registers it. This is the preferred way to register —
+// it avoids duplicating identity fields since AgentConfig is the single source
+// of truth for agent name, description, model, etc.
+func (o *ChannelOrchestrator) RegisterAgentFromConfig(config *core.AgentConfig) error {
+	meta := core.NewAgentRuntimeMeta(config)
+	return o.runtimeDir.Register(meta)
+}
+
+// --- Internal Helpers ---
+
+// registryAdapterImpl 将 goreact.AgentRegistry 适配为 AgentFactory 需要的
+// goreactRegistryAdapter 接口。这避免了 factory 包直接依赖 goreact 包。
+type registryAdapterImpl struct {
+	reg *goreact.AgentRegistry
+}
+
+func (a *registryAdapterImpl) Get(name string) *core.AgentConfig {
+	return a.reg.Get(name)
+}
+
+func (a *registryAdapterImpl) List() []*core.AgentConfig {
+	return a.reg.List()
+}
+
+func (a *registryAdapterImpl) Register(_ string, config *core.AgentConfig) error {
+	// 使用 SaveTo 来注册（写入 .md 文件 + 内存）
+	return a.reg.SaveTo(config)
+}

@@ -19,6 +19,11 @@ type orchestratorSetup struct {
 	inboxSize      int
 	spawnFunc      SpawnFunction
 	registry       *goreact.AgentRegistry
+
+	// --- 智能路由组件 (Design §6 / §8 / §12) ---
+	llmRouter    *LLMRouter    // 智能路由引擎 (可选)
+	agentFactory *AgentFactory // 动态 Agent 创建工厂 (可选)
+	scoreTracker *ScoreTracker // 绩效追踪器 (可选)
 }
 
 type durationWrapper struct {
@@ -97,3 +102,25 @@ type SpawnFunction func(
 	taskID string,
 	resultCh chan<- any,
 ) error
+
+// WithLLMRouter injects an LLM-powered intelligent routing engine.
+// When set, the Orchestrator's RouteTask() method uses semantic matching
+// via LLM to select the best agent for a given task (Design §6.3).
+// Without it, RouteTask falls back to keyword-based matching.
+func WithLLMRouter(router *LLMRouter) OrchestratorOption {
+	return func(s *orchestratorSetup) { s.llmRouter = router }
+}
+
+// WithAgentFactory injects a dynamic Agent creation factory.
+// When the LLM Router returns __CREATE_NEW__, this factory creates
+// a new Agent on-the-fly and registers it (Design §12).
+func WithAgentFactory(factory *AgentFactory) OrchestratorOption {
+	return func(s *orchestratorSetup) { s.agentFactory = factory }
+}
+
+// WithScoreTracker injects a performance tracking instance for agent selection.
+// When set, the Orchestrator records scores after each task completion
+// and uses epsilon-greedy strategy during cold start (Design §8.4-§8.5).
+func WithScoreTracker(tracker *ScoreTracker) OrchestratorOption {
+	return func(s *orchestratorSetup) { s.scoreTracker = tracker }
+}

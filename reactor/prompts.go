@@ -81,6 +81,10 @@ type thinkPromptData struct {
 	FilteredToolList        string // comma-separated tool names available to the active skill
 	ResourceBasePath        string // P3: base path for scripts/, references/, assets/
 
+	// L3 Progressive Disclosure: resolved reference file contents
+	L3ReferencesContent string // <references>...</references> XML block with text content
+	L3ReferencesLinks   string // <reference-links>...</reference-links> XML block with metadata
+
 	// Agent metadata for progressive disclosure (L1 delegate routing)
 	HasAgents     bool
 	AgentsSection string // <agents> block with name/role/description for each registered agent
@@ -566,10 +570,10 @@ func isWordChar(c rune) bool {
 
 // BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.
 // It includes classified intent, memory records, user input, optionally
-// an activated skill's L2 instructions with filtered tool list, and agent metadata
-// for progressive disclosure delegate routing.
+// an activated skill's L2 instructions with filtered tool list, L3 resolved
+// references, and agent metadata for progressive disclosure delegate routing.
 // The registry parameter controls intent-specific decision rules; if nil, defaults are used.
-func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, agentsSection string) string {
+func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, agentsSection string, l3Refs *ResolvedReferences) string {
 	if registry == nil {
 		registry = NewDefaultIntentRegistry()
 	}
@@ -609,6 +613,12 @@ func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryR
 			toolNames = append(toolNames, t.Name)
 		}
 		data.FilteredToolList = strings.Join(toolNames, ", ")
+	}
+
+	// L3 Progressive Disclosure: inject resolved reference content
+	if l3Refs != nil {
+		data.L3ReferencesContent = l3Refs.Content
+		data.L3ReferencesLinks = l3Refs.Links
 	}
 
 	result, err := renderThinkPrompt(data)

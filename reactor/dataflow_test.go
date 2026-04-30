@@ -1,6 +1,7 @@
 package reactor
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -36,7 +37,7 @@ func TestDataFlow_NoRoleRedefinitionInTemplates(t *testing.T) {
 		{
 			name: "think_prompt_no_skill",
 			render: func() string {
-				return BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, nil, nil, "")
+				return BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, nil, nil, "", nil)
 			},
 		},
 		{
@@ -52,7 +53,7 @@ func TestDataFlow_NoRoleRedefinitionInTemplates(t *testing.T) {
 					Instructions:  skill.Instructions,
 					FilteredInfos: []core.ToolInfo{{Name: "write"}, {Name: "bash"}},
 				}
-				return BuildThinkPrompt("implement auth", &Intent{Type: "task"}, nil, actCtx, nil, "")
+				return BuildThinkPrompt("implement auth", &Intent{Type: "task"}, nil, actCtx, nil, "", nil)
 			},
 		},
 	}
@@ -96,7 +97,7 @@ func TestDataFlow_UserInputNotDuplicated(t *testing.T) {
 		{
 			name: "think_prompt",
 			templateFn: func() string {
-				return BuildThinkPrompt(testInput, &Intent{Type: "task"}, nil, nil, nil, "")
+				return BuildThinkPrompt(testInput, &Intent{Type: "task"}, nil, nil, nil, "", nil)
 			},
 		},
 	}
@@ -244,7 +245,7 @@ func TestDataFlow_ThinkPromptNoRawInputLine(t *testing.T) {
 	input := "add validation middleware"
 	intent := &Intent{Type: "task", Confidence: 0.92, Summary: "Add validation"}
 
-	output := BuildThinkPrompt(input, intent, nil, nil, nil, "")
+	output := BuildThinkPrompt(input, intent, nil, nil, nil, "", nil)
 
 	if !strings.Contains(output, `"type":"task"`) {
 		t.Error("think prompt should contain intent JSON")
@@ -307,4 +308,250 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ============================================================
+// Test 9: L3 Progressive Disclosure — Reference File Resolution
+// ============================================================
+
+func TestL3_ResolveReferences_NoReferencesDir(t *testing.T) {
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: "/nonexistent/path"}
+
+	result := r.resolveL3References(actCtx)
+	if result != nil {
+		t.Fatalf("expected nil when no references/ directory, got %+v", result)
+	}
+}
+
+func TestL3_ResolveReferences_EmptyDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	if result != nil {
+		t.Fatalf("expected nil for empty references/ dir, got %+v", result)
+	}
+}
+
+func TestL3_ResolveReferences_MarkdownFileInline(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	guideContent := "# Guide\n\nThis is a reference guide for testing.\n## Section 1\nSome content here."
+	_ = os.WriteFile(refDir+"/guide.md", []byte(guideContent), 0o644)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.FilesLoaded != 1 {
+		t.Errorf("expected FilesLoaded=1, got %d", result.FilesLoaded)
+	}
+	if !strings.Contains(result.Content, "guide.md") {
+		t.Error("expected Content to contain guide.md filename")
+	}
+	if !strings.Contains(result.Content, guideContent) {
+		t.Error("expected Content to contain full guide content")
+	}
+	if !strings.HasPrefix(result.Content, "<references>") || !strings.HasSuffix(result.Content, "</references>\n") {
+		t.Errorf("expected Content wrapped in <references> tags, got: %s", truncate(result.Content, 100))
+	}
+}
+
+func TestL3_ResolveReferences_OversizedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	// Create a file larger than maxReferenceFileSize (64KB)
+	bigData := make([]byte, maxReferenceFileSize+1024)
+	for i := range bigData {
+		bigData[i] = 'X'
+	}
+	_ = os.WriteFile(refDir+"/large.md", bigData, 0o644)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.FilesSkipped != 1 {
+		t.Errorf("expected FilesSkipped=1 for oversized file, got %d", result.FilesSkipped)
+	}
+	if result.Content != "" {
+		t.Error("expected empty Content for oversized-only file")
+	}
+	if !strings.Contains(result.Links, "large.md") {
+		t.Error("expected Links to contain large.md filename")
+	}
+	if !strings.Contains(result.Links, "oversized") {
+		t.Error("expected Links to mention 'oversized' for large file")
+	}
+	if !strings.Contains(result.Links, "<reference-links>") {
+		t.Error("expected Links wrapped in <reference-links> tags")
+	}
+}
+
+func TestL3_ResolveReferences_BinaryFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	// Create a binary file with null bytes
+	binData := make([]byte, 256)
+	binData[0], binData[64], binData[128] = 0, 0, 0 // null bytes at various positions
+	_ = os.WriteFile(refDir+"/data.bin", binData, 0o644)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.FilesSkipped != 1 {
+		t.Errorf("expected FilesSkipped=1 for binary file, got %d", result.FilesSkipped)
+	}
+	if !strings.Contains(result.Links, "data.bin") {
+		t.Error("expected Links to contain data.bin")
+	}
+	if !strings.Contains(result.Links, "binary") {
+		t.Error("expected Links to mark file as binary")
+	}
+}
+
+func TestL3_ResolveReferences_NonCompliantExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	// .py is not in textExtensions — should be silently skipped
+	_ = os.WriteFile(refDir+"/script.py", []byte("print('hello')"), 0o644)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	// Non-compliant extensions are counted as skipped but produce no output
+	if result != nil && (result.Content != "" || result.Links != "") {
+		t.Error("non-compliant .py file should not produce any output")
+	}
+}
+
+func TestL3_ResolveReferences_MixedScenario(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+
+	// 1. Valid markdown
+	_ = os.WriteFile(refDir+"/api.md", []byte("# API Reference\nEndpoints: /api/v1"), 0o644)
+
+	// 2. Valid txt
+	_ = os.WriteFile(refDir+"/notes.txt", []byte("Some notes"), 0o644)
+
+	// 3. Oversized markdown
+	bigData := make([]byte, maxReferenceFileSize+100)
+	for i := range bigData {
+		bigData[i] = 'A'
+	}
+	_ = os.WriteFile(refDir+"/big.md", bigData, 0o644)
+
+	// 4. Binary
+	binData := make([]byte, 64)
+	binData[0] = 0
+	_ = os.WriteFile(refDir+"/image.dat", binData, 0o644)
+
+	// 5. Non-compliant (.json)
+	_ = os.WriteFile(refDir+"/config.json", []byte(`{"key":"value"}`), 0o644)
+
+	r := NewReactor(ReactorConfig{Model: "test", MaxTokens: 4096})
+	actCtx := &ActivatedSkillContext{ResourceBasePath: tmpDir}
+
+	result := r.resolveL3References(actCtx)
+	if result == nil {
+		t.Fatal("expected non-nil result for mixed scenario")
+	}
+	if result.FilesLoaded != 2 {
+		t.Errorf("expected 2 loaded (api.md + notes.txt), got %d", result.FilesLoaded)
+	}
+	if result.FilesSkipped != 3 {
+		t.Errorf("expected 3 skipped (big.md + image.dat + config.json), got %d", result.FilesSkipped)
+	}
+	if !strings.Contains(result.Content, "api.md") {
+		t.Error("expected api.md in Content")
+	}
+	if !strings.Contains(result.Content, "notes.txt") {
+		t.Error("expected notes.txt in Content")
+	}
+	if !strings.Contains(result.Links, "big.md") {
+		t.Error("expected big.md in Links (oversized)")
+	}
+	if !strings.Contains(result.Links, "image.dat") {
+		t.Error("expected image.dat in Links (binary)")
+	}
+}
+
+func TestL3_ResolvedReferences_InjectedIntoThinkPrompt(t *testing.T) {
+	tmpDir := t.TempDir()
+	refDir := tmpDir + "/references"
+	_ = os.Mkdir(refDir, 0o755)
+	_ = os.WriteFile(refDir+"/guide.md", []byte("# Reference Guide\nSee docs for details."), 0o644)
+
+	l3Refs := &ResolvedReferences{
+		Content:     "<references>\n--- guide.md (35 bytes) ---\n# Reference Guide\nSee docs for details.\n</references>\n",
+		Links:       "",
+		FilesLoaded: 1,
+	}
+
+	skill := &core.Skill{
+		Name:        "test-skill",
+		Description: "A test skill",
+		Instructions: "Follow the guide in references/.",
+		RootDir:     tmpDir,
+	}
+	actCtx := &ActivatedSkillContext{
+		Skill:         skill,
+		Instructions:  skill.Instructions,
+		FilteredTools: []gochatcore.Tool{},
+		FilteredInfos: []core.ToolInfo{},
+		ResourceBasePath: tmpDir,
+	}
+
+	output := BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, actCtx, nil, "", l3Refs)
+
+	if !strings.Contains(output, "<resolved_references>") {
+		t.Error("think prompt should contain <resolved_references> section when L3 data provided")
+	}
+	if !strings.Contains(output, "guide.md") {
+		t.Error("think prompt should contain resolved reference filename")
+	}
+	if !strings.Contains(output, "Reference Guide") {
+		t.Error("think prompt should contain resolved reference content")
+	}
+}
+
+func TestL3_ContainsNullBytes(t *testing.T) {
+	if containsNullBytes([]byte("hello world")) {
+		t.Error("text data should not be detected as containing null bytes")
+	}
+	if !containsNullBytes([]byte{0, 'h', 'e', 'l', 'l', 'o'}) {
+		t.Error("data with leading null byte should be detected as binary")
+	}
+	if !containsNullBytes([]byte{'h', 'e', 0, 'l', 'o'}) {
+		t.Error("data with embedded null byte should be detected as binary")
+	}
+	if containsNullBytes([]byte{}) {
+		t.Error("empty data should not be detected as containing null bytes")
+	}
 }

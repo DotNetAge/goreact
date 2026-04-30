@@ -67,4 +67,11 @@ type Orchestrator interface {
 
 	// ModelRegistry returns the internal model registry (read-only view).
 	ModelRegistry() core.ModelRegistry
+
+	// RegisterAgent registers an agent's runtime metadata with the orchestrator.
+	// Called by Agent during NewAgent() when EnableOrchestration=true.
+	RegisterAgent(meta *core.AgentRuntimeMeta) error
+
+	// RuntimeDir returns the runtime state directory for agent lifecycle tracking.
+	RuntimeDir() *core.RuntimeDirectory
 }

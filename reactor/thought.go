@@ -10,10 +10,11 @@ import (
 
 // Decision constants for Thought.Decision
 const (
-	DecisionAct      = "act"
-	DecisionAnswer   = "answer"
-	DecisionClarify  = "clarify"
-	DecisionDelegate = "delegate"
+	DecisionAct         = "act"
+	DecisionAnswer      = "answer"
+	DecisionClarify     = "clarify"
+	DecisionDelegate    = "delegate"
+	DecisionCoordinate  = "coordinate" // WBS decomposed → enter Coordinator mode to dispatch & monitor sub-tasks
 )
 
 // Thought represents the output of the Think phase.

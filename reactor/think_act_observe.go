@@ -3,6 +3,8 @@ package reactor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,15 +21,206 @@ type l1RoutingResult struct {
 	Reasoning     string
 }
 
+// ---------------------------------------------------------------------------
+// L3 Progressive Disclosure: Reference File Resolution
+// ---------------------------------------------------------------------------
+
+// maxReferenceFileSize is the maximum file size (in bytes) for inline reference
+// injection into the LLM context. Files exceeding this limit are marked as TODO.
+const maxReferenceFileSize = 64 * 1024 // 64KB
+
+// textExtensions lists file extensions that qualify as text/reference files
+// compliant with the Skill specification (Markdown-based).
+var textExtensions = map[string]bool{
+	".md":       true,
+	".markdown": true,
+	".txt":      true,
+	".mdown":    true,
+	".mkd":      true,
+}
+
+// referenceFile represents a discovered reference file with its classification.
+type referenceFile struct {
+	RelPath string // relative path under references/ (e.g., "guide.md")
+	AbsPath string // absolute filesystem path
+	Size    int64  // file size in bytes
+	Ext     string // lowercase file extension (including dot)
+}
+
+// ResolvedReferences holds Level 3 resolved reference file contents ready for
+// injection into the LLM context during Phase 2 (L2) planning.
+//
+// Two output formats:
+//   - Content: <references>filename\n[file contents]\n...</references>
+//     for text/markdown files within size limits
+//   - Links:   <reference-links>path, size bytes</reference-links>
+//     for binary or oversized files (metadata only)
+type ResolvedReferences struct {
+	Content       string // XML block with inline text file contents
+	Links         string // XML block with binary/oversized file metadata
+	FilesLoaded   int    // count of successfully loaded text files
+	FilesSkipped int    // count of skipped (oversized/binary/non-compliant) files
+}
+
+// resolveL3References performs Level 3 progressive disclosure: scans the skill's
+// references/ directory and resolves reference files into injectable content.
+//
+// This implements the third stage of Skill progressive disclosure (see design doc
+// 渐进式披露设计方案.md §5 Skill 三层披露):
+//
+//	L1 Metadata   (~100 tokens)  → Name + Description → startup
+//	L2 Instructions(<5000 tokens) → SKILL.md body    → activation
+//	L3 Resources   (按需)         → references/*      → this function
+//
+// # Classification rules
+//
+//   - .md/.markdown/.txt files ≤ maxReferenceFileSize: read full content,
+//     wrap in <references>...</references> for direct context injection
+//   - Text files > maxReferenceFileSize: emit [TODO] marker with size info;
+//     large file handling is deferred until a chunking/summarization strategy
+//     is designed (would otherwise risk context window overflow)
+//   - Binary files (detected via null-byte heuristic in first 512 bytes):
+//     emit filename + size in <reference-links>...</reference-links>
+//   - Non-markdown non-text extensions: silently skipped — they don't conform
+//     to the Skill specification's reference format; future work may add a
+//     file analyzer pipeline to convert arbitrary formats to Markdown
+func (r *Reactor) resolveL3References(actCtx *ActivatedSkillContext) *ResolvedReferences {
+	if actCtx == nil || actCtx.ResourceBasePath == "" {
+		return nil
+	}
+
+	refDir := filepath.Join(actCtx.ResourceBasePath, "references")
+	info, err := os.Stat(refDir)
+	if err != nil || !info.IsDir() {
+		return nil // no references/ directory — L3 not applicable
+	}
+
+	entries, err := os.ReadDir(refDir)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+
+	var refs []referenceFile
+	for _, e := range entries {
+		if e.IsDir() {
+			continue // skip subdirectories
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		fi, statErr := e.Info()
+		if statErr != nil {
+			continue
+		}
+		refs = append(refs, referenceFile{
+			RelPath: name,
+			AbsPath: filepath.Join(refDir, name),
+			Size:    fi.Size(),
+			Ext:     ext,
+		})
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+
+	result := &ResolvedReferences{}
+	var contentSB strings.Builder
+	var linksSB strings.Builder
+
+	contentSB.WriteString("<references>\n")
+	hasContent := false
+
+	for _, rf := range refs {
+		switch {
+		case textExtensions[rf.Ext]:
+			// --- Text/Markdown file ---
+			if rf.Size > maxReferenceFileSize {
+				// Oversized: TODO marker — would risk context window overflow
+				fmt.Fprintf(&linksSB, "  - %s (%d bytes, oversized — TODO: chunking strategy pending)\n",
+					rf.RelPath, rf.Size)
+				result.FilesSkipped++
+				continue
+			}
+			data, readErr := os.ReadFile(rf.AbsPath)
+			if readErr != nil {
+				logger.Warn("L3: failed to read reference file", "path", rf.AbsPath, "error", readErr)
+				result.FilesSkipped++
+				continue
+			}
+			// Safety check: ensure no null bytes sneaked through extension check
+			if containsNullBytes(data) {
+				fmt.Fprintf(&linksSB, "  - %s (%d bytes, detected binary)\n", rf.RelPath, rf.Size)
+				result.FilesSkipped++
+				continue
+			}
+			fmt.Fprintf(&contentSB, "--- %s (%d bytes) ---\n%s\n", rf.RelPath, rf.Size, data)
+			result.FilesLoaded++
+			hasContent = true
+
+		default:
+			// --- Binary or non-compliant extension ---
+			isBinary := false
+			if f, openErr := os.Open(rf.AbsPath); openErr == nil {
+				buf := make([]byte, 512)
+				n, _ := f.Read(buf)
+				f.Close()
+				isBinary = containsNullBytes(buf[:n])
+			}
+
+			if isBinary {
+				fmt.Fprintf(&linksSB, "  - %s (%d bytes, binary)\n", rf.RelPath, rf.Size)
+			} else {
+				// Non-markdown text file (.py, .json, .yaml etc.) — skip per spec.
+				// Future work: add file analyzer pipeline for format conversion.
+				logger.Debug("L3: skipping non-compliant reference file",
+					"path", rf.RelPath, "ext", rf.Ext)
+			}
+			result.FilesSkipped++
+		}
+	}
+
+	contentSB.WriteString("</references>\n")
+	if hasContent {
+		result.Content = contentSB.String()
+	}
+	if linksSB.Len() > 0 {
+		var lb strings.Builder
+		lb.WriteString("<reference-links>\n")
+		lb.WriteString(linksSB.String())
+		lb.WriteString("</reference-links>")
+		result.Links = lb.String()
+	}
+
+	if result.FilesLoaded == 0 && result.FilesSkipped == 0 {
+		return nil
+	}
+
+	logger.Info("L3 Progressive Disclosure resolved",
+		"loaded", result.FilesLoaded, "skipped", result.FilesSkipped)
+	return result
+}
+
+// containsNullBytes checks whether data contains any null bytes (\x00),
+// which is a reliable heuristic for detecting binary (non-text) content.
+func containsNullBytes(data []byte) bool {
+	for i := 0; i < len(data); i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Think asks the LLM to decide the next action based on the current context.
-// Implements PROGRESSIVE DISCLOSURE two-phase thinking (L1 -> L2):
+// Implements PROGRESSIVE DISCLOSURE multi-phase thinking (L1 -> L2 -> L3):
 //
 //	Phase 1 (L1 Routing):  All tools loaded as MINIMAL schema (~50 tokens/tool)
 //	                        + all skills metadata in SystemPrompt.
-//	                        LLM routes to: "tool" | "skill" | "answer"
+//	                        LLM routes to: "tool" | "skill" | "answer" | "delegate"
 //	                        Outputs selected target(s) by name.
 //	Phase 2 (L2 Planning):  Selected tools upgraded to FULL schema.
 //	                        If skill routed: skill L2 instructions injected.
+//	Phase 3 (L3 Resources): If skill activated, scan references/ directory and
+//	                        resolve reference files (text inlined, binary as links).
 //	                        LLM generates actual action with proper parameters.
 //
 // Verified by Experiment 1: Qwen accepts empty-properties NativeTools.
@@ -121,6 +314,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 
 	var actCtx *ActivatedSkillContext
 	var l1SelectedToolNames []string
+	var l3Refs *ResolvedReferences // L3: resolved reference files for skill activation
 
 	switch l1Result.Path {
 	case "answer":
@@ -145,24 +339,54 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		}
 		return totalTokens, nil
 
-	case "tool":
+	case "tool", "skill":
+		// ====== ★ Four-Step Responsibility Gate (Design §5) ======
+		// Only active when orchestrator is configured.
+		// Inserts Step A (responsibility), Step B (atomicity/WBS),
+		// then either proceeds to Level 2 or enters Coordinator mode.
+		if r.orchestrator != nil {
+			gateTokens, gateErr := r.executeResponsibilityGate(ctx, l1Result, totalTokens)
+			totalTokens += gateTokens
+			if gateErr != nil {
+				logger.Warn("responsibility gate error, falling through to Level 2", "error", gateErr)
+				// Fall through to normal L2 execution on gate errors
+			} else {
+				return totalTokens, nil // Gate handled the decision
+			}
+		}
+
+		// Fall through to normal tool/skill path if gate not active or no-op
+		if l1Result.Path == "skill" {
+			// Skill activation path (moved from below)
+			if l1Result.Target == "" {
+				l1Result.Path = "tool"
+			} else {
+				actCtx, err = r.ActivateSkill(l1Result.Target, allToolInfos)
+				if err != nil {
+					logger.Info("Skill activation failed, falling back to direct tool mode", "error", err)
+					actCtx = nil
+					l1Result.Path = "tool"
+				} else if actCtx != nil {
+					accountTokens(actCtx.Instructions)
+				}
+
+				if actCtx != nil {
+					l3Refs = r.resolveL3References(actCtx)
+					if l3Refs != nil {
+						if l3Refs.Content != "" {
+							accountTokens(l3Refs.Content)
+						}
+						if l3Refs.Links != "" {
+							accountTokens(l3Refs.Links)
+						}
+					}
+				}
+			}
+		}
+
 		l1SelectedToolNames = l1Result.SelectedTools
 		if len(l1SelectedToolNames) == 0 && l1Result.Target != "" {
 			l1SelectedToolNames = []string{l1Result.Target}
-		}
-
-	case "skill":
-		if l1Result.Target == "" {
-			l1Result.Path = "tool"
-			break
-		}
-		actCtx, err = r.ActivateSkill(l1Result.Target, allToolInfos)
-		if err != nil {
-			logger.Info("Skill activation failed, falling back to direct tool mode", "error", err)
-			actCtx = nil
-			l1Result.Path = "tool"
-		} else if actCtx != nil {
-			accountTokens(actCtx.Instructions)
 		}
 
 	default:
@@ -198,7 +422,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		r.contextWindow.AddTokens(fullSchemaTokens)
 	}
 
-	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry, agentsSection)
+	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry, agentsSection, l3Refs)
 	accountTokens(instructions)
 
 	// FIX(P1-#4): Re-account per-call inputs for L2 (sent again as separate API call)
@@ -330,6 +554,8 @@ func parseL1RoutingResponse(content string) (*l1RoutingResult, error) {
 }
 
 // Act executes the decision from the Think phase.
+// Supports both Executor mode (tool calls / answers) and Coordinator mode
+// (sub-task result collection via orchestrator).
 func (r *Reactor) Act(ctx *ReactContext) error {
 	thought := ctx.LastThought
 	if thought == nil {
@@ -339,6 +565,19 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 	start := time.Now()
 	action := Action{
 		Timestamp: start,
+	}
+
+	// ====== Coordinator Mode Branch ======
+	// When Think produced DecisionCoordinate, we are in Coordinator mode.
+	// Act does not execute tools — instead it triggers dispatch if not yet done,
+	// or reports current coordination status.
+	if thought.Decision == DecisionCoordinate && ctx.Mode == ModeCoordinator && ctx.CoordState != nil {
+		action.Type = ActionTypeToolCall // Reuse tool_call type for coordination action
+		action.Target = "coordinate"
+		action.Result = ctx.CoordState.TaskProgress.Summary()
+
+		ctx.LastAction = &action
+		return nil
 	}
 
 	switch thought.Decision {
@@ -427,10 +666,17 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 }
 
 // Observe evaluates the result of the Act phase.
+// In Executor mode: analyzes tool execution results (existing logic).
+// In Coordinator mode: analyzes sub-task completion status, checks if all done.
 func (r *Reactor) Observe(ctx *ReactContext) error {
 	action := ctx.LastAction
 	if action == nil {
 		return fmt.Errorf("observe called without an action")
+	}
+
+	// ====== Coordinator Mode Branch ======
+	if ctx.Mode == ModeCoordinator && ctx.CoordState != nil {
+		return r.observeCoordinator(ctx)
 	}
 
 	var obs *Observation
@@ -457,4 +703,123 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 
 	ctx.LastObservation = obs
 	return nil
+}
+
+// observeCoordinator handles Observe phase when in Coordinator mode.
+// Checks sub-task progress, determines if all tasks are done, and produces
+// a final answer or continues waiting.
+func (r *Reactor) observeCoordinator(ctx *ReactContext) error {
+	cs := ctx.CoordState
+	if cs == nil || cs.TaskProgress == nil {
+		return fmt.Errorf("coordinator mode but no CoordState")
+	}
+
+	tp := cs.TaskProgress
+	total := tp.Count()
+	completed := tp.CompletedCount()
+	failed := tp.FailedCount()
+	pending := tp.PendingCount()
+
+	logger.Info("coordinator observe",
+		"total", total, "completed", completed, "failed", failed, "pending", pending)
+
+	var obs *Observation
+
+	if tp.AllCompleted() {
+		// All tasks done → produce summary answer
+		summary := r.buildCoordinatorSummary(cs)
+		cs.MarkCompleted()
+
+		// Switch back to Executor mode for next cycle (if any)
+		ctx.Mode = ModeExecutor
+
+		obs = NewSuccessObservation(summary,
+			fmt.Sprintf("all %d tasks done (%d succeeded, %d failed)", total, completed, failed))
+		ctx.LastThought = &Thought{
+			Decision:    DecisionAnswer,
+			Reasoning:   fmt.Sprintf("Coordination complete. %d/%d tasks succeeded.", completed, total),
+			FinalAnswer: summary,
+			IsFinal:     true,
+		}
+	} else if pending > 0 {
+		// Still waiting for results
+		obs = NewSuccessObservation(tp.Summary(),
+			fmt.Sprintf("coordinating: %d/%d complete, %d pending", completed+failed, total, pending))
+
+		// Check lifecycle state — if cancelled/interrupted, stop
+		if cs.LifecycleState.IsTerminal() {
+			summary := r.buildCoordinatorSummary(cs)
+			obs = NewSuccessObservation(summary, fmt.Sprintf("coordination ended: %s", cs.LifecycleState))
+			ctx.LastThought = &Thought{
+				Decision:    DecisionAnswer,
+				FinalAnswer: summary,
+				IsFinal:     true,
+			}
+		}
+	} else {
+		// All terminal states reached (mix of success/fail)
+		summary := r.buildCoordinatorSummary(cs)
+		cs.MarkCompleted()
+		ctx.Mode = ModeExecutor
+
+		obs = NewSuccessObservation(summary,
+			fmt.Sprintf("coordination finished: %d succeeded, %d failed", completed, failed))
+		ctx.LastThought = &Thought{
+			Decision:    DecisionAnswer,
+			Reasoning:   "All sub-tasks reached terminal state",
+			FinalAnswer: summary,
+			IsFinal:     true,
+		}
+	}
+
+	ctx.LastObservation = obs
+	return nil
+}
+
+// buildCoordinatorSummary builds a human-readable summary of all sub-task results.
+func (r *Reactor) buildCoordinatorSummary(cs *CoordState) string {
+	if cs.TaskProgress == nil {
+		return "(no task progress)"
+	}
+
+	var sb strings.Builder
+	entries := cs.TaskProgress.ListAll()
+
+	sb.WriteString("## Task Coordination Summary\n\n")
+
+	for _, e := range entries {
+		statusIcon := map[TaskStatus]string{
+			TaskSucceeded:   "[OK]",
+			TaskFailed:      "[FAIL]",
+			TaskTimedOut:    "[TIMEOUT]",
+			TaskCancelled:   "[CANCELLED]",
+			TaskRetryPending: "[RETRY]",
+		}[e.Status]
+
+		if statusIcon == "" {
+			statusIcon = string(e.Status)
+		}
+
+		fmt.Fprintf(&sb, "%s **%s** (priority=%d)\n", statusIcon, e.Title, e.Priority)
+
+		if e.Result != nil && e.Result.Content != "" {
+			// Truncate very long results
+			content := e.Result.Content
+			if len(content) > 500 {
+				content = content[:500] + "...(truncated)"
+			}
+			fmt.Fprintf(&sb, "  Result: %s\n", content)
+		}
+		if e.Error != nil {
+			fmt.Fprintf(&sb, "  Error: %v\n", e.Error)
+		}
+		sb.WriteString("\n")
+	}
+
+	// Append aggregated stats
+	s := cs.TaskProgress
+	fmt.Fprintf(&sb, "---\nTotal: %d | Succeeded: %d | Failed: %d\n",
+		s.Count(), s.CompletedCount(), s.FailedCount())
+
+	return sb.String()
 }
