@@ -135,7 +135,7 @@ func (f *AgentFactory) Create(ctx context.Context, taskDescription string, model
 	var config *core.AgentConfig
 	var err error
 
-	// Step 2: Try LLM-based config generation
+	// Step 2: Try LLM-based config generation (skill matching is done inside generateWithLLM/generateRuleBased)
 	if f.router != nil && f.router.IsEnabled() {
 		config, err = f.generateWithLLM(ctx, taskDescription)
 		if err != nil {
@@ -149,24 +149,7 @@ func (f *AgentFactory) Create(ctx context.Context, taskDescription string, model
 		config = f.generateRuleBased(taskDescription, modelRegistry)
 	}
 
-	// Step 3: P1-3 — Match skills from skill registry and inject matching skill names into config
-	if f.skillRegistry != nil {
-		capabilities := f.extractCapabilitiesFromDescription(taskDescription)
-		matchedSkills := f.matchSkills(capabilities)
-		if len(matchedSkills) > 0 {
-			skillNames := make([]string, len(matchedSkills))
-			for i, s := range matchedSkills {
-				skillNames[i] = s.Name
-			}
-			// Append skill recommendations to description for routing hint
-			config.Description += fmt.Sprintf("\n\nRecommended skills: %s", strings.Join(skillNames, ", "))
-			f.logger.Info("matched skills for new agent",
-				"skills", strings.Join(skillNames, ", "),
-			)
-		}
-	}
-
-	// Step 4: Resolve model if not set
+	// Step 3: Resolve model if not set
 	if config.Model == "" {
 		if modelRegistry != nil {
 			if defaultCfg, err := modelRegistry.Get("default"); err == nil {
@@ -223,21 +206,28 @@ func (f *AgentFactory) generateWithLLM(ctx context.Context, taskDesc string) (*c
 		name = fmt.Sprintf("auto-%s", generateShortID())
 	}
 
-	// Phase 2: Generate Body (full instruction set)
+	// Match skills from registry based on extracted capabilities
+	var matchedSkills []*core.Skill
+	if f.skillRegistry != nil && len(descResult.Capabilities) > 0 {
+		matchedSkills = f.matchSkills(descResult.Capabilities)
+	}
+
+	// Phase 2: Generate Body (full instruction set) with matched skills
 	capStr := strings.Join(descResult.Capabilities, ", ")
 	bodyData := bodyGenerationPromptData{
-		Name:        name,
-		Description: description,
+		Name:         name,
+		Description:  description,
 		Capabilities: capStr,
-		TaskExample: taskDesc,
+		TaskExample:  taskDesc,
+		MatchedSkills: matchedSkills,
 	}
 	bodyPrompt, err := renderBodyGenerationPrompt(bodyData)
 	if err != nil {
 		f.logger.Warn("failed to render body prompt, using description-only config", "error", err)
 		return &core.AgentConfig{
-			Name:              name,
-			Description:       description,
-			Introduction:      "",
+			Name:               name,
+			Description:        description,
+			Introduction:       "",
 			EnableOrchestration: true,
 		}, nil
 	}
@@ -247,9 +237,9 @@ func (f *AgentFactory) generateWithLLM(ctx context.Context, taskDesc string) (*c
 		// Body generation failure is non-critical; Description alone is sufficient for routing
 		f.logger.Warn("body generation failed, using description-only config", "error", err)
 		return &core.AgentConfig{
-			Name:              name,
-			Description:       description,
-			Introduction:      "",
+			Name:               name,
+			Description:        description,
+			Introduction:       "",
 			EnableOrchestration: true,
 		}, nil
 	}
@@ -264,7 +254,7 @@ func (f *AgentFactory) generateWithLLM(ctx context.Context, taskDesc string) (*c
 	return &core.AgentConfig{
 		Name:               name,
 		Description:        description,
-		Introduction:      bodyResult.Body,
+		Introduction:       bodyResult.Body,
 		EnableOrchestration: true,
 	}, nil
 }
@@ -287,14 +277,29 @@ func (f *AgentFactory) generateRuleBased(taskDesc string, modelRegistry core.Mod
 		}
 	}
 
+	// Match skills from registry based on task description keywords
+	capabilities := f.extractCapabilitiesFromDescription(taskDesc)
+	matchedSkills := f.matchSkills(capabilities)
+
+	skillsSection := ""
+	if len(matchedSkills) > 0 {
+		var skills []string
+		for _, s := range matchedSkills {
+			skills = append(skills, fmt.Sprintf("- %s: %s", s.Name, s.Description))
+		}
+		skillsSection = "\n\nAvailable Skills:\n" + strings.Join(skills, "\n")
+	}
+
 	introduction := fmt.Sprintf(
 		"You are a specialized assistant created for: %s\n"+
 			"Analyze the user's request carefully and provide accurate, helpful responses.\n"+
 			"Language Consistency: Always respond in the same language as the user's input.\n"+
 			"Concise & Precise: Answer directly to the point, avoid redundancy without sacrificing completeness.\n"+
 			"Honest & Transparent: State uncertainty explicitly, never fabricate facts.\n"+
-			"Safety Boundaries: Do not execute destructive operations without user consent.",
+			"Safety Boundaries: Do not execute destructive operations without user consent."+
+			"%s",
 		summary,
+		skillsSection,
 	)
 
 	return &core.AgentConfig{

@@ -24,7 +24,7 @@ type AgentConfig struct {
 	Model        string `json:"model" yaml:"model"`               // Model is the model name
 
 	// --- Orchestration fields (all optional, safe zero-values) ---
-	Body                string `json:"body,omitempty" yaml:"body,omitempty"`                   // Full system prompt body. Only loaded into ContextWindow during task execution.
-	EnableOrchestration bool   `json:"enable_orchestration" yaml:"enable_orchestration"`       // Enable orchestration mode (responsibility gate + coordinator). Default: false.
-	MaxDecomposeDepth    int    `json:"max_decompose_depth,omitempty" yaml:"max_decompose_depth,omitempty"` // Maximum WBS decomposition depth. Default: 2.
+	Body                string `json:"body,omitempty" yaml:"body,omitempty"`                               // Full system prompt body. Only loaded into ContextWindow during task execution.
+	EnableOrchestration bool   `json:"enable_orchestration" yaml:"enable_orchestration"`                   // Enable orchestration mode (responsibility gate + coordinator). Default: false.
+	MaxDecomposeDepth   int    `json:"max_decompose_depth,omitempty" yaml:"max_decompose_depth,omitempty"` // Maximum WBS decomposition depth. Default: 2.
 }

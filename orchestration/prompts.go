@@ -77,6 +77,9 @@ type bodyGenerationPromptData struct {
 	Description   string
 	Capabilities  string // comma-joined
 	TaskExample   string
+	// MatchedSkills contains skills selected for this agent based on its domain/capability scope.
+	// Skills' metadata (name + description) are pre-loaded into system prompts to free up context window.
+	MatchedSkills []*core.Skill
 }
 
 // wbsDecompositionPromptData holds template variables for WBS decomposition judgment
