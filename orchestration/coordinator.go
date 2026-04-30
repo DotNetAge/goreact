@@ -34,6 +34,7 @@ type Coordinator struct {
 	// === Identity ===
 	AgentID     string // The agent operating as coordinator
 	ParentTaskID string // Parent task that triggered decomposition
+	ParentTaskDescription string // Original task description for retry context
 
 	// === Progress Tracking (Design §4.3) ===
 	Table *TaskProgressTable // Subtask progress table (single source of truth)
@@ -128,6 +129,7 @@ func (c *Coordinator) Dispatch(ctx context.Context, subTasks []TaskDecomposition
 			ExpectedDur: estimateDuration(st), // rough heuristic if not set by LLM
 			RetryCount:  0,
 			DependsOn:   st.DependsOn, // Design §10.4: wire up dependency info
+			Result:      st.Description, // Store original description for retry context
 		}
 		c.Table.Set(st.ID, entry)
 
@@ -495,11 +497,15 @@ func (c *Coordinator) OnResult(result *TaskResultEvent) {
 		return
 	}
 
+	// Preserve the original description (stored during Dispatch) before updating result
+	originalDesc := entry.Result
+
 	// Update progress table
 	if result.Error != nil {
 		entry.State = TaskFailed
 		entry.Error = result.Error
-		entry.Result = ""
+		// Don't overwrite Result with empty string — keep original description for retry
+		entry.Result = originalDesc
 
 		// Determine retry (Design §10.4)
 		if c.shouldRetry(result.TaskID) {
@@ -575,12 +581,16 @@ func (c *Coordinator) retryTask(taskID string, lastErr error) {
 	c.subTaskCtxs[taskID] = taskCtx
 	c.subTaskCancels[taskID] = taskCancel
 
-	// Re-dispatch via orchestrator
+	// Re-dispatch via orchestrator using the ORIGINAL task description, not the result
+	taskDesc := entry.Result // Use description from TaskEntry (original dispatch description)
+	if taskDesc == "" {
+		taskDesc = c.ParentTaskDescription // Fallback to parent description
+	}
 	go func() {
 		time.Sleep(delay)
 		_, err := c.Orchestrator.RouteTask(
 			taskCtx,
-			entry.Result, // Use previous description
+			taskDesc,
 			"",
 			c.ParentTaskID,
 			nil,

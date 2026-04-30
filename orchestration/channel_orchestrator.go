@@ -371,6 +371,18 @@ func (o *ChannelOrchestrator) handleDelegate(ctx context.Context, msg Message) R
 
 	// Launch sub-agent asynchronously
 	go func() {
+		// Ensure resultCh always receives something to prevent blocking callers
+		defer func() {
+			if r := recover(); r != nil {
+				resultCh <- fmt.Errorf("sub-agent panic: %v", r)
+				_ = o.store.UpdateTaskStatus(task.ID, core.TaskStatusFailed, "", fmt.Sprintf("panic: %v", r))
+				o.emitEvent(core.ReactEvent{
+					Type: core.SubtaskCompleted,
+					Data: core.SubtaskResult{TaskID: task.ID, Success: false, Error: fmt.Sprintf("panic: %v", r)},
+				})
+			}
+		}()
+
 		// Look up agent config
 		config := o.registry.Get(req.AgentName)
 		if config == nil {
@@ -441,6 +453,10 @@ func (o *ChannelOrchestrator) handleResult(ctx context.Context, msg Message) {
 	task, err := o.store.GetTask(msg.TaskID)
 	if err != nil {
 		o.logger.Error("handleResult: task not found", "task_id", msg.TaskID, "error", err)
+		// Even if task not found, reply to sender to prevent blocking
+		if msg.ReplyCh != nil {
+			msg.ReplyCh <- Response{Error: fmt.Errorf("task not found: %s", msg.TaskID)}
+		}
 		return
 	}
 
@@ -460,9 +476,10 @@ func (o *ChannelOrchestrator) handleResult(ctx context.Context, msg Message) {
 	}
 	_ = o.store.UpdateTaskStatus(task.ID, status, answer, errMsg)
 
-	// ★ 新增: 记录绩效分数到 ScoreTracker (Design §8.3/§8.5)
+	// Record performance score (Design §8.3/§8.5)
 	o.recordScore(task, success)
 
+	// Emit completion event
 	o.emitEvent(core.ReactEvent{
 		Type: core.SubtaskCompleted,
 		Data: core.SubtaskResult{
@@ -472,6 +489,15 @@ func (o *ChannelOrchestrator) handleResult(ctx context.Context, msg Message) {
 			Error:   errMsg,
 		},
 	})
+
+	// Reply to sender via ReplyCh to prevent blocking (data chain integrity)
+	if msg.ReplyCh != nil {
+		select {
+		case msg.ReplyCh <- Response{Data: answer}:
+		default:
+			o.logger.Warn("handleResult: reply channel full or closed", "task_id", task.ID)
+		}
+	}
 }
 
 // recordScore 根据任务结果计算并记录绩效分数。

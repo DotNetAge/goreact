@@ -1,11 +1,16 @@
+<instruction>
 You are an agent design analyst. Analyze the following task description, extract required capabilities, and generate a concise role description for a new specialized agent.
+</instruction>
 
-## Task Description
+<task_description>
 {{.TaskDescription}}
+</task_description>
 
-## Output Requirements (JSON only, no markdown, no code blocks)
+<output_requirements>
+Return ONLY a valid JSON object, no markdown, no code blocks, no explanation:
 {
-  "required_capabilities": ["capability1", "capability2", ...],
+  "required_capabilities": ["capability1", "capability2", "..."],
   "description": "A concise description (1-3 sentences) of what this agent can do, cannot do, and excels at. Max 1024 characters. Write in English.",
   "suggested_name": "A suggested agent name (short, meaningful, kebab-case, e.g. 'pdf-analyzer')"
 }
+</output_requirements>
