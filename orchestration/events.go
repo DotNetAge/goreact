@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -81,13 +82,23 @@ type TimeoutWarningEvent struct {
 // Use CmdInterrupt, CmdResume, CmdCancel constants for action values.
 //
 // Lifecycle control event sent to a Coordinator (Design §10.5.1).
-// Extended with Requester and Timestamp for orchestration-layer tracking.
+// Extended with Requester, Timestamp and Priority for orchestration-layer tracking.
 type CoordControlCommand struct {
 	ControlCommand          // Embedded core control command
 	Reason     string       // Human-readable reason
-	Requester  string       // "user" | "system" | "parent_coordinator"
+	Requester  string       // "user" | "system" | "parent_coordinator" | "orchestrator"
 	Timestamp  time.Time    // When the command was issued
+	Priority   int          // Priority: 4=orchestrator, 3=parent, 2=self, 1=user (Design §10.5.4)
 }
+
+// CommandPriority defines priority levels for control commands (Design §10.5.4).
+// Higher priority commands override lower priority commands.
+const (
+	PriorityUser         = 1 // User-initiated commands (lowest)
+	PrioritySelf         = 2 // Self-initiated (e.g., internal timeout)
+	PriorityParentCoord  = 3 // Parent coordinator
+	PriorityOrchestrator = 4 // Orchestrator (highest)
+)
 
 // CoordLifecycleEvent notifies the orchestrator of Coordinator state changes (Design §10.5.2).
 type CoordLifecycleEvent struct {
@@ -146,14 +157,15 @@ type TaskDecomposition struct {
 type TaskState string
 
 const (
-	TaskDispatched TaskState = "dispatched"   // Dispatched, waiting for acceptance
-	TaskRunning    TaskState = "running"      // Currently executing
-	TaskPaused     TaskState = "paused"       // Paused (received Interrupt)
-	TaskCompleted  TaskState = "completed"    // Successfully finished
-	TaskFailed     TaskState = "failed"       // Execution failed
-	TaskTimeout    TaskState = "timeout"      // Timed out
-	TaskCancelled  TaskState = "cancelled"    // Cancelled (received Cancel)
-	TaskSkipped    TaskState = "skipped"      // Skipped (dependency failed)
+	TaskDispatched   TaskState = "dispatched"    // Dispatched, waiting for acceptance
+	TaskSubExecuting TaskState = "sub_executing" // Sub-agent executing the task (Design §9.1)
+	TaskRunning      TaskState = "running"       // Currently executing
+	TaskPaused       TaskState = "paused"        // Paused (received Interrupt)
+	TaskCompleted    TaskState = "completed"     // Successfully finished
+	TaskFailed       TaskState = "failed"        // Execution failed
+	TaskTimeout      TaskState = "timeout"       // Timed out
+	TaskCancelled    TaskState = "cancelled"     // Cancelled (received Cancel)
+	TaskSkipped      TaskState = "skipped"       // Skipped (dependency failed)
 )
 
 // LifecycleState represents a Coordinator's lifecycle state (Design §10.5.2 / §14.3).
@@ -166,6 +178,21 @@ const (
 	LifecycleCompleted  LifecycleState = "completed"     // All tasks done
 )
 
+// OrchestratorState defines the lifecycle states of the Orchestrator (Design §9.3 / P2-4).
+type OrchestratorState string
+
+const (
+	OrchestratorInitializing OrchestratorState = "initializing" // Loading agents, setting up
+	OrchestratorRunning      OrchestratorState = "running"      // Processing messages normally
+	OrchestratorDraining     OrchestratorState = "draining"     // Rejecting new work, finishing pending
+	OrchestratorStopped      OrchestratorState = "stopped"      // Fully stopped
+)
+
+// IsTerminal returns true if the orchestrator state is a terminal state.
+func (s OrchestratorState) IsTerminal() bool {
+	return s == OrchestratorStopped
+}
+
 // TaskEntry tracks a single subtask's progress within a Coordinator (Design §10.2 / §14.1).
 type TaskEntry struct {
 	TaskID          string
@@ -177,10 +204,13 @@ type TaskEntry struct {
 	RetryCount      int           // Number of retries
 	Score           int           // Post-completion score (0-3)
 
+	// Dependency tracking (Design §10.4)
+	DependsOn []string // Upstream task IDs this task depends on
+
 	// Lifecycle control fields (Design §10.5)
-	PausedAt        *time.Time    // Pause timestamp (only in paused state)
-	SavedSnapshot   []byte        // Agent-reported intermediate state snapshot
-	ProgressPct     float64       // Estimated progress percentage (0.0-1.0)
+	PausedAt      *time.Time // Pause timestamp (only in paused state)
+	SavedSnapshot []byte     // Agent-reported intermediate state snapshot
+	ProgressPct   float64    // Estimated progress percentage (0.0-1.0)
 }
 
 // TaskProgressTable is the Coordinator's primary state data structure (Design §4.3 / §14.1).
@@ -262,6 +292,48 @@ func (t *TaskProgressTable) PendingTaskIDs() []string {
 		}
 	}
 	return ids
+}
+
+// AllCompleted returns true when all tasks are in terminal states.
+func (t *TaskProgressTable) AllCompleted() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, e := range t.entries {
+		if !IsFinalState(e.State) {
+			return false
+		}
+	}
+	return len(t.entries) > 0
+}
+
+// Summary returns a one-line summary of task progress.
+func (t *TaskProgressTable) Summary() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	completed, failed, running := 0, 0, 0
+	for _, e := range t.entries {
+		switch e.State {
+		case TaskCompleted:
+			completed++
+		case TaskFailed, TaskTimeout, TaskCancelled, TaskSkipped:
+			failed++
+		case TaskRunning, TaskSubExecuting, TaskDispatched:
+			running++
+		}
+	}
+	return fmt.Sprintf("%d/%d completed, %d failed, %d running",
+		completed, len(t.entries), failed, running)
+}
+
+// ListAll returns a snapshot of all entries as TaskEntry slices for reporting.
+func (t *TaskProgressTable) ListAll() []TaskEntry {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	result := make([]TaskEntry, 0, len(t.entries))
+	for _, e := range t.entries {
+		result = append(result, *e)
+	}
+	return result
 }
 
 // CompletedCount returns the number of successfully completed tasks.

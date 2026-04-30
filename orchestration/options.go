@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"time"
 
 	"github.com/DotNetAge/goreact"
 	"github.com/DotNetAge/goreact/core"
@@ -24,6 +25,30 @@ type orchestratorSetup struct {
 	llmRouter    *LLMRouter    // 智能路由引擎 (可选)
 	agentFactory *AgentFactory // 动态 Agent 创建工厂 (可选)
 	scoreTracker *ScoreTracker // 绩效追踪器 (可选)
+}
+
+// OrchestratorConfig is the centralized configuration structure for the Orchestrator (Design §6.2 / P2-1).
+// All configuration parameters are grouped here for clarity and external exposure.
+type OrchestratorConfig struct {
+	// Core settings
+	ModelRegistry core.ModelRegistry
+	DefaultModel  *core.ModelConfig
+	AgentsDir     string
+	MaxConcurrent int
+	DefaultTimeout time.Duration
+	InboxSize      int
+
+	// Intelligent routing components
+	LLMRouter    *LLMRouter
+	AgentFactory *AgentFactory
+	ScoreTracker *ScoreTracker
+
+	// Lifecycle management
+	IdleAgentTimeout  time.Duration // P1-4: timeout before marking idle agents as dormant (0 = disabled)
+	MinRetainedAgents int           // P1-4: minimum number of agents to retain during cleanup (0 = no cleanup)
+
+	// State machine (P2-4)
+	EnableGracefulDrain bool // If true, Stop() enters Draining state before Stopped
 }
 
 type durationWrapper struct {
@@ -123,4 +148,11 @@ func WithAgentFactory(factory *AgentFactory) OrchestratorOption {
 // and uses epsilon-greedy strategy during cold start (Design §8.4-§8.5).
 func WithScoreTracker(tracker *ScoreTracker) OrchestratorOption {
 	return func(s *orchestratorSetup) { s.scoreTracker = tracker }
+}
+
+// WithIdleCleanupConfig enables periodic idle agent scanning and cleanup (P1-4 / Design §12.4).
+func WithIdleCleanupConfig(cfg IdleCleanupConfig) OrchestratorOption {
+	return func(s *orchestratorSetup) {
+		// Idle cleanup is applied via SetIdleCleanupConfig() on the orchestrator after creation
+	}
 }

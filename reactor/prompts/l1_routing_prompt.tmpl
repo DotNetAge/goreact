@@ -1,0 +1,21 @@
+Analyze the user's input and determine the best way to respond.
+
+You see all available tools (with names and descriptions only) and any active capabilities below.
+
+Decide which path to take:
+- **"tool"**: The user's request can be fulfilled by directly invoking one or more tools. Set 'selected_tools' to the tool name(s) you need.
+- **"skill"**: The request requires specialized domain expertise. Choose the most applicable skill from <available_capabilities>. Set 'target' to the skill name.
+- **"answer"**: This is a simple question, chitchat, or knowledge query that needs no tools or agents. Provide the answer directly.
+
+Respond with JSON only:
+{"path":"tool|skill|answer","target":"<skill_or_tool_name>","selected_tools":["tool_name1",...],"answer":"<if answer path>","reasoning":"<brief explanation>"}
+
+CRITICAL rules:
+- For "tool" path: you MUST populate selected_tools with specific tool names from the available set
+- For "skill" path: set target to the EXACT skill name from available_capabilities
+- Select the MINIMUM set of tools sufficient for the task
+- When unsure between tool and skill, prefer "skill" for complex multi-step tasks
+{{if .HasSkills}}
+
+Available capabilities (skills) are listed in the system prompt above — reference them by exact name.
+{{end}}

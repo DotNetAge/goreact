@@ -32,10 +32,11 @@ var promptFuncMap = template.FuncMap{
 // Go's template.ParseFS strips the directory prefix, so "prompts/summary_prompt.tmpl"
 // becomes associated name "summary_prompt.tmpl".
 const (
-	tmplIntent  = "intent_prompt.tmpl"
-	tmplThink   = "think_prompt.tmpl"
-	tmplSystem  = "default_system_prompt.tmpl"
-	tmplSummary = "summary_prompt.tmpl"
+	tmplIntent   = "intent_prompt.tmpl"
+	tmplThink    = "think_prompt.tmpl"
+	tmplSystem   = "default_system_prompt.tmpl"
+	tmplSummary  = "summary_prompt.tmpl"
+	tmplL1Routing = "l1_routing_prompt.tmpl"
 )
 
 // intentPromptTemplate is parsed once at init from the embedded .tmpl file.
@@ -56,6 +57,11 @@ var defaultSystemPromptTemplate = template.Must(
 // summaryPromptTemplate is parsed once at init from the embedded .tmpl file.
 var summaryPromptTemplate = template.Must(
 	template.New("summary_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/summary_prompt.tmpl"),
+)
+
+// l1RoutingPromptTemplate is parsed once at init from the embedded .tmpl file.
+var l1RoutingPromptTemplate = template.Must(
+	template.New("l1_routing_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/l1_routing_prompt.tmpl"),
 )
 
 // intentPromptData holds template variables for the intent classification prompt.
@@ -84,10 +90,6 @@ type thinkPromptData struct {
 	// L3 Progressive Disclosure: resolved reference file contents
 	L3ReferencesContent string // <references>...</references> XML block with text content
 	L3ReferencesLinks   string // <reference-links>...</reference-links> XML block with metadata
-
-	// Agent metadata for progressive disclosure (L1 delegate routing)
-	HasAgents     bool
-	AgentsSection string // <agents> block with name/role/description for each registered agent
 }
 
 // skillSelectPromptData holds template variables for the Skill Selection prompt (Phase 1).
@@ -114,6 +116,11 @@ type summaryPromptData struct {
 	ToolsUsed         string
 	Duration          string
 	TerminationReason string
+}
+
+// l1RoutingPromptData holds template variables for the L1 routing prompt.
+type l1RoutingPromptData struct {
+	HasSkills bool // whether specialized capabilities are available
 }
 
 // renderIntentPrompt renders the intent prompt using the embedded Go template.
@@ -183,6 +190,19 @@ func renderSummaryPrompt(data summaryPromptData) (string, error) {
 	t := summaryPromptTemplate.Lookup(tmplSummary)
 	if t == nil {
 		return "", template.ExecError{Name: tmplSummary, Err: nil}
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// renderL1RoutingPrompt renders the L1 routing prompt using the embedded template.
+func renderL1RoutingPrompt(data l1RoutingPromptData) (string, error) {
+	t := l1RoutingPromptTemplate.Lookup(tmplL1Routing)
+	if t == nil {
+		return "", template.ExecError{Name: tmplL1Routing, Err: nil}
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
@@ -570,10 +590,10 @@ func isWordChar(c rune) bool {
 
 // BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.
 // It includes classified intent, memory records, user input, optionally
-// an activated skill's L2 instructions with filtered tool list, L3 resolved
-// references, and agent metadata for progressive disclosure delegate routing.
+// an activated skill's L2 instructions with filtered tool list, and L3 resolved
+// references.
 // The registry parameter controls intent-specific decision rules; if nil, defaults are used.
-func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, agentsSection string, l3Refs *ResolvedReferences) string {
+func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, l3Refs *ResolvedReferences) string {
 	if registry == nil {
 		registry = NewDefaultIntentRegistry()
 	}
@@ -594,11 +614,6 @@ func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryR
 		MemorySection: memorySection,
 		Input:         input,
 		IntentRules:   registry.FormatDecisionRules(),
-	}
-
-	if agentsSection != "" {
-		data.HasAgents = true
-		data.AgentsSection = agentsSection
 	}
 
 	if actCtx != nil && actCtx.Skill != nil {

@@ -29,11 +29,17 @@ func (a *orchestratorAdapter) WaitForResult(ctx context.Context, taskID string) 
 }
 
 func (a *orchestratorAdapter) ListAgents() []string {
-	return a.inner.ListAgents()
+	if la, ok := a.inner.(interface{ ListAgents() []string }); ok {
+		return la.ListAgents()
+	}
+	return nil
 }
 
 func (a *orchestratorAdapter) AgentInfo(name string) *core.AgentConfig {
-	return a.inner.AgentInfo(name)
+	if ai, ok := a.inner.(interface{ AgentInfo(string) *core.AgentConfig }); ok {
+		return ai.AgentInfo(name)
+	}
+	return nil
 }
 
 func (a *orchestratorAdapter) ListTasks(parentID string) ([]*core.Task, error) {

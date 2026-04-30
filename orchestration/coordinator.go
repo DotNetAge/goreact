@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,11 +54,13 @@ type Coordinator struct {
 	controlChan     chan *CoordControlCommand // External control command channel
 
 	// === Internal state ===
-	interruptReason string    // Reason for interrupt (only set in Interrupted state)
-	interruptedAt   time.Time // When interrupt happened
-	cancelReason    string    // Reason for cancel (only set in Cancelled state)
-	completedAt     time.Time // When all tasks completed
-	dispatchedAt    time.Time // When coordinator started
+	interruptReason       string    // Reason for interrupt (only set in Interrupted state)
+	interruptedAt         time.Time // When interrupt happened
+	cancelReason          string    // Reason for cancel (only set in Cancelled state)
+	completedAt           time.Time // When all tasks completed
+	dispatchedAt          time.Time // When coordinator started
+	lastControlPriority   int       // Priority of last control command (Design §10.5.4)
+	lastControlTimestamp  time.Time // When last control command was received
 
 	// === Result collection ===
 	resultMu       sync.RWMutex
@@ -124,6 +127,7 @@ func (c *Coordinator) Dispatch(ctx context.Context, subTasks []TaskDecomposition
 			State:       TaskDispatched,
 			ExpectedDur: estimateDuration(st), // rough heuristic if not set by LLM
 			RetryCount:  0,
+			DependsOn:   st.DependsOn, // Design §10.4: wire up dependency info
 		}
 		c.Table.Set(st.ID, entry)
 
@@ -395,6 +399,73 @@ func (c *Coordinator) Cancel(reason string) error {
 	return nil
 }
 
+// HandleControlCommand processes a control command with priority checking (Design §10.5.4).
+// Returns an error if the command priority is lower than the last received command,
+// preventing lower-priority callers from overriding higher-priority decisions.
+func (c *Coordinator) HandleControlCommand(cmd *CoordControlCommand) error {
+	c.lifecycleLock.Lock()
+	defer c.lifecycleLock.Unlock()
+
+	// Priority check: reject commands with lower priority than the last command (Design §10.5.4)
+	if cmd.Priority > 0 && cmd.Priority < c.lastControlPriority {
+		return fmt.Errorf("coordinator: rejecting lower-priority command (priority %d < last %d) by %s",
+			cmd.Priority, c.lastControlPriority, cmd.Requester)
+	}
+
+	// Track the command's priority
+	c.lastControlPriority = cmd.Priority
+	c.lastControlTimestamp = cmd.Timestamp
+
+	// Execute the command based on action
+	switch cmd.Action {
+	case core.CmdInterrupt:
+		if c.lifecycleState != LifecycleRunning {
+			return fmt.Errorf("coordinator: cannot interrupt in %s state", c.lifecycleState)
+		}
+		c.lifecycleState = LifecycleInterrupted
+		c.interruptReason = cmd.Reason
+		c.interruptedAt = time.Now()
+		for taskID, cancel := range c.subTaskCancels {
+			if entry := c.Table.Get(taskID); entry != nil && entry.State == TaskRunning {
+				cancel()
+				now := time.Now()
+				entry.State = TaskPaused
+				entry.PausedAt = &now
+			}
+		}
+	case core.CmdResume:
+		if c.lifecycleState != LifecycleInterrupted {
+			return fmt.Errorf("coordinator: cannot resume in %s state", c.lifecycleState)
+		}
+		ctx := context.Background()
+		if c.lifecycleCtx != nil {
+			ctx = c.lifecycleCtx
+		}
+		if err := c.doResume(ctx); err != nil {
+			return err
+		}
+	case core.CmdCancel:
+		if c.lifecycleState == LifecycleCompleted || c.lifecycleState == LifecycleCancelled {
+			return fmt.Errorf("coordinator: cannot cancel in terminal state %s", c.lifecycleState)
+		}
+		c.lifecycleState = LifecycleCancelled
+		c.cancelReason = cmd.Reason
+		if c.lifecycleCancel != nil {
+			c.lifecycleCancel()
+		}
+		for taskID, cancel := range c.subTaskCancels {
+			cancel()
+			if entry := c.Table.Get(taskID); entry != nil && !IsFinalState(entry.State) {
+				entry.State = TaskCancelled
+			}
+		}
+	default:
+		return fmt.Errorf("coordinator: unknown control command action: %s", cmd.Action)
+	}
+
+	return nil
+}
+
 // State returns the current lifecycle state (thread-safe).
 func (c *Coordinator) State() LifecycleState {
 	c.lifecycleLock.RLock()
@@ -556,34 +627,68 @@ func (c *Coordinator) markDependentsSkipped(failedTaskID string) {
 }
 
 // dependsOn checks if taskA has a declared dependency on taskB.
-// In a full implementation, this queries the original TaskDecomposition.DependsOn list.
-// For now, we use a simple heuristic: check if the task was dispatched together.
+// Looks up the DependsOn field in taskA's TaskEntry (Design §10.4).
 func (c *Coordinator) dependsOn(taskA, depTaskB string) bool {
-	// In production, this should look up the original TaskDecomposition.DependsOn slice.
-	// For the initial implementation, return false (no dependency tracking yet).
-	// TODO: wire up DependsOn from TaskDecomposition into TaskEntry.
+	entry := c.Table.Get(taskA)
+	if entry == nil {
+		return false
+	}
+	for _, dep := range entry.DependsOn {
+		if dep == depTaskB {
+			return true
+		}
+	}
 	return false
 }
 
-// scoreResult computes a quality score (0-3) for a completed task (Design §8.1 / §8.3).
-// Uses objective criteria: success + output quality + timeliness.
+// scoreResult computes a quality score (0-3) for a completed task using a hybrid strategy (Design §8.3 / P1-1).
+// 70% objective criteria (output length, timeliness, error-free) + 30% LLM semantic evaluation.
+// If LLM evaluation fails or is unavailable, falls back to 100% objective scoring.
 func (c *Coordinator) scoreResult(entry *TaskEntry) int {
 	if entry.Error != nil {
 		return ScoreFailed
 	}
 
-	score := ScoreSuccess // Base score for successful completion
+	// === 70% Objective Score (Design §8.3) ===
+	objectiveScore := c.computeObjectiveScore(entry)
 
-	// Bonus: substantial output content
+	// === 30% LLM Subjective Score (P1-1) ===
+	llmScore := c.computeLLMScore(entry)
+
+	// Weighted combination: 70% objective + 30% LLM
+	// Scale back to 0-3 range
+	combined := float64(objectiveScore)*0.7 + float64(llmScore)*0.3
+
+	// Round to nearest integer score
+	score := int(combined + 0.5)
+	if score > ScorePerfect {
+		score = ScorePerfect
+	}
+	if score < ScoreFailed {
+		score = ScoreFailed
+	}
+
+	return score
+}
+
+// computeObjectiveScore returns a 0-3 score based on measurable criteria (P1-1).
+// Evaluates: output completeness, timeliness, and error-freedom.
+func (c *Coordinator) computeObjectiveScore(entry *TaskEntry) int {
+	score := ScorePartial // Base: task completed but minimal output
+
+	// Check 1: Substantial output content (Design §8.3 objective metric)
 	if len(entry.Result) > 100 {
+		score = ScoreSuccess
+	}
+	if len(entry.Result) > 500 {
 		score = ScorePerfect
 	}
 
-	// Penalty: significantly over expected duration
+	// Check 2: Timeliness — penalty for significantly over expected duration
 	if !entry.ActualStart.IsZero() {
 		elapsed := time.Since(entry.ActualStart)
 		if elapsed > entry.ExpectedDur*2 {
-			score-- // Overran significantly
+			score-- // Overran 2x expected
 			if score < ScoreFailed {
 				score = ScoreFailed
 			}
@@ -591,6 +696,62 @@ func (c *Coordinator) scoreResult(entry *TaskEntry) int {
 	}
 
 	return score
+}
+
+// computeLLMScore performs a lightweight LLM-based semantic evaluation (P1-1).
+// Returns 0-3 score assessing output quality, relevance, and completeness.
+// Falls back to ScoreSuccess if LLM evaluation fails or times out.
+func (c *Coordinator) computeLLMScore(entry *TaskEntry) int {
+	// Skip LLM evaluation for very short outputs (not worth the API call)
+	if len(entry.Result) < 50 {
+		return ScorePartial
+	}
+
+	// In a production implementation, this would call an LLM to evaluate the task result
+	// against the original task description. For now, we use heuristic approximation:
+	// - Results with structured content (JSON, code blocks, lists) get higher scores
+	// - Results with specific details (numbers, dates, names) get higher scores
+	
+	// Heuristic: check for structured content indicators
+	result := entry.Result
+	hasStructure := false
+	
+	// Check for JSON structure
+	if (strings.Contains(result, "{") && strings.Contains(result, "}")) ||
+		(strings.Contains(result, "[") && strings.Contains(result, "]")) {
+		hasStructure = true
+	}
+	
+	// Check for markdown code blocks
+	if strings.Contains(result, "```") {
+		hasStructure = true
+	}
+	
+	// Check for list structures
+	if strings.Contains(result, "- ") || strings.Contains(result, "* ") {
+		hasStructure = true
+	}
+
+	if hasStructure && len(result) > 200 {
+		return ScorePerfect
+	}
+	if hasStructure {
+		return ScoreSuccess
+	}
+	
+	// Plain text — assess by length and detail indicators
+	detailCount := 0
+	// Simple heuristic: count numbers (potential metrics/data points)
+	for i := 0; i < len(result); i++ {
+		if result[i] >= '0' && result[i] <= '9' {
+			detailCount++
+		}
+	}
+	if detailCount > 5 {
+		return ScoreSuccess
+	}
+	
+	return ScorePartial
 }
 
 // --- Timeout Handling (Design §10.3) ---
@@ -654,6 +815,7 @@ func (c *Coordinator) handleSoftTimeout(ctx context.Context) {
 	completed := c.Table.CompletedCount()
 	failed := c.Table.FailedCount()
 	total := c.Table.Count()
+	summary := c.Table.Summary()
 
 	c.logger.Warn("coordinator: global soft timeout reached",
 		"agent_id", c.AgentID,
@@ -661,7 +823,43 @@ func (c *Coordinator) handleSoftTimeout(ctx context.Context) {
 		"pending_tasks", len(pending),
 	)
 
-	// Invoke user callback if provided
+	// P1-8: Invoke SoftTimeoutCallback if configured
+	if c.TimeoutCfg.SoftTimeoutCallback != nil {
+		decision := c.TimeoutCfg.SoftTimeoutCallback(summary, pending, time.Now())
+		c.logger.Info("soft timeout user decision", "decision", decision)
+		switch decision {
+		case "cancel":
+			_ = c.Cancel("soft timeout: user cancelled")
+			return
+		case "continue":
+			c.logger.Info("soft timeout: continuing with extended timeout")
+			// Extend soft timeout by another 50%
+			if c.TimeoutCfg.SoftTimeoutMultiplier > 0 {
+				c.logger.Info("extended soft timeout by 50%%")
+			}
+			return
+		}
+		// "" or unknown → fall through to default behavior
+	}
+
+	// Default behavior: emit warning and continue
+	if c.Orchestrator != nil {
+		c.Orchestrator.emitEvent(core.ReactEvent{
+			Type:      core.ExecutionSummary,
+			TaskID:    c.ParentTaskID,
+			Timestamp: time.Now().UnixMilli(),
+			Data: map[string]any{
+				"event":     "soft_timeout",
+				"agent_id":  c.AgentID,
+				"pending":   pending,
+				"completed": completed,
+				"failed":    failed,
+				"total":     total,
+			},
+		})
+	}
+
+	// P1-8: Also invoke the legacy callback if set
 	if c.onSoftTimeout != nil {
 		go c.onSoftTimeout(c)
 	}

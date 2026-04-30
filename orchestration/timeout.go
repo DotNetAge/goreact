@@ -53,6 +53,10 @@ type TimeoutConfig struct {
 	// UserDecisionTimeout is how long the Coordinator waits for user response at soft timeout.
 	// After this, it defaults to "continue with completed results". Default: 30s.
 	UserDecisionTimeout time.Duration
+
+	// P1-8: Soft timeout user interaction callback.
+	// Invoked when soft timeout occurs. Returns "continue", "cancel", or "" for default behavior.
+	SoftTimeoutCallback func(taskSummary string, pendingTasks []string, softDeadline time.Time) string
 }
 
 // DefaultTimeoutConfig returns the standard timeout configuration matching Design §10.3/§10.4 defaults.
@@ -119,4 +123,11 @@ func (cfg TimeoutConfig) computePollInterval(running []*TaskEntry) time.Duration
 	default:
 		return interval
 	}
+}
+
+// IdleCleanupConfig configures the idle agent detection and cleanup mechanism (P1-4 / Design §12.4).
+type IdleCleanupConfig struct {
+	IdleTimeout     time.Duration // Duration after which an idle agent is marked dormant (0 = disabled)
+	CleanupInterval time.Duration // How often to run the cleanup scan (0 = disabled)
+	MinRetained     int           // Minimum number of agents to retain during cleanup (0 = no cleanup)
 }

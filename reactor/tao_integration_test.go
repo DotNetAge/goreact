@@ -118,7 +118,7 @@ func logThinkPhase(t *testing.T, input string, intent *Intent, r *Reactor) {
 	t.Helper()
 	skills, _ := r.skillRegistry.FindApplicableSkills(intent)
 	skillsSection := BuildSkillsSystemPrompt(skills)
-	prompt := BuildThinkPrompt(input, intent, nil, nil, nil, "", nil)
+	prompt := BuildThinkPrompt(input, intent, nil, nil, nil, nil)
 	t.Logf("[THINK-PHASE] Rendered think_prompt length=%d chars, skills_section=%d chars", len(prompt), len(skillsSection))
 	if skillsSection != "" {
 		t.Logf("[THINK-PHASE] Skills section:\n%s", truncate(skillsSection, 500))
@@ -463,7 +463,7 @@ func TestTAO_DataFlowAudit_RealLLM(t *testing.T) {
 		{
 			name: "think_prompt",
 			render: func() string {
-				return BuildThinkPrompt(input, &Intent{Type: "task"}, nil, nil, nil, "", nil)
+				return BuildThinkPrompt(input, &Intent{Type: "task"}, nil, nil, nil, nil)
 			},
 			checkFn: func(s string) {
 				if strings.Contains(strings.ToLower(s), "you are the ") {

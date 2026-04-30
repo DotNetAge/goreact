@@ -19,22 +19,24 @@ import (
 //   - Model 分配器: Automatic model lookup per agent config
 //
 // 智能路由能力（Design §6.3）：
-//   当 LLM Router 可用时，支持语义匹配任务→Agent 的自动路由。
-//   当 AgentFactory 可用时，支持按需动态创建新 Agent。
-//   当 ScoreTracker 可用时，支持基于历史绩效的优选排序。
+//
+//	当 LLM Router 可用时，支持语义匹配任务→Agent 的自动路由。
+//	当 AgentFactory 可用时，支持按需动态创建新 Agent。
+//	当 ScoreTracker 可用时，支持基于历史绩效的优选排序。
 type ChannelOrchestrator struct {
 	// === Configuration (immutable after construction) ===
-	modelRegistry core.ModelRegistry
-	registry     *goreact.AgentRegistry
-	spawnFunc    SpawnFunction
-	maxConcurrent int
+	modelRegistry  core.ModelRegistry
+	registry       *goreact.AgentRegistry
+	spawnFunc      SpawnFunction
+	maxConcurrent  int
 	defaultTimeout time.Duration
-	inboxSize     int
+	inboxSize      int
+	config         OrchestratorConfig // P2-1: centralized config for external exposure
 
 	// === Intelligent Routing Components (Design §6 / §8 / §12) ===
-	router       *LLMRouter     // 智能路由引擎 (nil = 降级为关键词匹配)
-	factory      *AgentFactory   // 动态 Agent 创建工厂 (nil = 不支持动态创建)
-	scoreTracker *ScoreTracker   // 绩效追踪器 (nil = 不记录绩效)
+	router       *LLMRouter    // 智能路由引擎 (nil = 降级为关键词匹配)
+	factory      *AgentFactory // 动态 Agent 创建工厂 (nil = 不支持动态创建)
+	scoreTracker *ScoreTracker // 绩效追踪器 (nil = 不记录绩效)
 
 	// === Agent Factory Cache ===
 	agentCache   map[string]*goreact.Agent // name -> cached instance
@@ -46,20 +48,33 @@ type ChannelOrchestrator struct {
 	// === Task Management ===
 	store TaskStore
 
-	// === Channel Actor Loop ===
-	inbox    chan Message
-	done     chan struct{} // Closed when Stop() completes
-	started  bool
-	startOnce sync.Once
+	// === Channel Actor Loop (P0-2: per-agent inbox architecture) ===
+	agentInboxes   map[string]chan Message // agentName → buffered inbox (Design §7.2)
+	agentInboxesMu sync.RWMutex            // Protects agentInboxes map
+	controlCh      chan Message            // Global control messages (delegate/query/cancel/broadcast)
+	done           chan struct{}           // Closed when Stop() completes
+	started        bool
+	startOnce      sync.Once
+	state          OrchestratorState // P2-4: full state machine (Initializing/Running/Draining/Stopped)
+	stateMu        sync.RWMutex
 
 	// === Event Aggregation ===
-	eventOut      chan core.ReactEvent
-	eventSubsMu   sync.RWMutex
-	eventSubs     map[chan<- core.ReactEvent]func(core.ReactEvent) bool
-	eventDone     chan struct{} // Closed when Stop() completes
+	eventOut    chan core.ReactEvent
+	eventSubsMu sync.RWMutex
+	eventSubs   map[chan<- core.ReactEvent]func(core.ReactEvent) bool
+	eventDone   chan struct{} // Closed when Stop() completes
 
 	// logger
 	logger *slog.Logger
+
+	// === P1-5: Heartbeat tracking ===
+	heartbeatMu    sync.RWMutex
+	heartbeats     map[string]time.Time // agentName → last heartbeat timestamp
+	heartbeatCheck *time.Ticker         // Periodic heartbeat checker
+
+	// === P1-4: Idle agent cleanup ===
+	idleCleanupConfig IdleCleanupConfig
+	idleCleanupTicker *time.Ticker
 }
 
 // New creates a new ChannelOrchestrator with the given options.
@@ -71,23 +86,26 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 	}
 
 	o := &ChannelOrchestrator{
-		modelRegistry: setup.modelRegistry,
-		registry:      setup.registry,
-		spawnFunc:    setup.spawnFunc,
-		maxConcurrent: setup.maxConcurrent,
-		inboxSize:     setup.inboxSize,
-		router:       setup.llmRouter,
-		factory:      setup.agentFactory,
-		scoreTracker: setup.scoreTracker,
-		agentCache:    make(map[string]*goreact.Agent),
-		runtimeDir:    core.NewRuntimeDirectory(0), // unlimited
-		store:         NewInMemoryTaskStore(),
-		inbox:         make(chan Message, setup.inboxSize),
-		done:          make(chan struct{}),
-		eventOut:      make(chan core.ReactEvent, 256),
-		eventSubs:     make(map[chan<- core.ReactEvent]func(core.ReactEvent) bool),
-		eventDone:      make(chan struct{}),
-		logger:        slog.Default(),
+		modelRegistry:     setup.modelRegistry,
+		registry:          setup.registry,
+		spawnFunc:         setup.spawnFunc,
+		maxConcurrent:     setup.maxConcurrent,
+		inboxSize:         setup.inboxSize,
+		router:            setup.llmRouter,
+		factory:           setup.agentFactory,
+		scoreTracker:      setup.scoreTracker,
+		agentCache:        make(map[string]*goreact.Agent),
+		agentInboxes:      make(map[string]chan Message),
+		controlCh:         make(chan Message, setup.inboxSize),
+		runtimeDir:        core.NewRuntimeDirectory(0), // unlimited
+		store:             NewInMemoryTaskStore(),
+		done:              make(chan struct{}),
+		eventOut:          make(chan core.ReactEvent, 256),
+		eventSubs:         make(map[chan<- core.ReactEvent]func(core.ReactEvent) bool),
+		eventDone:         make(chan struct{}),
+		logger:            slog.Default(),
+		heartbeats:        make(map[string]time.Time),
+		idleCleanupConfig: IdleCleanupConfig{},
 	}
 
 	// Resolve default model if provided via WithDefaultModel
@@ -186,9 +204,8 @@ func defaultSpawnFunction(orch *ChannelOrchestrator) SpawnFunction {
 func (o *ChannelOrchestrator) Start(ctx context.Context) error {
 	var startErr error
 	o.startOnce.Do(func() {
+		o.setState(OrchestratorInitializing)
 		o.started = true
-		// Load agents from directory if configured and no registry yet
-		// (handled by WithAgentsDir in New or pre-built registry)
 
 		// Start the Actor loop goroutine
 		go o.runLoop(ctx)
@@ -196,6 +213,7 @@ func (o *ChannelOrchestrator) Start(ctx context.Context) error {
 		// Start event dispatcher goroutine
 		go o.runEventDispatcher(ctx)
 
+		o.setState(OrchestratorRunning)
 		o.logger.Info("orchestrator started",
 			"max_concurrent", o.maxConcurrent,
 			"default_timeout", o.defaultTimeout,
@@ -208,8 +226,23 @@ func (o *ChannelOrchestrator) Stop(ctx context.Context) error {
 	if !o.started {
 		return nil
 	}
-	// Close inbox to signal runLoop to drain and exit
-	close(o.inbox)
+
+	// P2-4: Graceful drain if enabled
+	if o.config.EnableGracefulDrain {
+		o.setState(OrchestratorDraining)
+		o.logger.Info("orchestrator entering draining state")
+	}
+
+	// Close all agent inboxes to signal per-agent goroutines to exit
+	o.agentInboxesMu.Lock()
+	for name, ch := range o.agentInboxes {
+		close(ch)
+		delete(o.agentInboxes, name)
+	}
+	o.agentInboxesMu.Unlock()
+
+	// Close control channel to signal runLoop to drain and exit
+	close(o.controlCh)
 
 	// Wait for runLoop to finish
 	select {
@@ -221,9 +254,29 @@ func (o *ChannelOrchestrator) Stop(ctx context.Context) error {
 	// Close event aggregator
 	close(o.eventDone)
 
+	o.setState(OrchestratorStopped)
 	o.started = false
 	o.logger.Info("orchestrator stopped")
 	return nil
+}
+
+// setState transitions the orchestrator to a new state (thread-safe, P2-4).
+func (o *ChannelOrchestrator) setState(s OrchestratorState) {
+	o.stateMu.Lock()
+	defer o.stateMu.Unlock()
+	o.state = s
+}
+
+// State returns the current orchestrator lifecycle state (P2-4).
+func (o *ChannelOrchestrator) State() OrchestratorState {
+	o.stateMu.RLock()
+	defer o.stateMu.RUnlock()
+	return o.state
+}
+
+// GetConfig returns the centralized configuration for external access (P2-1).
+func (o *ChannelOrchestrator) GetConfig() OrchestratorConfig {
+	return o.config
 }
 
 // --- Actor Loop ---
@@ -232,9 +285,9 @@ func (o *ChannelOrchestrator) runLoop(ctx context.Context) {
 	defer close(o.done)
 	for {
 		select {
-		case msg, ok := <-o.inbox:
+		case msg, ok := <-o.controlCh:
 			if !ok {
-				return // Inbox closed, shutdown
+				return // Control channel closed, shutdown
 			}
 			o.handleMessage(ctx, msg)
 
@@ -479,14 +532,14 @@ func (o *ChannelOrchestrator) DelegateTo(
 	replyCh := make(chan Response, 1)
 	msg := Message{
 		Type:      MsgDelegate,
-		TaskID:    "", // Assigned by handleDelegate
+		TaskID:    "",    // Assigned by handleDelegate
 		From:      "api", // Programmatic access
 		Payload:   DelegateRequest{AgentName: agentName, TaskPrompt: taskPrompt, ParentID: parentID, Metadata: metadata},
 		ReplyCh:   replyCh,
 		Timestamp: time.Now().UnixMilli(),
 	}
 	select {
-	case o.inbox <- msg:
+	case o.controlCh <- msg:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -510,11 +563,11 @@ func (o *ChannelOrchestrator) DelegateTo(
 // 与 DelegateTo 不同，RouteTask 不要求调用者指定 Agent 名称，
 // 而是通过 LLM Router 语义匹配任务描述与最合适的 Agent：
 //
-//  ① 从 RuntimeDirectory 获取所有 Active Agent 的元数据
-//  ② 调用 LLM Router (或降级为关键词匹配) 进行语义匹配
-//  ③ 如果选中现有 Agent → 委托执行
-//  ④ 如果需要 __CREATE_NEW__ → 通过 AgentFactory 动态创建 → 委托执行
-//  ⑤ 返回结果
+//	① 从 RuntimeDirectory 获取所有 Active Agent 的元数据
+//	② 调用 LLM Router (或降级为关键词匹配) 进行语义匹配
+//	③ 如果选中现有 Agent → 委托执行
+//	④ 如果需要 __CREATE_NEW__ → 通过 AgentFactory 动态创建 → 委托执行
+//	⑤ 返回结果
 //
 // 使用示例：
 //
@@ -620,9 +673,9 @@ func (o *ChannelOrchestrator) CancelTask(taskID string) error {
 		ReplyCh: replyCh,
 	}
 	select {
-	case o.inbox <- msg:
+	case o.controlCh <- msg:
 	default:
-		return fmt.Errorf("orchestrator: inbox full, cannot send cancel for task %q", taskID)
+		return fmt.Errorf("orchestrator: control channel full, cannot send cancel for task %q", taskID)
 	}
 
 	// Wait for handleCancel to process the message and return its result.
@@ -749,22 +802,185 @@ func (o *ChannelOrchestrator) runEventDispatcher(ctx context.Context) {
 func (o *ChannelOrchestrator) emitEvent(event core.ReactEvent) {
 	select {
 	case o.eventOut <- event:
-	default:
-		// Event buffer full — non-blocking to avoid blocking Actor loop
+	case <-time.After(2 * time.Second):
+		o.logger.Warn("event buffer full, dropping event",
+			"task_id", event.TaskID, "event_type", event.Type)
 	}
 }
 
-// --- Low-Level Access ---
+// --- P1-5: Heartbeat ---
 
+// RecordHeartbeat records a heartbeat from an agent (P1-5 / Design §7.3).
+// Should be called periodically by each agent to indicate liveness.
+func (o *ChannelOrchestrator) RecordHeartbeat(agentName string) {
+	o.heartbeatMu.Lock()
+	defer o.heartbeatMu.Unlock()
+	o.heartbeats[agentName] = time.Now()
+}
+
+// CheckAgentLiveness returns a list of agents that haven't sent a heartbeat
+// within the given threshold duration.
+func (o *ChannelOrchestrator) CheckAgentLiveness(threshold time.Duration) []string {
+	o.heartbeatMu.RLock()
+	defer o.heartbeatMu.RUnlock()
+
+	now := time.Now()
+	var dead []string
+	for name, lastBeat := range o.heartbeats {
+		if now.Sub(lastBeat) > threshold {
+			dead = append(dead, name)
+		}
+	}
+	return dead
+}
+
+// --- P1-4: Idle Cleanup ---
+
+// SetIdleCleanupConfig configures idle agent detection and cleanup (P1-4 / Design §12.4).
+func (o *ChannelOrchestrator) SetIdleCleanupConfig(cfg IdleCleanupConfig) {
+	o.idleCleanupConfig = cfg
+}
+
+// RunIdleCleanup starts the periodic idle cleanup scan (P1-4).
+// Should be called once after Start(). Runs until ctx is cancelled.
+func (o *ChannelOrchestrator) RunIdleCleanup(ctx context.Context) {
+	if o.idleCleanupConfig.CleanupInterval <= 0 || o.idleCleanupConfig.IdleTimeout <= 0 {
+		return // Cleanup disabled
+	}
+
+	ticker := time.NewTicker(o.idleCleanupConfig.CleanupInterval)
+	defer ticker.Stop()
+
+	o.logger.Info("idle cleanup started",
+		"idle_timeout", o.idleCleanupConfig.IdleTimeout,
+		"cleanup_interval", o.idleCleanupConfig.CleanupInterval,
+		"min_retained", o.idleCleanupConfig.MinRetained,
+	)
+
+	for {
+		select {
+		case <-ticker.C:
+			o.scanAndCleanupIdleAgents()
+		case <-ctx.Done():
+			o.logger.Info("idle cleanup stopped")
+			return
+		}
+	}
+}
+
+// scanAndCleanupIdleAgents scans for agents that have been idle beyond the threshold (P1-4).
+func (o *ChannelOrchestrator) scanAndCleanupIdleAgents() {
+	if o.idleCleanupConfig.IdleTimeout <= 0 {
+		return
+	}
+
+	o.heartbeatMu.Lock()
+	defer o.heartbeatMu.Unlock()
+
+	now := time.Now()
+	var idleAgents []string
+	for name, lastBeat := range o.heartbeats {
+		if now.Sub(lastBeat) > o.idleCleanupConfig.IdleTimeout {
+			idleAgents = append(idleAgents, name)
+		}
+	}
+
+	// Don't clean up below minimum retained
+	if len(o.heartbeats)-len(idleAgents) < o.idleCleanupConfig.MinRetained {
+		return
+	}
+
+	for _, name := range idleAgents {
+		o.logger.Info("marking agent as dormant due to idle timeout", "agent_name", name)
+		delete(o.heartbeats, name)
+		// Note: actual agent removal should be handled by the AgentRegistry
+		// This is a soft cleanup — removes heartbeat tracking only
+	}
+}
+
+// --- P2-5: Unified End-to-End Responsibility Result Path ---
+// Note: The existing Coordinator.WaitAndCoordinate() + TaskProgressTable.AllCompleted()
+// already implements the end-to-end responsibility principle. The Coordinator collects
+// all subtask results and returns a unified CoordinationResult to the parent Agent,
+// which then continues execution in Executor mode.
+// This ensures the caller (who received the original request) is responsible for
+// returning the final answer to the user (Design §2.2).
+
+// --- Low-Level Access (P0-2: per-agent inbox architecture) ---
+
+// Send delivers a message to the Orchestrator's control channel (broadcast/global scope).
+// For agent-specific delivery, use SendToAgent() instead.
 func (o *ChannelOrchestrator) Send(msg Message) <-chan Response {
 	replyCh := make(chan Response, 1)
 	msg.ReplyCh = replyCh
 	msg.Timestamp = time.Now().UnixMilli()
 	select {
-	case o.inbox <- msg:
+	case o.controlCh <- msg:
 		return replyCh
 	case <-time.After(5 * time.Second):
 		return make(chan Response)
+	}
+}
+
+// SendToAgent delivers a message to a specific agent's inbox (Design §7.2 P0-2).
+// Returns the agent's reply channel. If the agent doesn't exist, creates a new inbox.
+func (o *ChannelOrchestrator) SendToAgent(agentName string, msg Message) <-chan Response {
+	replyCh := make(chan Response, 1)
+	msg.ReplyCh = replyCh
+	msg.Timestamp = time.Now().UnixMilli()
+
+	// Ensure agent inbox exists
+	ch := o.ensureAgentInbox(agentName)
+
+	select {
+	case ch <- msg:
+		return replyCh
+	case <-time.After(5 * time.Second):
+		return make(chan Response)
+	}
+}
+
+// ensureAgentInbox returns the buffered inbox for an agent, creating one if needed (P0-2).
+func (o *ChannelOrchestrator) ensureAgentInbox(agentName string) chan Message {
+	o.agentInboxesMu.RLock()
+	ch, ok := o.agentInboxes[agentName]
+	o.agentInboxesMu.RUnlock()
+	if ok {
+		return ch
+	}
+
+	// Create new inbox
+	o.agentInboxesMu.Lock()
+	defer o.agentInboxesMu.Unlock()
+
+	// Double-check after lock upgrade
+	if ch, ok = o.agentInboxes[agentName]; ok {
+		return ch
+	}
+
+	ch = make(chan Message, o.inboxSize)
+	o.agentInboxes[agentName] = ch
+
+	// Start a goroutine to multiplex this agent's messages into the control channel
+	go func() {
+		for msg := range ch {
+			o.handleMessage(context.Background(), msg)
+		}
+	}()
+
+	o.logger.Debug("created agent inbox", "agent_name", agentName, "capacity", o.inboxSize)
+	return ch
+}
+
+// UnregisterAgentInbox removes and closes an agent's inbox (P0-2).
+// Used when an agent is destroyed or removed from the system.
+func (o *ChannelOrchestrator) UnregisterAgentInbox(agentName string) {
+	o.agentInboxesMu.Lock()
+	defer o.agentInboxesMu.Unlock()
+	if ch, ok := o.agentInboxes[agentName]; ok {
+		close(ch)
+		delete(o.agentInboxes, agentName)
+		o.logger.Debug("removed agent inbox", "agent_name", agentName)
 	}
 }
 

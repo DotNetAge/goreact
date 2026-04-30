@@ -347,9 +347,15 @@ func TestCoordinator_OnResult_Success(t *testing.T) {
 
 	c.Table.Set("t1", &TaskEntry{TaskID: "t1", State: TaskRunning, ActualStart: time.Now(), ExpectedDur: 30 * time.Second})
 
-	// Result string must be >100 chars to trigger ScorePerfect
-	longResult := "This is a comprehensive output that exceeds one hundred characters in length " +
-		"to ensure that the scoring system correctly assigns a perfect score for quality results."
+	// Result string must be >500 chars to trigger ScorePerfect in objective scoring (P1-1)
+	longResult := "This is a comprehensive output that exceeds five hundred characters in length. " +
+		"It includes detailed analysis, multiple paragraphs of content, structured data points, " +
+		"and comprehensive findings to ensure that the scoring system correctly assigns a perfect " +
+		"score for quality results. The task has been completed with substantial output containing " +
+		"specific metrics: 42 items processed, 98.5% accuracy rate, 3 edge cases identified. " +
+		"Additional details include timestamps, reference IDs, and cross-validation against " +
+		"expected baseline values. This thorough documentation ensures traceability and " +
+		"verifiability of all results produced by the agent during execution."
 	c.OnResult(&TaskResultEvent{
 		TaskID:        "t1",
 		TargetAgentID: "agent-1",
@@ -728,13 +734,17 @@ func TestEventConstruction(t *testing.T) {
 			Requester: core.RequesterUser,
 			Timestamp: now,
 		},
+		Reason:   "user requested pause",
+		Requester: "user",
+		Timestamp: now,
+		Priority:  PriorityUser,
 	}
 
 	if ctrlCmd.Action != CmdInterrupt {
 		t.Error("action mismatch")
 	}
-	if ctrlCmd.Priority() != 3 { // User priority
-		t.Errorf("expected user priority 3, got %d", ctrlCmd.Priority())
+	if ctrlCmd.Priority != PriorityUser {
+		t.Errorf("expected user priority %d, got %d", PriorityUser, ctrlCmd.Priority)
 	}
 
 	// Lifecycle event

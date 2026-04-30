@@ -45,6 +45,9 @@ type AgentFactory struct {
 	maxAutoCreated int // Upper limit on auto-created agent count
 	createdCount   int // Current count of created agents
 
+	// P1-3: Skill matching — optional skill registry for capability-to-skill mapping
+	skillRegistry SkillRegistry
+
 	logger *structuredLogger
 }
 
@@ -57,6 +60,11 @@ type goreactRegistryAdapter interface {
 	Register(name string, config *core.AgentConfig) error
 }
 
+// SkillRegistry defines the minimal interface for skill lookup (P1-3).
+type SkillRegistry interface {
+	List() []*core.Skill
+}
+
 // NewAgentFactory creates a new AgentFactory instance.
 func NewAgentFactory(router *LLMRouter, registry *goreactRegistryAdapter) *AgentFactory {
 	return &AgentFactory{
@@ -66,6 +74,12 @@ func NewAgentFactory(router *LLMRouter, registry *goreactRegistryAdapter) *Agent
 		createdCount:   0,
 		logger:         newLogger("agent_factory"),
 	}
+}
+
+// WithSkillRegistry injects a SkillRegistry for capability-to-skill matching (P1-3).
+func (f *AgentFactory) WithSkillRegistry(sr SkillRegistry) *AgentFactory {
+	f.skillRegistry = sr
+	return f
 }
 
 // WithMaxAutoAgents sets the maximum number of dynamic agents that can be created.
@@ -135,7 +149,24 @@ func (f *AgentFactory) Create(ctx context.Context, taskDescription string, model
 		config = f.generateRuleBased(taskDescription, modelRegistry)
 	}
 
-	// Step 3: Resolve model if not set
+	// Step 3: P1-3 — Match skills from skill registry and inject matching skill names into config
+	if f.skillRegistry != nil {
+		capabilities := f.extractCapabilitiesFromDescription(taskDescription)
+		matchedSkills := f.matchSkills(capabilities)
+		if len(matchedSkills) > 0 {
+			skillNames := make([]string, len(matchedSkills))
+			for i, s := range matchedSkills {
+				skillNames[i] = s.Name
+			}
+			// Append skill recommendations to description for routing hint
+			config.Description += fmt.Sprintf("\n\nRecommended skills: %s", strings.Join(skillNames, ", "))
+			f.logger.Info("matched skills for new agent",
+				"skills", strings.Join(skillNames, ", "),
+			)
+		}
+	}
+
+	// Step 4: Resolve model if not set
 	if config.Model == "" {
 		if modelRegistry != nil {
 			if defaultCfg, err := modelRegistry.Get("default"); err == nil {
@@ -309,6 +340,78 @@ func (f *AgentFactory) findOverlappingAgent(taskDesc string) *core.AgentConfig {
 	}
 
 	return nil
+}
+
+// extractCapabilitiesFromDescription extracts simple keyword-based capabilities
+// from a task description for skill matching (P1-3).
+// Used when the SkillRegistry is available but LLM extraction isn't.
+func (f *AgentFactory) extractCapabilitiesFromDescription(taskDesc string) []string {
+	words := splitWords(taskDesc)
+	// Extract domain-specific keywords
+	domainKeywords := map[string][]string{
+		"web":       {"http", "url", "browser", "website", "web", "page", "scrape", "fetch"},
+		"code":      {"code", "function", "debug", "refactor", "test", "implement", "algorithm"},
+		"data":      {"data", "analyze", "statistics", "chart", "csv", "json", "database", "query"},
+		"document":  {"document", "write", "report", "summary", "text", "pdf", "doc"},
+		"image":     {"image", "photo", "draw", "visual", "generate", "design"},
+	}
+
+	var caps []string
+	for domain, keywords := range domainKeywords {
+		for _, word := range words {
+			for _, kw := range keywords {
+				if strings.Contains(word, kw) {
+					caps = append(caps, domain)
+					break
+				}
+			}
+		}
+	}
+	return caps
+}
+
+// matchSkills matches extracted capabilities against the skill registry (P1-3).
+// Returns skills whose Name or Description contains any of the capability keywords.
+// Skills are sorted by match count (most relevant first).
+func (f *AgentFactory) matchSkills(capabilities []string) []*core.Skill {
+	if f.skillRegistry == nil || len(capabilities) == 0 {
+		return nil
+	}
+
+	allSkills := f.skillRegistry.List()
+	type scoredSkill struct {
+		skill *core.Skill
+		score int
+	}
+
+	var scored []scoredSkill
+	for _, skill := range allSkills {
+		score := 0
+		skillLower := strings.ToLower(skill.Name + " " + skill.Description)
+		for _, cap := range capabilities {
+			if strings.Contains(skillLower, strings.ToLower(cap)) {
+				score++
+			}
+		}
+		if score > 0 {
+			scored = append(scored, scoredSkill{skill, score})
+		}
+	}
+
+	// Sort by score descending (bubble sort for simplicity)
+	for i := 0; i < len(scored); i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	result := make([]*core.Skill, len(scored))
+	for i, s := range scored {
+		result[i] = s.skill
+	}
+	return result
 }
 
 // --- JSON Parsing Helpers ---

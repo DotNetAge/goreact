@@ -25,13 +25,6 @@ The following knowledge was retrieved from memory as relevant to the current req
 </relevant_memory>
 {{end}}
 
-{{if .HasAgents}}
-<agents>
-The following specialized agents are available for task delegation. When a request matches an agent's role, use the "delegate" decision route instead of "act".
-{{.AgentsSection}}
-</agents>
-{{end}}
-
 {{if .HasActiveSkill}}
 <active_skill_instructions>
 === SKILL: {{.ActiveSkillName}} ===

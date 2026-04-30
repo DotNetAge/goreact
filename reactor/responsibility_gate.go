@@ -228,6 +228,104 @@ A task SHOULD be decomposed if it meets ANY of the following conditions:
 	}, nil
 }
 
+// validateWBSQuality runs quality checks on the decomposed sub-tasks (P1-2 / Design §11.3).
+// Checks: completeness, non-overlap, DAG cycle detection, and quantity control.
+// Returns an error if any critical validation fails.
+func validateWBSQuality(subTasks []TaskDecomposition) error {
+	if len(subTasks) == 0 {
+		return nil
+	}
+
+	// Check 1: Quantity control — 3-10 subtasks recommended range (Design §11.3)
+	if len(subTasks) > 15 {
+		return fmt.Errorf("wbs validation: too many subtasks (%d > 15), consider simplifying", len(subTasks))
+	}
+
+	// Check 2: No overlap — verify no duplicate task IDs or titles
+	titleSet := make(map[string]bool)
+	idSet := make(map[string]bool)
+	for _, st := range subTasks {
+		if idSet[st.ID] {
+			return fmt.Errorf("wbs validation: duplicate task ID %q", st.ID)
+		}
+		idSet[st.ID] = true
+		if titleSet[st.Title] {
+			return fmt.Errorf("wbs validation: duplicate task title %q", st.Title)
+		}
+		titleSet[st.Title] = true
+	}
+
+	// Check 3: DAG cycle detection — ensure no circular dependencies
+	if err := detectDAGCycle(subTasks); err != nil {
+		return fmt.Errorf("wbs validation: circular dependency detected: %w", err)
+	}
+
+	// Check 4: Dependency validity — all depends_on references must exist
+	for _, st := range subTasks {
+		for _, dep := range st.DependsOn {
+			if !idSet[dep] {
+				return fmt.Errorf("wbs validation: task %q depends on unknown task %q", st.ID, dep)
+			}
+		}
+	}
+
+	return nil
+}
+
+// detectDAGCycle performs a topological sort to detect cycles in the dependency graph (P1-2).
+// Returns an error if a cycle is found.
+func detectDAGCycle(subTasks []TaskDecomposition) error {
+	if len(subTasks) == 0 {
+		return nil
+	}
+
+	// Build adjacency list and in-degree count
+	graph := make(map[string][]string)
+	inDegree := make(map[string]int)
+	idSet := make(map[string]bool)
+
+	for _, st := range subTasks {
+		idSet[st.ID] = true
+		if _, ok := inDegree[st.ID]; !ok {
+			inDegree[st.ID] = 0
+		}
+	}
+
+	for _, st := range subTasks {
+		for _, dep := range st.DependsOn {
+			graph[dep] = append(graph[dep], st.ID)
+			inDegree[st.ID]++
+		}
+	}
+
+	// Kahn's algorithm for topological sort
+	queue := make([]string, 0)
+	for id, deg := range inDegree {
+		if deg == 0 {
+			queue = append(queue, id)
+		}
+	}
+
+	processed := 0
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		processed++
+
+		for _, neighbor := range graph[current] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	if processed != len(subTasks) {
+		return fmt.Errorf("circular dependency among %d tasks", len(subTasks)-processed)
+	}
+	return nil
+}
+
 // buildCapabilityList builds a summary of available skills/capabilities for the prompt.
 func (r *Reactor) buildCapabilityList() string {
 	skills := r.skillRegistry.ListSkills()
@@ -496,6 +594,13 @@ func (r *Reactor) executeResponsibilityGate(ctx *ReactContext, l1Result *l1Routi
 	if atomicity.IsAtomic {
 		// Atomic task → proceed to Level 2 (normal executor path)
 		// Return 0 extra tokens; caller continues to L2
+		return 0, nil
+	}
+
+	// P1-2: WBS Quality Assurance — validate decomposition before dispatching
+	if err := validateWBSQuality(atomicity.SubTasks); err != nil {
+		logger.Warn("wbs quality validation failed, falling back to executor mode", "error", err)
+		// Fallback: treat as atomic to avoid dispatching invalid decomposition
 		return 0, nil
 	}
 

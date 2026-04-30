@@ -21,10 +21,6 @@ var logger = slog.Default()
 // The orchestration.Orchestrator implementation satisfies this interface.
 // Also satisfies tools.AgentOrchestrator (superset with TaskStore method).
 type AgentOrchestrator interface {
-	// Agent listing (for progressive disclosure in Think/L1 routing)
-	ListAgents() []string
-	AgentInfo(name string) *core.AgentConfig
-
 	// Delegation
 	DelegateTo(ctx context.Context, agentName, taskPrompt, parentID string, metadata map[string]any) (*DelegateResult, error)
 	WaitForResult(ctx context.Context, taskID string) (*core.Task, error)

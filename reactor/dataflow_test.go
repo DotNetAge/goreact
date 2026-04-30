@@ -37,7 +37,7 @@ func TestDataFlow_NoRoleRedefinitionInTemplates(t *testing.T) {
 		{
 			name: "think_prompt_no_skill",
 			render: func() string {
-				return BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, nil, nil, "", nil)
+				return BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, nil, nil, nil)
 			},
 		},
 		{
@@ -53,7 +53,7 @@ func TestDataFlow_NoRoleRedefinitionInTemplates(t *testing.T) {
 					Instructions:  skill.Instructions,
 					FilteredInfos: []core.ToolInfo{{Name: "write"}, {Name: "bash"}},
 				}
-				return BuildThinkPrompt("implement auth", &Intent{Type: "task"}, nil, actCtx, nil, "", nil)
+				return BuildThinkPrompt("implement auth", &Intent{Type: "task"}, nil, actCtx, nil, nil)
 			},
 		},
 	}
@@ -97,7 +97,7 @@ func TestDataFlow_UserInputNotDuplicated(t *testing.T) {
 		{
 			name: "think_prompt",
 			templateFn: func() string {
-				return BuildThinkPrompt(testInput, &Intent{Type: "task"}, nil, nil, nil, "", nil)
+				return BuildThinkPrompt(testInput, &Intent{Type: "task"}, nil, nil, nil, nil)
 			},
 		},
 	}
@@ -245,7 +245,7 @@ func TestDataFlow_ThinkPromptNoRawInputLine(t *testing.T) {
 	input := "add validation middleware"
 	intent := &Intent{Type: "task", Confidence: 0.92, Summary: "Add validation"}
 
-	output := BuildThinkPrompt(input, intent, nil, nil, nil, "", nil)
+	output := BuildThinkPrompt(input, intent, nil, nil, nil, nil)
 
 	if !strings.Contains(output, `"type":"task"`) {
 		t.Error("think prompt should contain intent JSON")
@@ -528,7 +528,7 @@ func TestL3_ResolvedReferences_InjectedIntoThinkPrompt(t *testing.T) {
 		ResourceBasePath: tmpDir,
 	}
 
-	output := BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, actCtx, nil, "", l3Refs)
+	output := BuildThinkPrompt("test input", &Intent{Type: "task"}, nil, actCtx, nil, l3Refs)
 
 	if !strings.Contains(output, "<resolved_references>") {
 		t.Error("think prompt should contain <resolved_references> section when L3 data provided")

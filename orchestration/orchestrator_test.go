@@ -252,9 +252,9 @@ func TestDelegateTo_AndWaitForResult(t *testing.T) {
 	}
 
 	select {
-	case o.inbox <- msg:
+	case o.controlCh <- msg:
 	case <-time.After(2 * time.Second):
-		t.Fatal("inbox send timed out — runLoop may not have started")
+		t.Fatal("controlCh send timed out — runLoop may not have started")
 	}
 
 	select {

@@ -56,9 +56,9 @@ type referenceFile struct {
 //   - Links:   <reference-links>path, size bytes</reference-links>
 //     for binary or oversized files (metadata only)
 type ResolvedReferences struct {
-	Content       string // XML block with inline text file contents
-	Links         string // XML block with binary/oversized file metadata
-	FilesLoaded   int    // count of successfully loaded text files
+	Content      string // XML block with inline text file contents
+	Links        string // XML block with binary/oversized file metadata
+	FilesLoaded  int    // count of successfully loaded text files
 	FilesSkipped int    // count of skipped (oversized/binary/non-compliant) files
 }
 
@@ -237,11 +237,9 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
 	skillsSection := BuildSkillsSystemPrompt(skills)
 
-	// --- Build agents section for progressive disclosure (delegate routing) ---
-	var agentsSection string
-	if r.orchestrator != nil {
-		agentsSection = r.buildAgentsSection()
-	}
+	// --- Agent metadata NOT exposed at L1 (Design §2.1 / §13.3) ---
+	// Per information isolation principle, agent routing decisions are made
+	// exclusively by the Orchestrator's LLM Router, not by the Agent's L1.
 
 	var memoryRecords []core.MemoryRecord
 	if r.memory != nil {
@@ -265,7 +263,6 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 
 	// --- Pre-L1 accounting (FIX P1-#4: complete all layers) ---
 	accountTokens(skillsSection)
-	accountTokens(agentsSection)         // Agent metadata for progressive disclosure
 	accountTokens(r.config.SystemPrompt) // FIX: was missing — base identity prompt
 	minimalTokens := EstimateTokensForTools(minimalLLMTools, estimateFn)
 	if minimalTokens > 0 && r.contextWindow != nil {
@@ -273,13 +270,10 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	}
 
 	// ====================================================================
-	// PHASE 1 (L1 Routing): Minimal tools + skills + agents -> route decision
+	// PHASE 1 (L1 Routing): Minimal tools + skills -> route decision
+	// (Agent metadata NOT exposed here — routing delegated to Orchestrator)
 	// ====================================================================
-	var agentNamesForL1 []string
-	if r.orchestrator != nil {
-		agentNamesForL1 = r.orchestrator.ListAgents()
-	}
-	l1Prompt := buildL1RoutingPrompt(skills, agentNamesForL1)
+	l1Prompt := buildL1RoutingPrompt(skills)
 	accountTokens(l1Prompt)  // FIX: was missing — phase instruction
 	accountTokens(ctx.Input) // FIX: was missing — user message
 
@@ -422,7 +416,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		r.contextWindow.AddTokens(fullSchemaTokens)
 	}
 
-	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry, agentsSection, l3Refs)
+	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry, l3Refs)
 	accountTokens(instructions)
 
 	// FIX(P1-#4): Re-account per-call inputs for L2 (sent again as separate API call)
@@ -457,78 +451,16 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 }
 
 // buildL1RoutingPrompt constructs the Phase 1 routing prompt for L1 progressive disclosure.
-// The model sees ALL tools with minimal schema, ALL skill metadata, AND available agents, then routes.
-func buildL1RoutingPrompt(skills []*core.Skill, agentNames []string) string {
-	hasSkills := len(skills) > 0
-	hasAgents := len(agentNames) > 0
-
-	base := "Analyze the user's input and determine the best way to respond.\n" +
-		"\n" +
-		"You see all available tools (with names and descriptions only) and any active capabilities below.\n"
-
-	if hasAgents {
-		base += "\n" + "Available agents for delegation: " + strings.Join(agentNames, ", ") + "\n"
-		base += "When a task matches an agent's specialty, prefer delegating to it over using tools directly.\n"
+// The model sees ALL tools with minimal schema and ALL skill metadata, then routes.
+// Agent delegation is NOT handled at L1 — routing decisions are delegated to the Orchestrator.
+func buildL1RoutingPrompt(skills []*core.Skill) string {
+	result, err := renderL1RoutingPrompt(l1RoutingPromptData{
+		HasSkills: len(skills) > 0,
+	})
+	if err != nil {
+		return fmt.Sprintf("l1 routing prompt render error: %v", err)
 	}
-
-	base += "\n" +
-		"Decide which path to take:\n" +
-		"- **\"tool\"**: The user's request can be fulfilled by directly invoking one or more tools. Set 'selected_tools' to the tool name(s) you need.\n" +
-		"- **\"skill\"**: The request requires specialized domain expertise. Choose the most applicable skill from <available_capabilities>. Set 'target' to the skill name.\n"
-
-	if hasAgents {
-		base += "- **\"delegate\"**: The task should be delegated to a specialized agent. Set 'target' to the exact agent name from the available agents list.\n"
-	}
-
-	base += "- **\"answer\"**: This is a simple question, chitchat, or knowledge query that needs no tools or agents. Provide the answer directly.\n" +
-		"\n" +
-		"Respond with JSON only:\n" +
-		"{\"path\":\"tool|skill|answer|delegate\",\"target\":\"<skill_or_tool_or_agent_name>\",\"selected_tools\":[\"tool_name1\",...],\"answer\":\"<if answer path>\",\"reasoning\":\"<brief explanation>\"}\n" +
-		"\n" +
-		"CRITICAL rules:\n" +
-		"- For \"tool\" path: you MUST populate selected_tools with specific tool names from the available set\n" +
-		"- For \"skill\" path: set target to the EXACT skill name from available_capabilities\n"
-
-	if hasAgents {
-		base += "- For \"delegate\" path: set target to the EXACT agent name from the available agents list\n"
-	}
-
-	base += "- Select the MINIMUM set of tools sufficient for the task\n" +
-		"- When unsure between tool and skill, prefer \"skill\" for complex multi-step tasks\n"
-
-	if hasAgents {
-		base += "- When an available agent's role clearly matches the task, prefer \"delegate\" over \"tool\"\n"
-	}
-	if hasSkills {
-		return base + "\n\nAvailable capabilities (skills) are listed in the system prompt above — reference them by exact name."
-	}
-	return base
-}
-
-// buildAgentsSection constructs the <agents> progressive disclosure block
-// from the Orchestrator's agent registry. Each agent is listed with its name,
-// role, and description so the LLM can make informed delegate routing decisions.
-func (r *Reactor) buildAgentsSection() string {
-	agentNames := r.orchestrator.ListAgents()
-	if len(agentNames) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for _, name := range agentNames {
-		info := r.orchestrator.AgentInfo(name)
-		if info == nil {
-			continue
-		}
-		fmt.Fprintf(&sb, "- name: %q\n  role: %q\n", name, info.Role)
-		if info.Description != "" {
-			fmt.Fprintf(&sb, "  description: %s\n", info.Description)
-		}
-		if info.Model != "" {
-			fmt.Fprintf(&sb, "  model: %s\n", info.Model)
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
+	return result
 }
 
 // parseL1RoutingResponse extracts the L1 routing result from LLM response JSON.
@@ -789,10 +721,10 @@ func (r *Reactor) buildCoordinatorSummary(cs *CoordState) string {
 
 	for _, e := range entries {
 		statusIcon := map[TaskStatus]string{
-			TaskSucceeded:   "[OK]",
-			TaskFailed:      "[FAIL]",
-			TaskTimedOut:    "[TIMEOUT]",
-			TaskCancelled:   "[CANCELLED]",
+			TaskSucceeded:    "[OK]",
+			TaskFailed:       "[FAIL]",
+			TaskTimedOut:     "[TIMEOUT]",
+			TaskCancelled:    "[CANCELLED]",
 			TaskRetryPending: "[RETRY]",
 		}[e.Status]
 
