@@ -36,16 +36,20 @@ func NewMemorySessionStore() *MemorySessionStore {
 	}
 }
 
-func (s *MemorySessionStore) Append(_ context.Context, sessionID string, message Message) error {
+func (s *MemorySessionStore) Append(_ context.Context, sessionID string, agentName string, message Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store[sessionID] = append(s.store[sessionID], message)
 
-	// Update last activity timestamp in metadata
+	// Update or create metadata with agent name binding
 	if meta, ok := s.metas[sessionID]; ok {
 		meta.lastActivityAt = time.Now()
+		if meta.role == "" && agentName != "" {
+			meta.role = agentName
+		}
 	} else {
 		s.metas[sessionID] = &sessionMeta{
+			role:           agentName,
 			lastActivityAt: time.Now(),
 			createdAt:      time.Now(),
 		}
@@ -73,16 +77,31 @@ func (s *MemorySessionStore) Get(_ context.Context, sessionID string) ([]Message
 	return out, nil
 }
 
-func (s *MemorySessionStore) CurrentContext(_ context.Context, sessionID string, maxTokens int64) ([]Message, error) {
+func (s *MemorySessionStore) CurrentContext(_ context.Context, agentName string, maxTokens int64) ([]Message, error) {
+	// Find the most recent sessionID for this agent
 	s.mu.RLock()
-	msgs := make([]Message, len(s.store[sessionID]))
-	copy(msgs, s.store[sessionID])
+	var targetSession string
+	var bestTime time.Time
+	for sid, meta := range s.metas {
+		if meta.role == agentName && meta.lastActivityAt.After(bestTime) {
+			targetSession = sid
+			bestTime = meta.lastActivityAt
+		}
+	}
+	if targetSession == "" {
+		s.mu.RUnlock()
+		return nil, nil
+	}
+
+	msgs := make([]Message, len(s.store[targetSession]))
+	copy(msgs, s.store[targetSession])
 	s.mu.RUnlock()
 
 	if len(msgs) == 0 {
 		return nil, nil
 	}
 
+	// Sliding-window: select from newest to oldest within token budget
 	var selected []Message
 	var usedTokens int64
 	for i := len(msgs) - 1; i >= 0; i-- {
@@ -145,16 +164,16 @@ func (s *MemorySessionStore) RegisterRole(sessionID, role string) {
 	}
 }
 
-// GetByRole returns the most recent SessionInfo for the given role.
-// Returns ErrSessionNotFound if no session exists for that role.
-func (s *MemorySessionStore) GetByRole(_ context.Context, role string) (*SessionInfo, error) {
+// GetByRole returns the most recent SessionInfo for the given agent name.
+// Returns ErrSessionNotFound if no session exists for that agent.
+func (s *MemorySessionStore) GetByRole(_ context.Context, agentName string) (*SessionInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var bestID string
 	var bestTime time.Time
 	for sid, meta := range s.metas {
-		if meta.role == role && meta.lastActivityAt.After(bestTime) {
+		if meta.role == agentName && meta.lastActivityAt.After(bestTime) {
 			bestID = sid
 			bestTime = meta.lastActivityAt
 		}
@@ -163,10 +182,13 @@ func (s *MemorySessionStore) GetByRole(_ context.Context, role string) (*Session
 		return nil, ErrSessionNotFound
 	}
 	meta := s.metas[bestID]
+	msgs := s.store[bestID]
+	out := make([]Message, len(msgs))
+	copy(out, msgs)
 	return &SessionInfo{
 		SessionID:      bestID,
-		Role:           meta.role,
-		MessageCount:   len(s.store[bestID]),
+		AgentName:      meta.role,
+		Messages:       out,
 		LastActivityAt: meta.lastActivityAt,
 		CreatedAt:      meta.createdAt,
 	}, nil
@@ -179,10 +201,13 @@ func (s *MemorySessionStore) ListSessions(_ context.Context) ([]SessionInfo, err
 
 	result := make([]SessionInfo, 0, len(s.metas))
 	for sid, meta := range s.metas {
+		msgs := s.store[sid]
+		out := make([]Message, len(msgs))
+		copy(out, msgs)
 		result = append(result, SessionInfo{
 			SessionID:      sid,
-			Role:           meta.role,
-			MessageCount:   len(s.store[sid]),
+			AgentName:      meta.role,
+			Messages:       out,
 			LastActivityAt: meta.lastActivityAt,
 			CreatedAt:      meta.createdAt,
 		})

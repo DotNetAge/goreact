@@ -10,7 +10,7 @@ import (
 // It contains the messages that were evicted, so consumers (e.g. RAG/Memory)
 // can semantically process them into long-term knowledge.
 type SlideEvent struct {
-	SessionID string   `json:"session_id"`
+	SessionID string    `json:"session_id"`
 	Slided    []Message `json:"slided"`
 	Remaining int       `json:"remaining"`
 	Timestamp int64     `json:"timestamp"`
@@ -23,8 +23,8 @@ type SlideHandler func(ctx context.Context, event SlideEvent)
 // SessionInfo holds metadata about a session, used by ListSessions and GetByRole.
 type SessionInfo struct {
 	SessionID      string    `json:"session_id"`
-	Role           string    `json:"role,omitempty"`
-	MessageCount   int       `json:"message_count"`
+	AgentName      string    `json:"agent_name,omitempty"`
+	Messages       []Message `json:"messages"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 	CreatedAt      time.Time `json:"created_at"`
 }
@@ -40,14 +40,14 @@ type SessionInfo struct {
 // It does NOT do semantic analysis — that is Memory/RAG's job.
 type SessionStore interface {
 	// Append adds a message to the end of the specified session's history.
-	Append(ctx context.Context, sessionID string, message Message) error
+	Append(ctx context.Context, sessionID string, agentName string, message Message) error
 
 	// Get returns all messages for the specified session (complete history).
 	Get(ctx context.Context, sessionID string) ([]Message, error)
 
 	// CurrentContext returns messages suitable for the current context window,
 	// selecting from newest to oldest until total tokens <= maxTokens.
-	CurrentContext(ctx context.Context, sessionID string, maxTokens int64) ([]Message, error)
+	CurrentContext(ctx context.Context, agentName string, maxTokens int64) ([]Message, error)
 
 	// Delete removes a message by timestamp from the specified session.
 	Delete(ctx context.Context, timestamp int64, sessionID string) error
@@ -65,7 +65,7 @@ type SessionStore interface {
 	// or ErrSessionNotFound if no session exists for that role.
 	// This is used by Agent.Switch() to resume the latest session for a role
 	// instead of creating a new one each time.
-	GetByRole(ctx context.Context, role string) (*SessionInfo, error)
+	GetByRole(ctx context.Context, agent string) (*SessionInfo, error)
 
 	// ListSessions returns metadata for all sessions, sorted by LastActivityAt descending (newest first).
 	ListSessions(ctx context.Context) ([]SessionInfo, error)

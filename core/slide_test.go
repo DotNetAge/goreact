@@ -246,9 +246,9 @@ func TestMemorySessionStore_AppendAndGet(t *testing.T) {
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 
-	store.Append(ctx, "s1", Message{Role: "user", Content: "hello", Timestamp: 1})
-	store.Append(ctx, "s1", Message{Role: "assistant", Content: "hi there", Timestamp: 2})
-	store.Append(ctx, "s2", Message{Role: "user", Content: "other session", Timestamp: 3})
+	store.Append(ctx, "s1", "test-agent", Message{Role: "user", Content: "hello", Timestamp: 1})
+	store.Append(ctx, "s1", "test-agent", Message{Role: "assistant", Content: "hi there", Timestamp: 2})
+	store.Append(ctx, "s2", "other-agent", Message{Role: "user", Content: "other session", Timestamp: 3})
 
 	msgs, err := store.Get(ctx, "s1")
 	if err != nil {
@@ -272,14 +272,14 @@ func TestMemorySessionStore_CurrentContext_TokenBudget(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 10; i++ {
-		store.Append(ctx, "s1", Message{
+		store.Append(ctx, "s1", "budget-agent", Message{
 			Role:      "user",
 			Content:   makeString(500),
 			Timestamp: int64(i),
 		})
 	}
 
-	msgs, err := store.CurrentContext(ctx, "s1", 800)
+	msgs, err := store.CurrentContext(ctx, "budget-agent", 800)
 	if err != nil {
 		t.Fatalf("CurrentContext error: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestMemorySessionStore_Clear(t *testing.T) {
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 
-	store.Append(ctx, "s1", Message{Role: "user", Content: "data", Timestamp: 1})
+	store.Append(ctx, "s1", "clear-agent", Message{Role: "user", Content: "data", Timestamp: 1})
 	if err := store.Clear(ctx, "s1"); err != nil {
 		t.Fatalf("Clear error: %v", err)
 	}
@@ -328,9 +328,9 @@ func TestMemorySessionStore_Delete(t *testing.T) {
 	store := NewMemorySessionStore()
 	ctx := context.Background()
 
-	store.Append(ctx, "s1", Message{Role: "user", Content: "keep", Timestamp: 2})
-	store.Append(ctx, "s1", Message{Role: "assistant", Content: "remove", Timestamp: 5})
-	store.Append(ctx, "s1", Message{Role: "user", Content: "also keep", Timestamp: 9})
+	store.Append(ctx, "s1", "delete-agent", Message{Role: "user", Content: "keep", Timestamp: 2})
+	store.Append(ctx, "s1", "delete-agent", Message{Role: "assistant", Content: "remove", Timestamp: 5})
+	store.Append(ctx, "s1", "delete-agent", Message{Role: "user", Content: "also keep", Timestamp: 9})
 
 	if err := store.Delete(ctx, 5, "s1"); err != nil {
 		t.Fatalf("Delete error: %v", err)
@@ -399,7 +399,7 @@ func TestMemorySessionStore_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for i := 0; i < appendsPerGoroutine; i++ {
-				store.Append(ctx, "concurrent", Message{
+				store.Append(ctx, "concurrent", "concurrent-agent", Message{
 					Role:      "user",
 					Content:   makeString(10),
 					Timestamp: int64(id*appendsPerGoroutine + i),
@@ -461,7 +461,7 @@ func TestIntegration_SlidingWindow_Lifecycle(t *testing.T) {
 			content := makeString(msgSize)
 			msg := Message{Role: "user", Content: content, Timestamp: time.Now().Unix()}
 			cw.AddMessageWithTimestamp("user", content, msg.Timestamp)
-			store.Append(ctx, cw.SessionID, msg)
+			store.Append(ctx, cw.SessionID, "integration-agent", msg)
 		}
 		cw.AddTokens(int64(count * msgSize))
 	}
@@ -540,7 +540,7 @@ func TestIntegration_MultipleSlides(t *testing.T) {
 			content := makeString(15)
 			ts := time.Now().Unix()
 			cw.AddMessageWithTimestamp("user", content, ts)
-			store.Append(ctx, cw.SessionID, Message{Role: "user", Content: content, Timestamp: ts})
+			store.Append(ctx, cw.SessionID, "multi-slide-agent", Message{Role: "user", Content: content, Timestamp: ts})
 		}
 		cw.AddTokens(90)
 		cw.Slide(config, estimateFixedTokens)

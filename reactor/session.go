@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/DotNetAge/goreact/core"
+	"github.com/google/uuid"
 )
 
 // ensureContextWindow returns the active ContextWindow, creating one lazily if needed.
@@ -16,21 +17,32 @@ func (r *Reactor) ensureContextWindow(sessionID string) *core.ContextWindow {
 }
 
 // persistMessage writes a message to both ContextWindow and SessionStore.
-// This is called for every user/assistant message to maintain the sliding window.
-// Also accounts for the message's token cost in ContextWindow.
+//
+// This is called during T-A-O loop execution for each intermediate assistant message
+// (e.g., step summaries). It is distinct from Agent-layer persistMessage which handles
+// user questions and final answers at session lifecycle boundaries.
+//
+// Both layers coexist because:
+//   - Agent layer: owns session identity, manages user input / final output persistence
+//   - Reactor layer: owns execution-loop intermediate step persistence and sliding
 func (r *Reactor) persistMessage(ctx context.Context, role, content string) {
 	if r.sessionStore == nil {
 		return
 	}
 
-	sessionID := "default"
+	sessionID := uuid.NewString()
 	if r.contextWindow != nil {
 		sessionID = r.contextWindow.SessionID
 	}
 	cw := r.ensureContextWindow(sessionID)
 	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
 	cw.AddMessageWithTimestamp(role, content, msg.Timestamp)
-	r.sessionStore.Append(ctx, cw.SessionID, msg)
+
+	agentName := ""
+	if r.contextWindow != nil {
+		agentName = r.contextWindow.Role
+	}
+	r.sessionStore.Append(ctx, cw.SessionID, agentName, msg)
 
 	tokens := int64(r.tokenEstimator.Estimate(content))
 	if tokens > 0 {

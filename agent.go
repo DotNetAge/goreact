@@ -674,14 +674,16 @@ func drainEvents(ch <-chan core.ReactEvent) {
 const historyTokenBudgetRatio = 0.7
 
 // buildHistory rebuilds the complete ConversationHistory for a session from
-// the SessionStore. This is called BEFORE each Reactor.Run so the executor
-// receives a fully assembled context window.
+// the SessionStore. It uses CurrentContext(agentName) which looks up the most
+// recent session for this agent and returns messages within token budget.
+// This is called BEFORE each Reactor.Run so the executor receives a fully
+// assembled context window with real historical messages.
 func (a *Agent) buildHistory(ctx context.Context, sessionID string) []core.Message {
 	if a.sessionStore == nil || sessionID == "" {
 		return nil
 	}
 	maxTokensForHistory := int64(float64(a.model.MaxTokens) * historyTokenBudgetRatio)
-	msgs, err := a.sessionStore.CurrentContext(ctx, sessionID, maxTokensForHistory)
+	msgs, err := a.sessionStore.CurrentContext(ctx, a.Name(), maxTokensForHistory)
 	if err != nil || len(msgs) == 0 {
 		return nil
 	}
@@ -704,7 +706,7 @@ func (a *Agent) persistMessage(ctx context.Context, sessionID, role, content str
 
 	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
 	cw.AddMessageWithTimestamp(role, content, msg.Timestamp)
-	a.sessionStore.Append(ctx, sessionID, msg)
+	a.sessionStore.Append(ctx, sessionID, a.Name(), msg)
 }
 
 // checkSlide triggers context window sliding if the token budget is exceeded.
