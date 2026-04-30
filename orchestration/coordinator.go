@@ -587,6 +587,22 @@ func (c *Coordinator) retryTask(taskID string, lastErr error) {
 		taskDesc = c.ParentTaskDescription // Fallback to parent description
 	}
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Error("coordinator: retry task goroutine panic",
+					"task_id", taskID,
+					"panic", r,
+				)
+				c.OnResult(&TaskResultEvent{
+					TaskID:        taskID,
+					TargetAgentID: "",
+					Result:        "",
+					Error:         fmt.Errorf("retry goroutine panic: %v", r),
+					Duration:      0,
+					Timestamp:     time.Now(),
+				})
+			}
+		}()
 		time.Sleep(delay)
 		_, err := c.Orchestrator.RouteTask(
 			taskCtx,
@@ -687,17 +703,17 @@ func (c *Coordinator) computeObjectiveScore(entry *TaskEntry) int {
 	score := ScorePartial // Base: task completed but minimal output
 
 	// Check 1: Substantial output content (Design §8.3 objective metric)
-	if len(entry.Result) > 100 {
+	if len(entry.Result) > ScoreSubstantialOutputThreshold {
 		score = ScoreSuccess
 	}
-	if len(entry.Result) > 500 {
+	if len(entry.Result) > ScoreRichOutputThreshold {
 		score = ScorePerfect
 	}
 
 	// Check 2: Timeliness — penalty for significantly over expected duration
 	if !entry.ActualStart.IsZero() {
 		elapsed := time.Since(entry.ActualStart)
-		if elapsed > entry.ExpectedDur*2 {
+		if elapsed > entry.ExpectedDur*OvertimePenaltyMultiplier {
 			score-- // Overran 2x expected
 			if score < ScoreFailed {
 				score = ScoreFailed
@@ -1042,45 +1058,65 @@ func estimateDuration(st TaskDecomposition) time.Duration {
 }
 
 // ===========================================================================
-// CoordinatorPool — manages active Coordinator instances
+// CoordinatorPool — manages active Coordinator instances (instance methods)
 // ===========================================================================
 
-var (
-	coordinatorsMu sync.RWMutex
-	coordinators   = make(map[string]*Coordinator) // parentTaskID → Coordinator
-	coordCounter   uint64
-)
+// registerCoordinator registers a Coordinator for a parent task ID.
+func (o *ChannelOrchestrator) registerCoordinator(coord *Coordinator) error {
+	o.coordinatorsMu.Lock()
+	defer o.coordinatorsMu.Unlock()
 
-// RegisterCoordinator registers a Coordinator for a parent task ID.
-// If a Coordinator already exists for the given parentTaskID, it returns an error.
-func RegisterCoordinator(coord *Coordinator) error {
-	coordinatorsMu.Lock()
-	defer coordinatorsMu.Unlock()
-
-	if _, exists := coordinators[coord.ParentTaskID]; exists {
+	if _, exists := o.coordinators[coord.ParentTaskID]; exists {
 		return fmt.Errorf("coordinator already exists for parent task %q", coord.ParentTaskID)
 	}
-	coordinators[coord.ParentTaskID] = coord
+	o.coordinators[coord.ParentTaskID] = coord
+	return nil
+}
+
+// getCoordinator retrieves the active Coordinator for a parent task ID.
+func (o *ChannelOrchestrator) getCoordinator(parentTaskID string) *Coordinator {
+	o.coordinatorsMu.RLock()
+	defer o.coordinatorsMu.RUnlock()
+	return o.coordinators[parentTaskID]
+}
+
+// unregisterCoordinator removes a completed/cancelled Coordinator from the pool.
+func (o *ChannelOrchestrator) unregisterCoordinator(parentTaskID string) {
+	o.coordinatorsMu.Lock()
+	defer o.coordinatorsMu.Unlock()
+	delete(o.coordinators, parentTaskID)
+}
+
+// activeCoordinators returns the number of currently active Coordinators.
+func (o *ChannelOrchestrator) activeCoordinators() int {
+	o.coordinatorsMu.RLock()
+	defer o.coordinatorsMu.RUnlock()
+	return len(o.coordinators)
+}
+
+// ===========================================================================
+// Deprecated: Global CoordinatorPool functions (use ChannelOrchestrator methods instead)
+// ===========================================================================
+
+// RegisterCoordinator registers a Coordinator for a parent task ID.
+// Deprecated: Use ChannelOrchestrator.registerCoordinator instead.
+func RegisterCoordinator(coord *Coordinator) error {
 	return nil
 }
 
 // GetCoordinator retrieves the active Coordinator for a parent task ID.
+// Deprecated: Use ChannelOrchestrator.getCoordinator instead.
 func GetCoordinator(parentTaskID string) *Coordinator {
-	coordinatorsMu.RLock()
-	defer coordinatorsMu.RUnlock()
-	return coordinators[parentTaskID]
+	return nil
 }
 
 // UnregisterCoordinator removes a completed/cancelled Coordinator from the pool.
+// Deprecated: Use ChannelOrchestrator.unregisterCoordinator instead.
 func UnregisterCoordinator(parentTaskID string) {
-	coordinatorsMu.Lock()
-	defer coordinatorsMu.Unlock()
-	delete(coordinators, parentTaskID)
 }
 
 // ActiveCoordinators returns the number of currently active Coordinators.
+// Deprecated: Use ChannelOrchestrator.activeCoordinators instead.
 func ActiveCoordinators() int {
-	coordinatorsMu.RLock()
-	defer coordinatorsMu.RUnlock()
-	return len(coordinators)
+	return 0
 }

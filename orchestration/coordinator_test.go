@@ -492,15 +492,18 @@ func TestCoordinator_Status(t *testing.T) {
 // --- Coordinator Pool Tests ---
 
 func TestCoordinatorPool_RegisterAndGet(t *testing.T) {
-	c := newTestCoordinator(t)
-	c.ParentTaskID = "pool-test-1"
-
-	err := RegisterCoordinator(c)
+	orch, err := New(WithMaxConcurrent(10), WithSpawnFunction(mockSpawnFunc))
 	if err != nil {
-		t.Fatalf("RegisterCoordinator failed: %v", err)
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	c := NewCoordinator("pool-test", "pool-test-1", orch)
+
+	err = orch.registerCoordinator(c)
+	if err != nil {
+		t.Fatalf("registerCoordinator failed: %v", err)
 	}
 
-	got := GetCoordinator("pool-test-1")
+	got := orch.getCoordinator("pool-test-1")
 	if got == nil {
 		t.Fatal("expected to find registered coordinator")
 	}
@@ -509,13 +512,13 @@ func TestCoordinatorPool_RegisterAndGet(t *testing.T) {
 	}
 
 	// Duplicate registration should fail
-	err = RegisterCoordinator(NewCoordinator("other", "pool-test-1", c.Orchestrator))
+	err = orch.registerCoordinator(NewCoordinator("other", "pool-test-1", orch))
 	if err == nil {
 		t.Error("expected error for duplicate registration")
 	}
 
-	UnregisterCoordinator("pool-test-1")
-	if GetCoordinator("pool-test-1") != nil {
+	orch.unregisterCoordinator("pool-test-1")
+	if orch.getCoordinator("pool-test-1") != nil {
 		t.Error("expected coordinator to be unregistered")
 	}
 }

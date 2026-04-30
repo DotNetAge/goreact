@@ -69,7 +69,18 @@ type RouteRequest struct {
 	SourceAgentID     string // Requesting agent ID (for logging/tracing)
 }
 
+// ===========================================================================
+// Router Interface — abstracts LLM-based routing for dependency inversion
+// ===========================================================================
+
+// Router is the interface that LLM-based task routing must implement.
+type Router interface {
+	// Route selects the best agent for a task from the given candidates.
+	Route(ctx context.Context, req RouteRequest, agents []*core.AgentRuntimeMeta) (*RoutingDecision, error)
+}
+
 // LLMRouter is the intelligent routing engine instance of the orchestrator.
+// It implements the Router interface.
 type LLMRouter struct {
 	mu       sync.RWMutex
 	client   gochat.ClientBuilder // LLM client builder for making calls

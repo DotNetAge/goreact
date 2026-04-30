@@ -23,6 +23,19 @@ const (
 	// ScoreFailed is for failed execution (0/3)
 	ScoreFailed = 0
 
+	// ObjectiveScoreWeight is the weight for objective criteria in hybrid scoring (P1-1).
+	ObjectiveScoreWeight = 0.7
+	// LLMScoreWeight is the weight for LLM subjective criteria in hybrid scoring.
+	LLMScoreWeight = 0.3
+
+	// ScoreSubstantialOutputThreshold is the minimum output length for ScoreSuccess (Design §8.3).
+	ScoreSubstantialOutputThreshold = 100
+	// ScoreRichOutputThreshold is the minimum output length for ScorePerfect.
+	ScoreRichOutputThreshold = 500
+
+	// OvertimePenaltyMultiplier penalizes tasks that exceed expected duration by this factor.
+	OvertimePenaltyMultiplier = 2.0
+
 	// DefaultEpsilon is the exploration probability for epsilon-greedy selection.
 	// At cold start, agents are randomly selected with this probability.
 	// Design §8.4 recommends 0.3 initial, decaying to 0.05.

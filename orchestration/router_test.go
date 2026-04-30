@@ -360,7 +360,11 @@ func TestChannelOrchestrator_RouteTask_FallbackRouting(t *testing.T) {
 	}
 
 	// Also verify rankAgents multi-factor sorting (Design §8.5)
-	ranked := orch.router.rankAgents(candidates, "write technical API docs")
+	llmRouter, ok := orch.router.(*LLMRouter)
+	if !ok {
+		t.Fatalf("expected router to be *LLMRouter, got %T", orch.router)
+	}
+	ranked := llmRouter.rankAgents(candidates, "write technical API docs")
 	if len(ranked) < 2 {
 		t.Fatalf("rankAgents returned %d results, expected >=2", len(ranked))
 	}

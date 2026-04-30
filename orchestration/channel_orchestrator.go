@@ -34,7 +34,7 @@ type ChannelOrchestrator struct {
 	config         OrchestratorConfig // P2-1: centralized config for external exposure
 
 	// === Intelligent Routing Components (Design §6 / §8 / §12) ===
-	router       *LLMRouter    // 智能路由引擎 (nil = 降级为关键词匹配)
+	router       Router        // 智能路由引擎 (nil = 降级为关键词匹配)
 	factory      *AgentFactory // 动态 Agent 创建工厂 (nil = 不支持动态创建)
 	scoreTracker *ScoreTracker // 绩效追踪器 (nil = 不记录绩效)
 
@@ -75,6 +75,10 @@ type ChannelOrchestrator struct {
 	// === P1-4: Idle agent cleanup ===
 	idleCleanupConfig IdleCleanupConfig
 	idleCleanupTicker *time.Ticker
+
+	// === CoordinatorPool — manages active Coordinator instances ===
+	coordinators   map[string]*Coordinator
+	coordinatorsMu sync.RWMutex
 }
 
 // New creates a new ChannelOrchestrator with the given options.
@@ -106,6 +110,7 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 		logger:            slog.Default(),
 		heartbeats:        make(map[string]time.Time),
 		idleCleanupConfig: IdleCleanupConfig{},
+		coordinators:      make(map[string]*Coordinator),
 	}
 
 	// Resolve default model if provided via WithDefaultModel
@@ -147,8 +152,10 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 
 	// If Router exists but no Factory, create a default Factory backed by the AgentRegistry.
 	if o.router != nil && o.factory == nil {
+		// router is always *LLMRouter at this point
+		llmRouter, _ := o.router.(*LLMRouter)
 		var adapter goreactRegistryAdapter = &registryAdapterImpl{reg: o.registry}
-		o.factory = NewAgentFactory(o.router, &adapter)
+		o.factory = NewAgentFactory(llmRouter, &adapter)
 	}
 
 	// Always create a ScoreTracker if none provided

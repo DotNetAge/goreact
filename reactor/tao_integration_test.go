@@ -64,22 +64,32 @@ func newRealReactor(t *testing.T) (*Reactor, *taoEventTracer) {
 type taoEventTracer struct {
 	bus    *InProcessEventBus
 	events []core.ReactEvent
+	done   chan struct{} // signals that event collection goroutine has exited
 }
 
 func newTaoEventTracer() *taoEventTracer {
 	bus := NewEventBus()
 	ch, cancel := bus.Subscribe()
-	tracer := &taoEventTracer{bus: bus}
+	tracer := &taoEventTracer{bus: bus, done: make(chan struct{})}
 	go func() {
+		defer close(tracer.done)
 		for e := range ch {
 			tracer.events = append(tracer.events, e)
 		}
-		cancel()
+		// Do NOT call cancel() here — it can deadlock with bus.Close()
+		// because Close() holds mu.Lock while closing channels, and
+		// cancel() also needs mu.Lock. The range loop exits when ch is
+		// closed by Close(), so calling cancel() here would try to
+		// re-acquire the lock that Close() is still holding.
+		_ = cancel
 	}()
 	return tracer
 }
 
-func (tr *taoEventTracer) close() { tr.bus.Close() }
+func (tr *taoEventTracer) close() {
+	tr.bus.Close()
+	<-tr.done // wait for event collection goroutine to finish
+}
 
 func (tr *taoEventTracer) logAll(t *testing.T, tag string) {
 	t.Helper()
@@ -368,7 +378,6 @@ func TestTAO_ClarificationIntent_RealLLM(t *testing.T) {
 // Verifies: conversation history flows into prompts correctly
 
 func TestTAO_FollowUpIntent_RealLLM(t *testing.T) {
-	// TODO: 这个测试总是超时，我怀疑 defer有死锁！
 	r, tracer := newRealReactor(t)
 	defer tracer.close()
 

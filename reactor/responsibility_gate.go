@@ -426,19 +426,22 @@ func (r *Reactor) waitForSubTaskResult(ctx *ReactContext, subTaskID, orchTaskID 
 		return
 	}
 
+	// Compute duration from task lifecycle timestamps
+	duration := computeTaskDuration(result)
+
 	// Update progress table with success
 	holder := &TaskResultHolder{
 		Content:  result.Output,
-		Duration: 0, // TODO: extract from result if available
+		Duration: duration,
 		Score:    2, // Default score (will be re-evaluated in Observe)
 	}
 	cs.TaskProgress.UpdateStatus(subTaskID, TaskSucceeded, WithResult(holder), WithTimestamps())
 
 	// Store raw result
 	cs.SubTaskResults[subTaskID] = &core.TaskResultEvent{
-		TaskID:   subTaskID,
-		Result:   result.Output,
-		Duration: 0,
+		TaskID:    subTaskID,
+		Result:    result.Output,
+		Duration:  duration,
 		Timestamp: time.Now(),
 	}
 
@@ -559,6 +562,18 @@ func (r *Reactor) callLLMForGate(ctx *ReactContext, systemPrompt string) (string
 
 // ptrTime returns a pointer to t.
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// computeTaskDuration computes the elapsed time from task CreatedAt to UpdatedAt.
+// Falls back to 0 if timestamps are not available.
+func computeTaskDuration(task *core.Task) time.Duration {
+	if task == nil {
+		return 0
+	}
+	if task.UpdatedAt.IsZero() || task.CreatedAt.IsZero() {
+		return 0
+	}
+	return task.UpdatedAt.Sub(task.CreatedAt)
+}
 
 // ===========================================================================
 // executeResponsibilityGate — Orchestrates the 4-step gate (Design §5)

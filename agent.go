@@ -513,6 +513,10 @@ func (a *Agent) SessionID() string {
 //	result, err := agent.Ask("", "What is AI?")
 //	// Or target a specific session:
 //	result, err := agent.Ask("session-abc", "Continue our discussion about AI")
+//
+// WARNING: This method uses context.TODO() which has NO timeout or cancellation.
+// For production use, prefer AskWithContext with a proper context.Context
+// that includes a timeout deadline to prevent indefinite blocking.
 func (a *Agent) Ask(sessionID string, question string) (*Result, error) {
 	return a.AskWithContext(context.TODO(), sessionID, question)
 }
@@ -580,6 +584,9 @@ func (a *Agent) AskWithContext(ctx context.Context, sessionID string, question s
 
 // AskStream sends a question and returns a channel that streams text fragments
 // as they are produced by the reactor. See Ask for session semantics.
+//
+// WARNING: This method uses context.TODO() which has NO timeout or cancellation.
+// For production use, prefer AskStreamWithContext with a proper context.Context.
 func (a *Agent) AskStream(sessionID string, question string) (<-chan string, func(), error) {
 	return a.AskStreamWithContext(context.TODO(), sessionID, question)
 }

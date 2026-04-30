@@ -39,7 +39,7 @@ const (
 // AgentFactory is responsible for creating Agent instances on demand.
 type AgentFactory struct {
 	mu       sync.RWMutex
-	router   *LLMRouter            // Reuses Router's LLM capability for generating Description/Body
+	router   *LLMRouter              // Reuses Router's LLM capability for generating Description/Body
 	registry *goreactRegistryAdapter // Registers newly created agents
 
 	maxAutoCreated int // Upper limit on auto-created agent count
