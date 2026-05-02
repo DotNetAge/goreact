@@ -1,0 +1,113 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+
+	"github.com/DotNetAge/goreact/core"
+)
+
+// SpawnFunc creates and runs a sub-agent for a delegated task.
+// Returns the sub-agent's result and any error.
+type SpawnFunc func(ctx context.Context, agentName, task string) (string, error)
+
+// DelegateTool lets the LLM delegate tasks to sub-agents.
+// It is async (IsAsync=true) — returns {task_id, status: "running"} immediately.
+// Results are stored in the ToolContext's ResultStore and retrieved via collect_results.
+type DelegateTool struct {
+	spawn     SpawnFunc
+	counter   atomic.Int64
+}
+
+// NewDelegateTool creates a DelegateTool.
+// spawn is provided by the reactor to avoid circular imports.
+func NewDelegateTool(spawn SpawnFunc) *DelegateTool {
+	return &DelegateTool{spawn: spawn}
+}
+
+func (t *DelegateTool) Info() *core.ToolInfo {
+	return &core.ToolInfo{
+		Name:        "Delegate",
+		Description: "Delegate a task to a sub-agent. Returns immediately with a task_id. Use CollectResults to retrieve the result later.",
+		Prompt: `Dispatch a task to another agent. Use this for two scenarios:
+
+1. **Expertise handoff** — the task falls outside your role, and a specialist agent is better suited.
+2. **Parallelization** — the workload is large and can be split into independent sub-tasks that run concurrently to save time.
+
+Returns {task_id, status: "running"} immediately. The actual result must be collected later using the CollectResults tool.
+
+When to delegate:
+- The task is outside your defined area of expertise — do your own work first.
+- You have identified a specialist agent via FindAgent whose role matches the task.
+- The user explicitly asks for another agent to handle the task.
+- The task has many independent parts — spawn multiple agents in parallel to finish faster.
+
+Usage:
+- Name the sub-agent based on its role (e.g., "code_reviewer", "data_analyst") or reuse your own role for parallel workers.
+- The task description should be clear and self-contained.
+- Multiple delegates called in the same Act phase run in parallel.
+- For sequential sub-tasks, call delegate one per round, waiting for CollectResults between rounds.
+
+Don't race: After launching a delegate, you know nothing about what the sub-agent found until you call CollectResults.`,
+		Tags:    []string{"orchestration", "delegate", "sub-agent"},
+		IsAsync: true,
+		Parameters: []core.Parameter{
+			{Name: "agent_name", Type: "string", Description: "Name of the sub-agent to delegate to.", Required: true},
+			{Name: "task", Type: "string", Description: "Task description for the sub-agent.", Required: true},
+		},
+	}
+}
+
+func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any, error) {
+	agentName, _ := params["agent_name"].(string)
+	if agentName == "" {
+		return nil, fmt.Errorf("agent_name is required")
+	}
+	task, _ := params["task"].(string)
+	if task == "" {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	tc := core.GetToolContext(ctx)
+	if tc == nil || tc.EmitEvent == nil {
+		return nil, fmt.Errorf("delegate tool requires ToolContext with EventBus")
+	}
+	if t.spawn == nil {
+		return nil, fmt.Errorf("delegate tool: SpawnFunc not configured")
+	}
+
+	taskID := fmt.Sprintf("task-%s-%d", agentName, t.counter.Add(1))
+
+	// Emit event notification
+	tc.EmitEvent(core.ReactEvent{
+		AgentID: "main",
+		Type:    core.SubtaskSpawned,
+		Data:    map[string]any{"task_id": taskID, "agent_name": agentName, "task": task},
+	})
+
+	// Run sub-agent in background
+	go func() {
+		result, err := t.spawn(ctx, agentName, task)
+		var taskResult *core.TaskResult
+		if err != nil {
+			taskResult = &core.TaskResult{TaskID: taskID, Error: err.Error(), Done: true}
+		} else {
+			taskResult = &core.TaskResult{TaskID: taskID, Result: result, Done: true}
+		}
+		if tc.ResultStore != nil {
+			tc.ResultStore.Store(taskID, taskResult)
+		}
+		tc.EmitEvent(core.ReactEvent{
+			AgentID: agentName,
+			Type:    core.SubtaskCompleted,
+			Data:    map[string]any{"task_id": taskID, "success": err == nil},
+		})
+	}()
+
+	return map[string]any{
+		"task_id":    taskID,
+		"status":     "running",
+		"agent_name": agentName,
+	}, nil
+}

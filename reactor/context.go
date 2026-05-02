@@ -51,7 +51,6 @@ type ReactContext struct {
 	// Input
 	Input string
 	ConversationHistory
-	Intent *Intent
 
 	// Last cycle results
 	LastThought     *Thought

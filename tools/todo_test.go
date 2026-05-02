@@ -15,8 +15,8 @@ func resetTodoStore() {
 func TestTodoWriteTool_Info(t *testing.T) {
 	tool := NewTodoWriteTool()
 	info := tool.Info()
-	if info.Name != "todo_write" {
-		t.Errorf("Name = %q, want %q", info.Name, "todo_write")
+	if info.Name != "TodoWrite" {
+		t.Errorf("Name = %q, want %q", info.Name, "TodoWrite")
 	}
 	if len(info.Parameters) < 2 {
 		t.Errorf("expected at least 2 parameters, got %d", len(info.Parameters))
@@ -91,8 +91,8 @@ func TestTodoWriteTool_Execute_InvalidJSON(t *testing.T) {
 func TestTodoReadTool_Info(t *testing.T) {
 	tool := NewTodoReadTool()
 	info := tool.Info()
-	if info.Name != "todo_read" {
-		t.Errorf("Name = %q, want %q", info.Name, "todo_read")
+	if info.Name != "TodoRead" {
+		t.Errorf("Name = %q, want %q", info.Name, "TodoRead")
 	}
 }
 
@@ -151,8 +151,8 @@ func TestTodoReadTool_Execute_EmptyStore(t *testing.T) {
 func TestTodoExecuteTool_Info(t *testing.T) {
 	tool := NewTodoExecuteTool()
 	info := tool.Info()
-	if info.Name != "todo_execute" {
-		t.Errorf("Name = %q, want %q", info.Name, "todo_execute")
+	if info.Name != "TodoExecute" {
+		t.Errorf("Name = %q, want %q", info.Name, "TodoExecute")
 	}
 }
 

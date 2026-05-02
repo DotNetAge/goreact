@@ -10,19 +10,42 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// LS 列出目录内容工具
+// LS lists directory contents with metadata (size, type, permissions, modification time).
 type LS struct {
 	info *core.ToolInfo
 }
 
-// NewLsTool 创建 LS 工具
+// NewLsTool creates an Ls tool.
 func NewLsTool() core.FuncTool {
 	return &LS{
 		info: &core.ToolInfo{
-			Name:          "ls",
-			Description:   "列出目录内容。支持树形结构、过滤、详细信息。Params: {path?: '目录路径', recursive?: false, show_hidden?: false}",
+			Name:        "Ls",
+			Description: "List directory contents with file metadata — size, type, permissions, modification time. Supports recursive tree view and hidden files.",
+			Prompt: `List the contents of a directory to browse the filesystem structure. Use this when you need to see what files exist in a directory, check file sizes, or explore the project layout before reading or editing files.
+
+## Operations
+
+### Basic listing — See files in a directory
+Call with no parameters to list the current directory. Each entry includes: name, type (file/directory), size in bytes, modification time, and Unix permissions.
+
+### Recursive tree view
+Set recursive=true to show the full directory tree two levels deep. Sub-directories expand with their own children listed under them.
+
+### Show hidden files
+Set show_hidden=true to include dot-files (.gitignore, .env, .config, etc.). Hidden files are excluded by default.
+
+## When to use this vs other tools
+- Use Ls to explore what's in a directory before reading files.
+- Use Glob to search for files matching a pattern across the whole project.
+- Use Read to read a specific file's content.
+- When exploring an unfamiliar codebase, start with Ls on the root directory to understand the project structure.`,
 			Tags:         []string{"file", "filesystem", "list", "directory"},
 			SecurityLevel: core.LevelSafe,
+			Parameters: []core.Parameter{
+				{Name: "path", Type: "string", Description: "Directory path to list. Defaults to current directory ('.').", Required: false},
+				{Name: "recursive", Type: "boolean", Description: "If true, recursively list sub-directories (2 levels deep). Default: false.", Required: false},
+				{Name: "show_hidden", Type: "boolean", Description: "If true, include dot-files and hidden directories. Default: false.", Required: false},
+			},
 		},
 	}
 }

@@ -53,17 +53,9 @@ const (
 	// CycleEnd signals one complete T-A-O cycle has ended.
 	CycleEnd ReactEventType = "cycle_end"
 
-	// ExperienceSaved signals that a successful task execution was saved
-	// as experience memory for future reuse.
-	ExperienceSaved ReactEventType = "experience_saved"
-
 	// TaskSummary signals a natural-language summary of the completed task.
 	// This is emitted after the T-A-O loop finishes for non-trivial tasks.
 	TaskSummary ReactEventType = "task_summary"
-
-	// AgentSwitched signals that an Agent has switched its identity (config/model)
-	// via Agent.Switch(). The Data field contains name, model, and description.
-	AgentSwitched ReactEventType = "agent_switched"
 )
 
 // ReactEvent is the unit of data published by the Reactor's event bus.
@@ -71,6 +63,10 @@ const (
 type ReactEvent struct {
 	// SessionID identifies the conversation session.
 	SessionID string `json:"session_id"`
+
+	// AgentID identifies the source agent: "main" for the primary agent,
+	// or the subagent name for delegated tasks.
+	AgentID string `json:"agent_id,omitempty"`
 
 	// TaskID identifies the source task: "main" for the primary reactor,
 	// "task_1", "task_2", etc. for subagent tasks.
@@ -158,15 +154,6 @@ type ExecutionSummaryData struct {
 	TotalDuration   time.Duration  `json:"total_duration_ms"`
 	TokensUsed      int            `json:"tokens_used"`
 	TerminationReason string       `json:"termination_reason,omitempty"`
-}
-
-// ExperienceSavedData is the payload for ExperienceSaved events.
-// It is emitted when a successful task execution is saved to Memory
-// as an experience record (MemoryTypeExperience) for future reuse.
-type ExperienceSavedData struct {
-	Problem    string   `json:"problem"`     // The original user input / problem description
-	Iterations int      `json:"iterations"`  // Number of T-A-O cycles
-	ToolsUsed  []string `json:"tools_used"`  // Unique tools called during execution
 }
 
 // NewReactEvent creates a new ReactEvent with the current timestamp.

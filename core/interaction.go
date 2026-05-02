@@ -5,7 +5,7 @@ type InteractionType string
 
 const (
 	// InteractionAskUser indicates the agent needs to ask the user a clarifying question.
-	InteractionAskUser InteractionType = "ask_user"
+	InteractionAskUser InteractionType = "AskUser"
 
 	// InteractionAskPermission indicates the agent needs user authorization before
 	// executing a high-risk operation.

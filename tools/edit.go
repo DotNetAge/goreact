@@ -19,17 +19,18 @@ func NewFileEditTool() core.FuncTool {
 
 func (t *FileEditTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "file_edit",
-		Description: "A tool for editing files",
+		Name:        "FileEdit",
+		Description: "Edit files by replacing exact strings. Supports single, all, or limited-count replacements with staleness check.",
 		Prompt: `Performs exact string replacements in files.
 
 Usage:
 - You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.
-- Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`,
+- The edit will FAIL if old_string is not unique in the file. Use replace_all=true or set a limit to replace every occurrence of old_string.
+- Use replace_all=true to rename a variable or change a string everywhere in the file.
+- Use limit=N to replace the first N occurrences only (e.g. limit=2 replaces the first 2 matches).
+- Use last_read_time to prevent stale writes — pass the file's modification timestamp from your last Read result.`,
 		Tags:         []string{"file", "edit", "code", "replace", "modification"},
 		Parameters: []core.Parameter{
 			{
@@ -53,13 +54,19 @@ Usage:
 			{
 				Name:        "replace_all",
 				Type:        "boolean",
-				Description: "Whether to replace all occurrences.",
+				Description: "Replace all occurrences. Default: false (replaces first occurrence only).",
+				Required:    false,
+			},
+			{
+				Name:        "limit",
+				Type:        "number",
+				Description: "Replace at most N occurrences (overrides replace_all when set). -1 = all.",
 				Required:    false,
 			},
 			{
 				Name:        "last_read_time",
 				Type:        "string",
-				Description: "Optional: The timestamp of when the file was last read (to prevent stale writes).",
+				Description: "File modification timestamp from Read result. Prevents editing a stale version.",
 				Required:    false,
 			},
 		},
@@ -90,6 +97,12 @@ func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any,
 	replaceAll, _ := params["replace_all"].(bool)
 	lastReadTimeStr, _ := params["last_read_time"].(string)
 
+	// Parse optional limit (-1 = all, 0 = default, N = at most N occurrences)
+	var limit int
+	if l, ok := params["limit"].(float64); ok {
+		limit = int(l)
+	}
+
 	// Staleness check
 	if lastReadTimeStr != "" {
 		info, err := os.Stat(filePath)
@@ -112,9 +125,16 @@ func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any,
 	}
 
 	var updatedContent string
-	if replaceAll {
+	switch {
+	case limit < -1:
+		return nil, fmt.Errorf("limit must be -1 (all), 0 (default 1), or positive")
+	case limit == -1:
 		updatedContent = strings.ReplaceAll(fileContent, oldStr, newStr)
-	} else {
+	case limit > 0:
+		updatedContent = strings.Replace(fileContent, oldStr, newStr, limit)
+	case replaceAll:
+		updatedContent = strings.ReplaceAll(fileContent, oldStr, newStr)
+	default:
 		updatedContent = strings.Replace(fileContent, oldStr, newStr, 1)
 	}
 

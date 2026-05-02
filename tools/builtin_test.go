@@ -9,61 +9,6 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-func TestCalculator(t *testing.T) {
-	// 创建计算器工具
-	calculator := NewCalculatorTool()
-
-	// 测试加法
-	_, err := calculator.Execute(context.Background(), map[string]any{"operation": "add", "a": 10, "b": 5})
-	if err != nil {
-		t.Errorf("Expected no error for add, got %v", err)
-	}
-
-	// 测试减法
-	_, err = calculator.Execute(context.Background(), map[string]any{"operation": "subtract", "a": 10, "b": 5})
-	if err != nil {
-		t.Errorf("Expected no error for subtract, got %v", err)
-	}
-
-	// 测试乘法
-	_, err = calculator.Execute(context.Background(), map[string]any{"operation": "multiply", "a": 10, "b": 5})
-	if err != nil {
-		t.Errorf("Expected no error for multiply, got %v", err)
-	}
-
-	// 测试除法
-	_, err = calculator.Execute(context.Background(), map[string]any{"operation": "divide", "a": 10, "b": 5})
-	if err != nil {
-		t.Errorf("Expected no error for divide, got %v", err)
-	}
-
-	// 测试除法错误（除数为 0）
-	_, err = calculator.Execute(context.Background(), map[string]any{"operation": "divide", "a": 10, "b": 0})
-	if err == nil {
-		t.Error("Expected error for divide by zero")
-	}
-
-	// 测试未知操作
-	_, err = calculator.Execute(context.Background(), map[string]any{"operation": "unknown", "a": 10, "b": 5})
-	if err == nil {
-		t.Error("Expected error for unknown operation")
-	}
-}
-
-func TestEcho(t *testing.T) {
-	// 创建echo工具
-	echo := NewEchoTool()
-
-	// 测试echo
-	result, err := echo.Execute(context.Background(), map[string]any{"message": "Hello, World!"})
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
-	if result != "Echo: Hello, World!" {
-		t.Errorf("Expected echo result 'Echo: Hello, World!', got '%v'", result)
-	}
-}
-
 func TestGrep(t *testing.T) {
 	// 创建 Grep 工具
 	grep := NewGrepTool()
@@ -76,95 +21,6 @@ func TestGrep(t *testing.T) {
 	if result == nil {
 		t.Error("Expected non-nil result for grep")
 	}
-}
-
-func TestReplace(t *testing.T) {
-	// 创建 Replace 工具
-	replace := NewReplaceTool()
-
-	// 创建一个临时测试文件（使用当前目录以通过 ValidateFileSafety）
-	testFile := "test_replace.txt"
-	initialContent := "Hello World! Hello Go! Hello Testing!"
-	err := os.WriteFile(testFile, []byte(initialContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	defer os.Remove(testFile)
-
-	t.Run("replace all occurrences", func(t *testing.T) {
-		result, err := replace.Execute(context.Background(), map[string]any{
-			"path":    testFile,
-			"search":  "Hello",
-			"replace": "Hi",
-		})
-
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-
-		resultMap := result.(map[string]any)
-		if resultMap["success"] != true {
-			t.Error("Expected success to be true")
-		}
-		if int(resultMap["replacements"].(int)) != 3 {
-			t.Errorf("Expected 3 replacements, got %v", resultMap["replacements"])
-		}
-
-		// 验证文件内容
-		content, _ := os.ReadFile(testFile)
-		expected := "Hi World! Hi Go! Hi Testing!"
-		if string(content) != expected {
-			t.Errorf("Expected file content '%s', got '%s'", expected, string(content))
-		}
-	})
-
-	t.Run("replace with limit", func(t *testing.T) {
-		// 重置文件内容
-		os.WriteFile(testFile, []byte(initialContent), 0644)
-
-		result, err := replace.Execute(context.Background(), map[string]any{
-			"path":    testFile,
-			"search":  "Hello",
-			"replace": "Hi",
-			"limit":   2.0,
-		})
-
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-
-		resultMap := result.(map[string]any)
-		if int(resultMap["replacements"].(int)) != 2 {
-			t.Errorf("Expected 2 replacements, got %v", resultMap["replacements"])
-		}
-
-		// 验证文件内容 (只替换前 2 个)
-		content, _ := os.ReadFile(testFile)
-		expected := "Hi World! Hi Go! Hello Testing!"
-		if string(content) != expected {
-			t.Errorf("Expected file content '%s', got '%s'", expected, string(content))
-		}
-	})
-
-	t.Run("text not found", func(t *testing.T) {
-		result, err := replace.Execute(context.Background(), map[string]any{
-			"path":    testFile,
-			"search":  "NotFound",
-			"replace": "Something",
-		})
-
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-
-		resultMap := result.(map[string]any)
-		if resultMap["success"] != false {
-			t.Error("Expected success to be false when text not found")
-		}
-		if int(resultMap["replacements"].(int)) != 0 {
-			t.Errorf("Expected 0 replacements, got %v", resultMap["replacements"])
-		}
-	})
 }
 
 func TestBash(t *testing.T) {
@@ -204,7 +60,7 @@ func TestBash(t *testing.T) {
 
 	t.Run("Name and Description", func(t *testing.T) {
 		info := bash.Info()
-		if info.Name != "bash" {
+		if info.Name != "Bash" {
 			t.Errorf("Expected 'bash', got %q", info.Name)
 		}
 		if info.Description == "" {
@@ -269,7 +125,7 @@ func TestLS(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if ls.Info().Name != "ls" {
+		if ls.Info().Name != "Ls" {
 			t.Errorf("Expected 'ls', got %q", ls.Info().Name)
 		}
 		if ls.Info().Description == "" {
@@ -320,7 +176,7 @@ func TestGlob(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if glob.Info().Name != "glob" {
+		if glob.Info().Name != "Glob" {
 			t.Errorf("Expected 'glob', got %q", glob.Info().Name)
 		}
 		if glob.Info().Description == "" {
@@ -386,7 +242,7 @@ func TestRead(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if read.Info().Name != "read" {
+		if read.Info().Name != "Read" {
 			t.Errorf("Expected 'read', got %q", read.Info().Name)
 		}
 		if read.Info().Description == "" {
@@ -453,7 +309,7 @@ func TestWrite(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if write.Info().Name != "write" {
+		if write.Info().Name != "Write" {
 			t.Errorf("Expected 'write', got %q", write.Info().Name)
 		}
 		if write.Info().Description == "" {

@@ -15,9 +15,6 @@ import (
 // It provides a safe wrapper around the `crontab` command, allowing
 // the agent to list, add, remove, and validate cron jobs without
 // directly editing crontab files.
-//
-// This tool is NOT registered as a bundled tool by default.
-// Users can add it via reactor.WithExtraTools(tools.NewCrontabTool()).
 type CrontabTool struct {
 	info *core.ToolInfo
 }
@@ -26,8 +23,49 @@ type CrontabTool struct {
 func NewCrontabTool() core.FuncTool {
 	return &CrontabTool{
 		info: &core.ToolInfo{
-			Name:        "crontab",
+			Name:        "Crontab",
 			Description: `System crontab manager for Linux/Unix/macOS. Operations: 'list'|'add'|'remove'|'validate'|'raw'. Params: {operation: string, expression: 'cron_expr', command: string, comment: string, line_number: number}. Security level: HighRisk — modifies system scheduling.`,
+			Prompt: `Schedule recurring tasks on Linux and macOS using system cron. Use this when the user wants something to run automatically at fixed times or intervals — periodic backups, cleanup jobs, health checks, report generation, or any recurring maintenance task.
+
+When NOT to use: For one-off delayed execution, use systemd timers or 'at' instead. For task scheduling within the current session, use todo tools. On Windows, this tool is unavailable.
+
+## When this tool fits into a workflow
+
+Typical pattern when the user asks to set up a recurring task:
+1. Use read or bash to understand the current system state (existing scripts, disk usage, service health)
+2. Use write to create any script that needs to be scheduled (e.g. a backup script)
+3. Use this tool to add the cron entry that runs that script on a schedule
+4. Use list to verify the entry was created correctly
+
+## Operations
+
+### list — See what cron jobs are already scheduled
+No additional parameters needed. Returns entries with line numbers and raw content. Use the line numbers later for remove. If no crontab exists yet, returns an empty list — this is normal for first-time setup.
+
+### add — Schedule a new recurring task
+Parameters needed: expression (when to run), command (what to run). Optionally: comment (label for later identification).
+
+The expression uses 5 fields in order: minute hour day-of-month month day-of-week
+Examples of common schedules:
+- 0 9 * * * — every day at 9:00 AM
+- 0 9 * * 1-5 — every weekday at 9:00 AM
+- */30 * * * * — every 30 minutes
+- 0 0 * * 0 — every Sunday at midnight
+- 0 2 1 * * — first day of every month at 2:00 AM
+- */5 * * * * — every 5 minutes
+
+Each field supports: * (all values), */n (every n), a,b,c (specific list), a-b (range). Fields work independently and combine with AND logic — all conditions must be met for the job to fire.
+
+Always use the validate operation first to check your expression before adding, especially for non-standard schedules.
+
+### remove — Delete a previously scheduled task
+You need the line_number parameter, which comes from the list operation output. Call list first to find the right line.
+
+### validate — Check if a cron expression is correct before using it
+Takes an expression and returns whether it is valid. Use this as a safety check before add — it catches common mistakes like swapped field order or out-of-range values.
+
+### raw — Get the unprocessed crontab content
+Useful when list doesn't show enough detail or you need to inspect comments and formatting.`,
 			Tags:        []string{"scheduler", "cron", "system", "linux", "macos"},
 			SecurityLevel: core.LevelHighRisk,
 			Parameters: []core.Parameter{

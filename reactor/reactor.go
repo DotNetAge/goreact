@@ -64,17 +64,12 @@ type ReactorConfig struct {
 
 // RunResult holds the complete output of a Run invocation.
 type RunResult struct {
-	Answer                string               `json:"answer" yaml:"answer"`
-	Intent                *Intent              `json:"intent,omitempty" yaml:"intent,omitempty"`
-	Steps                 []Step               `json:"steps,omitempty" yaml:"steps,omitempty"`
-	TotalIterations       int                  `json:"total_iterations" yaml:"total_iterations"`
-	TerminationReason     string               `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
-	Confidence            float64              `json:"confidence" yaml:"confidence"`
-	ClarificationNeeded   bool                 `json:"clarification_needed" yaml:"clarification_needed"`
-	ClarificationQuestion string               `json:"clarification_question,omitempty" yaml:"clarification_question,omitempty"`
-	TokensUsed            int                  `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
-	TotalDuration         time.Duration        `json:"total_duration_ms,omitempty" yaml:"total_duration_ms,omitempty"`
-	Experience            *core.ExperienceData `json:"experience,omitempty" yaml:"experience,omitempty"`
+	Answer            string        `json:"answer" yaml:"answer"`
+	Steps             []Step        `json:"steps,omitempty" yaml:"steps,omitempty"`
+	TotalIterations   int           `json:"total_iterations" yaml:"total_iterations"`
+	TerminationReason string        `json:"termination_reason,omitempty" yaml:"termination_reason,omitempty"`
+	TokensUsed        int           `json:"tokens_used,omitempty" yaml:"tokens_used,omitempty"`
+	TotalDuration     time.Duration `json:"total_duration_ms,omitempty" yaml:"total_duration_ms,omitempty"`
 }
 
 // Runner is the public interface for the T-A-O reactor.
@@ -97,29 +92,25 @@ type TAORunner interface {
 var _ TAORunner = (*Reactor)(nil)
 
 type Reactor struct {
-	config         ReactorConfig
-	intentRegistry IntentRegistry
-	toolRegistry   core.ToolRegistry
-	toolExecutor   core.ToolExecutor
-	skillRegistry  core.SkillRegistry
-	ruleRegistry   core.RuleRegistry
-	llmClient      gochat.ClientBuilder
+	config        ReactorConfig
+	toolRegistry  core.ToolRegistry
+	toolExecutor  core.ToolExecutor
+	skillRegistry core.SkillRegistry
+	ruleRegistry  core.RuleRegistry
 
-	memory         core.Memory
-	tokenEstimator core.TokenEstimator
+	memory    core.Memory
+	llmCaller *LLMCaller
+	prompt    *Prompt
 
 	interactionHandler HumanInteractionHandler
 	askPermission      *tools.AskPermission
 	eventBus           EventBus
 
-	sessionStore  core.SessionStore
-	contextWindow *core.ContextWindow
-	slideConfig   core.SlideConfig
+	resultStore *core.ResultStore
 
-	// === Orchestration (delegated to Orchestrator) ===
-	orchestrator core.AgentOrchestrator
-
-	mockLLM func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
+	// SpawnFunc creates sub-agents for the delegate tool.
+	// Set by Agent after Reactor creation to avoid circular deps.
+	SpawnFunc func(ctx context.Context, agentName, task string) (string, error)
 
 	pauseRequested bool
 	pauseMu        sync.Mutex
@@ -128,6 +119,17 @@ type Reactor struct {
 		sync.RWMutex
 		snap *RunSnapshot
 	}
+
+	// cachedLLMTools caches the LLM-ready tool definitions.
+	// The full tool registry is converted once after all tools are registered
+	// and reused across T-A-O cycles to avoid per-round conversion overhead.
+	// Invalidated when RegisterTool is called after construction.
+	cachedLLMTools []gochatcore.Tool
+	cacheMu        sync.RWMutex
+
+	// Agent orchestration dependencies (set by Agent, zero-value safe when nil)
+	agentRegistry tools.AgentDefinitionRegistry
+	runtimeDir    *core.RuntimeDirectory
 }
 
 func (r *Reactor) EventBus() EventBus { return r.eventBus }
@@ -135,6 +137,8 @@ func (r *Reactor) EventBus() EventBus { return r.eventBus }
 func (r *Reactor) InteractionHandler() HumanInteractionHandler { return r.interactionHandler }
 
 func (r *Reactor) Memory() core.Memory { return r.memory }
+
+func (r *Reactor) Prompt() *Prompt { return r.prompt }
 
 func (r *Reactor) SetPauseRequested() {
 	r.pauseMu.Lock()
@@ -192,13 +196,14 @@ type reactorSetup struct {
 	skills            []string
 	skipBundledSkills bool
 	memory            core.Memory
-	mockLLM           func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
+	mockLLM           MockLLMFunc
 	sessionStore      core.SessionStore
-	intentRegistry    IntentRegistry
 	toolRegistry      core.ToolRegistry
 	skillRegistry     core.SkillRegistry
 	ruleRegistry      core.RuleRegistry
-	orchestratorSetter core.AgentOrchestrator
+	prompt            *Prompt
+	agentRegistry     tools.AgentDefinitionRegistry
+	runtimeDir        *core.RuntimeDirectory
 }
 
 func (r *Reactor) applyDefaults(config *ReactorConfig) {
@@ -214,11 +219,6 @@ func (r *Reactor) applyDefaults(config *ReactorConfig) {
 }
 
 func (r *Reactor) initRegistries(setup *reactorSetup) {
-	if setup.intentRegistry != nil {
-		r.intentRegistry = setup.intentRegistry
-	} else {
-		r.intentRegistry = NewDefaultIntentRegistry()
-	}
 	if setup.toolRegistry != nil {
 		r.toolRegistry = setup.toolRegistry
 	} else {
@@ -240,13 +240,42 @@ func (r *Reactor) initRegistries(setup *reactorSetup) {
 	} else {
 		r.eventBus = NewEventBus()
 	}
+
+	r.resultStore = core.NewResultStore()
 }
 
-func (r *Reactor) initLLMClient(config ReactorConfig) {
-	r.llmClient = gochat.Client().Config(
+func (r *Reactor) initLLMCaller(config ReactorConfig, setup *reactorSetup) {
+	llmCfg := LLMCallerConfig{
+		ModelName:        config.Model,
+		SystemPrompt:     config.SystemPrompt,
+		Temperature:      config.Temperature,
+		TopP:             config.TopP,
+		TopK:             config.TopK,
+		PresencePenalty:  config.PresencePenalty,
+		FrequencyPenalty: config.FrequencyPenalty,
+		MaxTokens:        config.MaxTokens,
+		ClientType:       config.ClientType,
+	}
+
+	client := gochat.Client().Config(
 		gochat.WithAPIKey(config.APIKey),
 		gochat.WithBaseURL(config.BaseURL),
 	)
+
+	estimator := setup.tokenEstimator
+	if estimator == nil {
+		estimator = core.NewTokenEstimator()
+	}
+
+	var llmOpts []LLMCallerOption
+	if setup.sessionStore != nil {
+		llmOpts = append(llmOpts, WithLLMCallerSessionStore(setup.sessionStore))
+	}
+	if setup.mockLLM != nil {
+		llmOpts = append(llmOpts, WithLLMCallerMock(setup.mockLLM))
+	}
+
+	r.llmCaller = NewLLMCaller(llmCfg, client, estimator, setup.sessionStore, llmOpts...)
 }
 
 func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
@@ -311,6 +340,7 @@ func (r *Reactor) initToolExecutor(setup *reactorSetup) {
 				r.eventBus.Emit(e)
 			}
 		}),
+		core.WithResultStore(r.resultStore),
 	)
 }
 
@@ -323,20 +353,36 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 		name string
 		tool core.FuncTool
 	}{
-		{"grep", tools.NewGrepTool()},
-		{"glob", tools.NewGlobTool()},
-		{"read", tools.NewReadTool()},
-		{"write", tools.NewWriteTool()},
-		{"file_edit", tools.NewFileEditTool()},
-		{"bash", tools.NewBashTool()},
-		{"run_script", tools.NewRunScriptTool()},
-		{"web_search", tools.NewWebSearchTool()},
-		{"web_fetch", tools.NewWebFetchTool()},
-		{"todo_write", tools.NewTodoWriteTool()},
-		{"todo_read", tools.NewTodoReadTool()},
-		{"todo_execute", tools.NewTodoExecuteTool()},
-		{"email", tools.NewEmailTool(tools.EmailConfig{})},
-		{"ask_user", tools.NewAskUserTool()},
+		{"Grep", tools.NewGrepTool()},
+		{"Glob", tools.NewGlobTool()},
+		{"Read", tools.NewReadTool()},
+		{"Write", tools.NewWriteTool()},
+		{"FileEdit", tools.NewFileEditTool()},
+		{"Bash", tools.NewBashTool()},
+		{"RunScript", tools.NewRunScriptTool()},
+		{"WebSearch", tools.NewWebSearchTool()},
+		{"WebFetch", tools.NewWebFetchTool()},
+		{"TodoWrite", tools.NewTodoWriteTool()},
+		{"TodoRead", tools.NewTodoReadTool()},
+		{"TodoExecute", tools.NewTodoExecuteTool()},
+		{"AskUser", tools.NewAskUserTool()},
+		{"Ls", tools.NewLsTool()},
+		{"Crontab", tools.NewCrontabTool()},
+		{"Delegate", tools.NewDelegateTool(func(ctx context.Context, agentName, task string) (string, error) {
+			if r.SpawnFunc != nil {
+				return r.SpawnFunc(ctx, agentName, task)
+			}
+			return "", fmt.Errorf("delegate: SpawnFunc not configured on reactor")
+		})},
+		{"CollectResults", tools.NewCollectResultsTool()},
+		{"Skill", tools.NewSkillTool(func(name string) (*core.Skill, error) {
+			return r.skillRegistry.GetSkill(name)
+		})},
+		{"SkillCreate", tools.NewSkillCreateTool()},
+		{"SkillList", tools.NewSkillListTool()},
+		{"FindAgent", tools.NewFindAgentTool(r.runtimeDir)},
+		{"Rank", tools.NewRankTool(r.runtimeDir)},
+		{"CreateAgent", tools.NewCreateAgentTool(r.agentRegistry, r.runtimeDir)},
 	}
 	for _, bt := range bundledTools {
 		if !setup.skipTools[bt.name] {
@@ -345,14 +391,10 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 			}
 		}
 	}
-	r.registerOrchestrationTools()
 }
 
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
-	r := &Reactor{
-		tokenEstimator: core.NewTokenEstimator(),
-		slideConfig:    core.DefaultSlideConfig,
-	}
+	r := &Reactor{}
 
 	r.applyDefaults(&config)
 
@@ -367,12 +409,12 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	r.config = config
 	r.memory = setup.memory
-	r.mockLLM = setup.mockLLM
-	r.sessionStore = setup.sessionStore
-	r.orchestrator = setup.orchestratorSetter
+	r.prompt = setup.prompt
+	r.agentRegistry = setup.agentRegistry
+	r.runtimeDir = setup.runtimeDir
 
 	r.initRegistries(setup)
-	r.initLLMClient(config)
+	r.initLLMCaller(config, setup)
 	r.discoverAndLoadSkills(setup)
 	r.registerOrchestrationTools()
 	r.initInteractionHandler()
@@ -385,46 +427,62 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		}
 	}
 
-	if setup.tokenEstimator != nil {
-		r.tokenEstimator = setup.tokenEstimator
-	}
-
-	if r.memory != nil {
-		tools.SetMemory(r.memory)
-	}
-
 	return r
 }
 
-func (r *Reactor) SkillRegistry() core.SkillRegistry         { return r.skillRegistry }
-func (r *Reactor) IntentRegistry() IntentRegistry            { return r.intentRegistry }
-func (r *Reactor) ToolRegistry() core.ToolRegistry           { return r.toolRegistry }
-func (r *Reactor) ToolExecutor() core.ToolExecutor           { return r.toolExecutor }
-func (r *Reactor) RuleRegistry() core.RuleRegistry           { return r.ruleRegistry }
-func (r *Reactor) SessionStore() core.SessionStore           { return r.sessionStore }
-func (r *Reactor) ContextWindow() *core.ContextWindow        { return r.contextWindow }
-func (r *Reactor) SetContextWindow(cw *core.ContextWindow)   { r.contextWindow = cw }
-func (r *Reactor) SlideConfig() core.SlideConfig            { return r.slideConfig }
-func (r *Reactor) EstimateTokens(content string) int         { return r.tokenEstimator.Estimate(content) }
-func (r *Reactor) RegisterTool(tool core.FuncTool) error     { return r.toolRegistry.Register(tool) }
-func (r *Reactor) RegisterIntent(def IntentDefinition) error { return r.intentRegistry.Register(def) }
-func (r *Reactor) maxHistoryTurns() int                      { return maxHistoryTurnsForConfig(r.config.MaxTokens) }
+func (r *Reactor) SkillRegistry() core.SkillRegistry       { return r.skillRegistry }
+func (r *Reactor) ToolRegistry() core.ToolRegistry         { return r.toolRegistry }
+func (r *Reactor) ToolExecutor() core.ToolExecutor         { return r.toolExecutor }
+func (r *Reactor) RuleRegistry() core.RuleRegistry         { return r.ruleRegistry }
+func (r *Reactor) SessionStore() core.SessionStore         { return r.llmCaller.SessionStore() }
+func (r *Reactor) ContextWindow() *core.ContextWindow      { return r.llmCaller.ContextWindow() }
+func (r *Reactor) SetContextWindow(cw *core.ContextWindow) { r.llmCaller.SetContextWindow(cw) }
+func (r *Reactor) SlideConfig() core.SlideConfig           { return r.llmCaller.SlideConfig() }
+func (r *Reactor) EstimateTokens(content string) int {
+	return r.llmCaller.Estimator().Estimate(content)
+}
+func (r *Reactor) RegisterTool(tool core.FuncTool) error {
+	r.cacheMu.Lock()
+	r.cachedLLMTools = nil // invalidate cache
+	r.cacheMu.Unlock()
+	return r.toolRegistry.Register(tool)
+}
+func (r *Reactor) maxHistoryTurns() int { return maxHistoryTurnsForConfig(r.config.MaxTokens) }
+
+// getLLMTools returns cached LLM-ready tool definitions, building them on first call.
+func (r *Reactor) getLLMTools() []gochatcore.Tool {
+	r.cacheMu.RLock()
+	cached := r.cachedLLMTools
+	r.cacheMu.RUnlock()
+	if cached != nil {
+		return cached
+	}
+
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	// Double-check after acquiring write lock
+	if r.cachedLLMTools != nil {
+		return r.cachedLLMTools
+	}
+	allToolInfos := core.ToToolInfos(r.toolRegistry.All())
+	r.cachedLLMTools = ToolInfosToLLMTools(allToolInfos)
+	return r.cachedLLMTools
+}
 
 // CloneReactor creates a child Reactor that inherits all registries, infrastructure,
 // and execution pipeline from the parent, but with an independent config, task manager,
 // LLM client, and conversation context.
 //
 // Shared (same reference as parent):
-//   - intentRegistry, toolRegistry, skillRegistry (tool/skill/intent definitions)
+//   - toolRegistry, skillRegistry (tool/skill definitions)
 //   - toolExecutor (permission chain, hooks, result limits)
 //   - memory, eventBus (persistence & events)
-//   - tokenEstimator, sessionStore (context management)
-//   - mockLLM (testing support)
+//   - llmCaller fields: tokenEstimator, sessionStore, mockLLM
 //
 // Independent (new instances for child):
 //   - config (Model, SystemPrompt, Temperature, etc. — can override)
 //   - taskManager (child's own task tracking)
-//   - llmClient (child's own API connection)
+//   - llmCaller (child's own LLM caller with independent context window)
 //   - contextWindow (child's own conversation history)
 //   - pendingTasks (child's own async task channels)
 //   - askUser, askPermission (child's own interaction tools)
@@ -478,24 +536,19 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 	}
 
 	child := &Reactor{
-		config:         childConfig,
-		intentRegistry: r.intentRegistry,
-		toolRegistry:   r.toolRegistry,
-		toolExecutor:   r.toolExecutor,
-		skillRegistry:  r.skillRegistry,
-		ruleRegistry:   r.ruleRegistry,
-		memory:         r.memory,
-		tokenEstimator: r.tokenEstimator,
-		eventBus:       r.eventBus,
-		sessionStore:   r.sessionStore,
-		slideConfig:    r.slideConfig,
-		mockLLM:        r.mockLLM,
+		config:        childConfig,
+		toolRegistry:  r.toolRegistry,
+		toolExecutor:  r.toolExecutor,
+		skillRegistry: r.skillRegistry,
+		ruleRegistry:  r.ruleRegistry,
+		memory:        r.memory,
+		eventBus:      r.eventBus,
+		agentRegistry: r.agentRegistry,
+		runtimeDir:    r.runtimeDir,
 	}
 
-	child.llmClient = gochat.Client().Config(
-		gochat.WithAPIKey(childConfig.APIKey),
-		gochat.WithBaseURL(childConfig.BaseURL),
-	)
+	// Clone LLMCaller with parent's shared infrastructure but independent client/context
+	child.llmCaller = r.cloneLLMCallerForChild(childConfig)
 
 	child.interactionHandler = NewDefaultInteractionHandler(func(e core.ReactEvent) {
 		if child.eventBus != nil {
@@ -513,6 +566,42 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 	return child
 }
 
+// cloneLLMCallerForChild creates a new LLMCaller for CloneReactor,
+// sharing the parent's infrastructure (tokenEstimator, sessionStore, mockLLM)
+// but with its own client and context window.
+func (r *Reactor) cloneLLMCallerForChild(childConfig ReactorConfig) *LLMCaller {
+	llmCfg := LLMCallerConfig{
+		ModelName:        childConfig.Model,
+		SystemPrompt:     childConfig.SystemPrompt,
+		Temperature:      childConfig.Temperature,
+		TopP:             childConfig.TopP,
+		TopK:             childConfig.TopK,
+		PresencePenalty:  childConfig.PresencePenalty,
+		FrequencyPenalty: childConfig.FrequencyPenalty,
+		MaxTokens:        childConfig.MaxTokens,
+		ClientType:       childConfig.ClientType,
+	}
+
+	client := gochat.Client().Config(
+		gochat.WithAPIKey(childConfig.APIKey),
+		gochat.WithBaseURL(childConfig.BaseURL),
+	)
+
+	parentCaller := r.llmCaller
+	var llmOpts []LLMCallerOption
+	if parentCaller != nil {
+		if parentCaller.SessionStore() != nil {
+			llmOpts = append(llmOpts, WithLLMCallerSessionStore(parentCaller.SessionStore()))
+		}
+		if est := parentCaller.Estimator(); est != nil {
+			// Share the same estimator instance
+			_ = est
+		}
+	}
+
+	return NewLLMCaller(llmCfg, client, parentCaller.Estimator(), parentCaller.SessionStore(), llmOpts...)
+}
+
 func (r *Reactor) Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error) {
 	reactCtx := NewReactContext(ctx, input, history, r.config.MaxIterations)
 
@@ -520,27 +609,7 @@ func (r *Reactor) Run(ctx context.Context, input string, history ConversationHis
 		reactCtx.emitEvent = r.eventBus.Emit
 	}
 
-	intent, tokens, err := r.classifyIntent(reactCtx)
-	if err != nil {
-		reactCtx.EmitEvent(core.Error, fmt.Sprintf("intent classification: %v", err))
-		return nil, fmt.Errorf("intent classification: %w", err)
-	}
-	reactCtx.Intent = intent
-	ApplyConfidenceThreshold(intent, 0)
-
-	if intent.RequiresClarification {
-		reactCtx.EmitEvent(core.ClarifyNeeded, intent.ClarificationQuestion)
-		return &RunResult{
-			Intent:                intent,
-			ClarificationNeeded:   true,
-			ClarificationQuestion: intent.ClarificationQuestion,
-			Confidence:            intent.Confidence,
-			TokensUsed:            tokens,
-		}, nil
-	}
-
-	result, err := r.runTAOLoop(reactCtx, tokens, time.Now())
-	return result, err
+	return r.runLoop(reactCtx, 0, time.Now())
 }
 
 func (r *Reactor) RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, newInput string) (*RunResult, error) {
@@ -557,10 +626,15 @@ func (r *Reactor) RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, ne
 		reactCtx.AddMessage("user", newInput)
 	}
 
-	return r.runTAOLoop(reactCtx, 0, time.Now())
+	return r.runLoop(reactCtx, 0, time.Now())
 }
 
 // persistStep records a T-A-O cycle step into history and persistent storage.
+// Uses structured messages (v2 format) instead of XML:
+//
+//	assistant: "Thought: <reasoning>\nDecision: <decision>"
+//	tool:      "<tool_name> returned: <result>"     (if tool was called)
+//	tool:      "<tool_name> error: <error>"           (if tool errored)
 func (r *Reactor) persistStep(reactCtx *ReactContext, cycleStart time.Time) {
 	step := Step{
 		Iteration:   reactCtx.CurrentIteration + 1,
@@ -577,39 +651,39 @@ func (r *Reactor) persistStep(reactCtx *ReactContext, cycleStart time.Time) {
 		Duration:  time.Since(cycleStart),
 	})
 
-	var stepSummary strings.Builder
-	fmt.Fprintf(&stepSummary, "<thought>%s</thought>", reactCtx.LastThought.Reasoning)
+	// Offload large results (>30K chars) before persisting
+	r.offloadLargeResults(reactCtx)
+
+	// Structured assistant message: thought content
+	thoughtMsg := fmt.Sprintf("Thought: %s\nDecision: %s", reactCtx.LastThought.Reasoning, reactCtx.LastThought.Decision)
+	reactCtx.AddMessage("assistant", thoughtMsg)
+	r.persistStepToStore(reactCtx.Ctx(), "assistant", thoughtMsg)
+
+	// Structured tool message: action result (if tool was called)
 	if reactCtx.LastThought.Decision == DecisionAct {
-		fmt.Fprintf(&stepSummary, "\n<action>%s(%v)</action>", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
+		if reactCtx.LastAction.Error != nil {
+			toolMsg := fmt.Sprintf("%s error: %s", reactCtx.LastAction.Target, reactCtx.LastAction.ErrorMsg)
+			reactCtx.AddMessage("tool", toolMsg)
+			r.persistStepToStore(reactCtx.Ctx(), "tool", toolMsg)
+		} else if reactCtx.LastAction.Result != "" {
+			toolMsg := fmt.Sprintf("%s returned: %s", reactCtx.LastAction.Target, reactCtx.LastAction.Result)
+			reactCtx.AddMessage("tool", toolMsg)
+			r.persistStepToStore(reactCtx.Ctx(), "tool", toolMsg)
+		}
 	}
-	if reactCtx.LastObservation.Result != "" {
-		fmt.Fprintf(&stepSummary, "\n<observation>%s</observation>", reactCtx.LastObservation.Result)
-	}
-	if reactCtx.LastObservation.Error != "" {
-		fmt.Fprintf(&stepSummary, "\n<observation-error>%s</observation-error>", reactCtx.LastObservation.Error)
-	}
-	stepSummaryStr := stepSummary.String()
-	reactCtx.AddMessage("assistant", stepSummaryStr)
-	r.persistMessage(reactCtx.Ctx(), "assistant", stepSummaryStr)
 }
 
 // buildResultFromContext constructs a RunResult from the ReactContext state.
 func (r *Reactor) buildResultFromContext(reactCtx *ReactContext, totalTokens int, runStart time.Time) *RunResult {
 	result := &RunResult{
-		Intent:            reactCtx.Intent,
 		Steps:             reactCtx.History,
 		TotalIterations:   reactCtx.CurrentIteration,
 		TerminationReason: reactCtx.TerminationReason,
-		Confidence:        reactCtx.Intent.Confidence,
 		TokensUsed:        totalTokens,
 	}
 
 	if reactCtx.LastAction != nil {
 		result.Answer = reactCtx.LastAction.Result
-		if reactCtx.LastAction.Type == ActionTypeClarify {
-			result.ClarificationNeeded = true
-			result.ClarificationQuestion = reactCtx.LastAction.Result
-		}
 	}
 	if result.Answer == "" && reactCtx.LastThought != nil {
 		result.Answer = reactCtx.LastThought.FinalAnswer
@@ -659,7 +733,7 @@ func (r *Reactor) handlePauseSnapshot(reactCtx *ReactContext) {
 	}
 }
 
-func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
+func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
 	totalTokens := initialTokens
 
 	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
@@ -711,14 +785,30 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
 	r.handlePauseSnapshot(reactCtx)
 
-	result.Experience = r.buildExperienceCandidate(reactCtx, result)
-
 	if result.TotalIterations > 1 && result.Answer != "" &&
 		!strings.Contains(result.TerminationReason, "error") {
 		r.generateSummary(reactCtx, result, time.Since(runStart))
 	}
 
 	return result, nil
+}
+
+// persistStepToStore persists an intermediate step message to the session store
+// and tracks it in the LLMCaller's context window for token budget management.
+func (r *Reactor) persistStepToStore(ctx context.Context, role, content string) {
+	ss := r.llmCaller.SessionStore()
+	cw := r.llmCaller.ContextWindow()
+	if ss == nil || cw == nil {
+		r.llmCaller.AddContextMessage(role, content)
+		return
+	}
+
+	agentName := cw.Role
+	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
+	r.llmCaller.AddContextMessage(role, content)
+	if err := ss.Append(ctx, cw.SessionID, agentName, msg); err != nil {
+		logger.Warn("failed to persist step to session store", "session_id", cw.SessionID, "role", role, "error", err)
+	}
 }
 
 // emitActionResult emits ActionStart and ActionResult events for a tool call action.
@@ -747,7 +837,7 @@ func (r *Reactor) emitActionResult(reactCtx *ReactContext) {
 // 2. Observe: Checks sub-task completion, produces summary when all done
 // 3. Loops with polling interval until all tasks complete or timeout/cancel
 //
-// This is separate from runTAOLoop because Coordinator mode has fundamentally
+// This is separate from runLoop because Coordinator mode has fundamentally
 // different control flow — it doesn't call tools, it waits for async results.
 func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, coordStart, runStart time.Time) (*RunResult, error) {
 	cs := reactCtx.CoordState
@@ -841,12 +931,10 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 
 	// Build result from coordinator state
 	result := &RunResult{
-		Intent:            reactCtx.Intent,
 		Steps:             reactCtx.History,
 		TotalIterations:   reactCtx.CurrentIteration,
 		TerminationReason: reactCtx.TerminationReason,
 		TokensUsed:        totalTokens,
-		Confidence:        reactCtx.Intent.Confidence,
 		TotalDuration:     time.Since(runStart),
 	}
 
@@ -866,8 +954,6 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 	// Cleanup coordinator resources
 	cs.Dispose()
 	reactCtx.Mode = ModeExecutor // Reset to executor mode
-
-	result.Experience = r.buildExperienceCandidate(reactCtx, result)
 
 	return result, nil
 }

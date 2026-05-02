@@ -22,8 +22,9 @@ type sessionMeta struct {
 // role instead of creating a new one.
 type MemorySessionStore struct {
 	mu      sync.RWMutex
-	store   map[string][]Message    // sessionID -> messages
-	metas   map[string]*sessionMeta // sessionID -> metadata (role, timestamps)
+	store   map[string][]Message            // sessionID -> messages
+	metas   map[string]*sessionMeta         // sessionID -> metadata (role, timestamps)
+	usage   map[string][]TokenUsage          // sessionID -> token usage records
 	handler SlideHandler
 }
 
@@ -32,6 +33,7 @@ func NewMemorySessionStore() *MemorySessionStore {
 	return &MemorySessionStore{
 		store:   make(map[string][]Message),
 		metas:   make(map[string]*sessionMeta),
+		usage:   make(map[string][]TokenUsage),
 		handler: NoopSlideHandler,
 	}
 }
@@ -141,6 +143,25 @@ func (s *MemorySessionStore) SetSlideHandler(handler SlideHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handler = handler
+}
+
+func (s *MemorySessionStore) AppendTokenUsage(_ context.Context, sessionID string, usage TokenUsage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usage[sessionID] = append(s.usage[sessionID], usage)
+	return nil
+}
+
+func (s *MemorySessionStore) GetTokenUsages(_ context.Context, sessionID string) ([]TokenUsage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	records := s.usage[sessionID]
+	if records == nil {
+		return nil, nil
+	}
+	out := make([]TokenUsage, len(records))
+	copy(out, records)
+	return out, nil
 }
 
 func (s *MemorySessionStore) Close() error {

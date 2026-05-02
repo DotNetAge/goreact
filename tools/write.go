@@ -26,7 +26,7 @@ Usage:
 func NewWriteTool() core.FuncTool {
 	return &Write{
 		info: &core.ToolInfo{
-			Name:          "write",
+			Name:          "Write",
 			Description:   writeDescription,
 			Prompt: `Writes a file to the local filesystem.
 

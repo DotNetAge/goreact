@@ -46,7 +46,7 @@ func TestEventBus_FilteredSubscribe(t *testing.T) {
 	defer cancel()
 
 	bus.Emit(core.NewReactEvent("s", "main", "", core.ThinkingDelta, "skip"))
-	bus.Emit(core.NewReactEvent("s", "task_1", "main", core.ActionStart, core.ActionStartData{ToolName: "grep"}))
+	bus.Emit(core.NewReactEvent("s", "task_1", "main", core.ActionStart, core.ActionStartData{ToolName: "Grep"}))
 
 	select {
 	case received := <-ch:
@@ -148,13 +148,13 @@ func TestReactContext_EmitEvent(t *testing.T) {
 	ctx.emitEvent = bus.Emit
 
 	// Emit through context
-	ctx.EmitEvent(core.ActionStart, core.ActionStartData{ToolName: "read", Params: map[string]any{"path": "/tmp"}})
+	ctx.EmitEvent(core.ActionStart, core.ActionStartData{ToolName: "Read", Params: map[string]any{"path": "/tmp"}})
 	ctx.EmitEvent(core.ThinkingDelta, "should be filtered")
 
 	select {
 	case ev := <-ch:
 		data := ev.Data.(core.ActionStartData)
-		if data.ToolName != "read" {
+		if data.ToolName != "Read" {
 			t.Errorf("expected tool read, got %s", data.ToolName)
 		}
 	case <-time.After(time.Second):

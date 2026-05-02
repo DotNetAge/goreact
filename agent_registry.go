@@ -119,6 +119,13 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 	if modelVal, ok := meta["model"].(string); ok {
 		agent.Model = modelVal
 	}
+	if skillsList, ok := meta["skills"].([]any); ok {
+		for _, s := range skillsList {
+			if str, ok := s.(string); ok {
+				agent.Skills = append(agent.Skills, str)
+			}
+		}
+	}
 
 	agent.Introduction = body
 	return agent, nil
@@ -176,6 +183,9 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	}
 	if agent.Model != "" {
 		meta["model"] = agent.Model
+	}
+	if len(agent.Skills) > 0 {
+		meta["skills"] = agent.Skills
 	}
 
 	yamlData, err := yaml.Marshal(meta)

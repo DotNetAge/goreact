@@ -50,7 +50,7 @@ func TestHook_PreToolUse_Block(t *testing.T) {
 	}
 
 	result := hook.Execute(&ToolUseContext{
-		ToolName: "bash",
+		ToolName: "Bash",
 		Params:   map[string]any{"cmd": "rm -rf /"},
 	})
 	if result.PermissionResult == nil || result.PermissionResult.Behavior != PermissionDeny {
@@ -68,7 +68,7 @@ func TestHook_PreToolUse_Modify(t *testing.T) {
 	}
 
 	result := hook.Execute(&ToolUseContext{
-		ToolName: "write",
+		ToolName: "Write",
 		Params:   map[string]any{"path": "/tmp/file"},
 	})
 	if result.UpdatedInput == nil {
@@ -87,7 +87,7 @@ func TestHook_PostToolUse_Context(t *testing.T) {
 
 	ctx := &PostToolUseContext{
 		ToolUseContext: &ToolUseContext{
-			ToolName: "read",
+			ToolName: "Read",
 			Params:   map[string]any{"path": "/tmp/f"},
 		},
 		Result:   "file content here",
@@ -119,7 +119,7 @@ func TestHookEventTypes_Constants(t *testing.T) {
 
 func TestPostToolUseContext_Fields(t *testing.T) {
 	base := &ToolUseContext{
-		ToolName: "grep",
+		ToolName: "Grep",
 		Params:   map[string]any{"pattern": "TODO"},
 	}
 	pctx := &PostToolUseContext{
@@ -128,7 +128,7 @@ func TestPostToolUseContext_Fields(t *testing.T) {
 		Err:           context.DeadlineExceeded,
 		Duration:      15,
 	}
-	if pctx.ToolName != "grep" {
+	if pctx.ToolName != "Grep" {
 		t.Errorf("embedded ToolName should be accessible: %s", pctx.ToolName)
 	}
 	if pctx.Result != "3 matches found" {

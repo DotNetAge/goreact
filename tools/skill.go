@@ -31,10 +31,9 @@ func (t *SkillCreateTool) SetSkillDirs(dirs []string) {
 
 func (t *SkillCreateTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name: "skill_create",
-		Description: `Create a new skill that can be used by the agent. A skill is a reusable knowledge module with YAML frontmatter and instructional content.
-
-Skills are activated based on the agent's intent/context and inject specialized instructions into the LLM prompt.
+		Name:        "SkillCreate",
+		Description: "Create a new reusable skill with YAML frontmatter and instructional content. Skills inject specialized instructions when activated.",
+		Prompt: `Create a skill that can be reused across agents. A skill is a knowledge module with YAML frontmatter and instructional content.
 
 SKILL.md format:
 ---
@@ -222,8 +221,14 @@ func (t *SkillListTool) SetSkillDirs(dirs []string) {
 
 func (t *SkillListTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "skill_list",
-		Description: "List all available skills with their names, descriptions, and trigger keywords. Skills are reusable knowledge modules that inject specialized instructions when activated.",
+		Name:        "SkillList",
+		Description: "List all available skills with names, descriptions, and trigger keywords.",
+		Prompt: `Query all skills registered in the system. Each skill entry shows: name, description, and trigger keywords.
+
+Use this tool when:
+- Creating a new agent and you need to see what skills are available to assign.
+- Checking what capabilities are available before starting a complex task.
+- The SkillsCatalog in your system prompt only shows your own configured skills — SkillList shows everything in the system.`,
 		Tags:        []string{"skill", "knowledge", "module", "list"},
 		IsReadOnly:  true,
 		Parameters: []core.Parameter{

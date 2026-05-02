@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	gochatcore "github.com/DotNetAge/gochat/core"
 	"github.com/DotNetAge/goreact/core"
 )
 
@@ -181,18 +182,11 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 		answer = answer[:2000] + "... [truncated]"
 	}
 
-	prompt, err := renderSummaryPrompt(summaryPromptData{
-		Input:             ctx.Input,
-		Answer:            answer,
-		Iterations:        result.TotalIterations,
-		ToolsUsed:         toolsUsed,
-		Duration:          durationStr,
-		TerminationReason: result.TerminationReason,
-	})
-
-	if err != nil {
-		return
-	}
+	prompt := renderSummaryPrompt(
+		ctx.Input, answer,
+		result.TotalIterations, toolsUsed,
+		durationStr, result.TerminationReason,
+	)
 
 	go func() {
 		defer func() {
@@ -201,33 +195,26 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 			}
 		}()
 
-		// FIX(P2-#3): buildLLMBuilder already injects r.config.SystemPrompt (llm.go:103-105),
-		// so the summary prompt IS sent with base identity. The prompt parameter here serves as
-		// phase-specific instructions layered on top of SystemPrompt — this is consistent with
-		// classifyIntent and Think call patterns.
-		//
-		// FIX(P2-#6): Estimate and emit input tokens so summary LLM cost is visible.
+		summaryInput := CallInput{
+			SystemPromptSections: []gochatcore.Message{
+				gochatcore.NewSystemMessage(prompt),
+			},
+			UserMessage: "Summarize this task execution.",
+		}
 
-		resp, err := r.callLLMWithHistory(prompt, "Summarize this task execution.", nil, 0)
-		if err != nil || resp == nil || resp.Content == "" {
+		result := r.llmCaller.Call(ctx.Ctx(), summaryInput)
+		if result.Content == "" {
 			return
 		}
 
-		// Account tokens for visibility
-		inputTokens := r.estimateInputTokens(prompt, "Summarize this task execution.", nil, 0, nil, "")
-		outputTokens := 0
-		if resp.Usage != nil && resp.Usage.TotalTokens > 0 {
-			outputTokens = resp.Usage.TotalTokens
-		}
-
-		summaryText := strings.TrimSpace(resp.Content)
+		summaryText := strings.TrimSpace(result.Content)
 		summaryText = stripJSONWrappers(summaryText)
 		summaryText = strings.TrimSpace(summaryText)
 
 		ctx.EmitEvent(core.TaskSummary, core.TaskSummaryData{
-			Summary:    summaryText,
-			InputTokens: inputTokens,
-			OutputTokens: outputTokens,
+			Summary:      summaryText,
+			InputTokens:  result.TokenUsage.InputTokens,
+			OutputTokens: result.TokenUsage.OutputTokens,
 		})
 	}()
 }

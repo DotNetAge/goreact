@@ -11,7 +11,7 @@ func TestAskUser_Info(t *testing.T) {
 	tool := NewAskUserTool()
 	info := tool.Info()
 
-	if info.Name != "ask_user" {
+	if info.Name != "AskUser" {
 		t.Errorf("expected tool name 'ask_user', got %q", info.Name)
 	}
 	if !info.IsReadOnly {
@@ -66,7 +66,7 @@ func TestAskUser_ExecuteReturnsInteractionRequest(t *testing.T) {
 	if interaction.Question != "What is your name?" {
 		t.Errorf("expected question 'What is your name?', got %s", interaction.Question)
 	}
-	if interaction.ToolName != "ask_user" {
+	if interaction.ToolName != "AskUser" {
 		t.Errorf("expected tool_name 'ask_user', got %s", interaction.ToolName)
 	}
 }

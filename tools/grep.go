@@ -26,7 +26,7 @@ func NewGrepTool() core.FuncTool {
 
 func (t *GrepTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "grep",
+		Name:        "Grep",
 		Description: "A powerful search tool built on ripgrep",
 		Prompt: `A powerful search tool built on ripgrep
 

@@ -17,7 +17,6 @@ type RunSnapshot struct {
 	// Input
 	Input               string              `json:"input"`
 	ConversationHistory ConversationHistory `json:"conversation_history"`
-	Intent              *Intent              `json:"intent,omitempty"`
 
 	// Progress
 	CurrentIteration int `json:"current_iteration"`
@@ -56,7 +55,6 @@ func (c *ReactContext) ToSnapshot() *RunSnapshot {
 		ParentID:            c.ParentID,
 		Input:               c.Input,
 		ConversationHistory: conv,
-		Intent:              c.Intent,
 		CurrentIteration:    c.CurrentIteration,
 		MaxIterations:       c.MaxIterations,
 		LastThought:         c.LastThought,
@@ -93,7 +91,6 @@ func NewReactContextFromSnapshot(ctx context.Context, snapshot *RunSnapshot) *Re
 		cancel:              cancel,
 		Input:               snapshot.Input,
 		ConversationHistory: conv,
-		Intent:              snapshot.Intent,
 		CurrentIteration:    snapshot.CurrentIteration,
 		MaxIterations:       snapshot.MaxIterations,
 		LastThought:         snapshot.LastThought,

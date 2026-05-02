@@ -244,7 +244,7 @@ func (t *WebSearchTool) AddAdapter(adapter SearchAdapter) {
 
 func (t *WebSearchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name: "web_search",
+		Name: "WebSearch",
 		Description: `Search the web for real-time information. Returns a list of {title, url} results.
 Use this tool when you need up-to-date information beyond your training data.`,
 		Prompt: `Search the web for real-time information. Returns search result information formatted as search result blocks, including links as markdown hyperlinks.
@@ -387,7 +387,7 @@ func formatSearchResults(query string, results []SearchResult) string {
 		}
 	}
 
-	fmt.Fprintln(&sb, "\nUse 'web_fetch' to read the full content of any URL above.")
+	fmt.Fprintln(&sb, "\nUse WebFetch to read the full content of any URL above.")
 	return sb.String()
 }
 
@@ -478,20 +478,17 @@ func NewWebFetchTool() core.FuncTool {
 
 func (t *WebFetchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name: "web_fetch",
-		Description: `Fetch and extract content from a web page. Unlike web_search which discovers URLs, web_fetch reads the actual content of a known URL.
+		Name:        "WebFetch",
+		Description: "Fetch and extract content from a web page. Use after WebSearch to read the actual content of a discovered URL.",
+		Prompt: `Read the full content of a specific URL. Unlike WebSearch which only returns titles and URLs, WebFetch retrieves the actual page content.
 
-Claude-style architecture:
+Architecture:
 1. Validates URL and checks for SSRF risks (blocks private IPs).
 2. Fetches the page content locally via HTTP.
 3. Strips HTML tags (scripts, styles, nav, etc.) for clean text.
 4. Returns the extracted content for the LLM to process.
 
-Use this after web_search to read specific URLs that look relevant.
-
-Parameters:
-- url: the URL to fetch (required)
-- prompt: what information to extract from the page (optional, helps focus the output)`,
+Use this after WebSearch to read specific URLs that look relevant. The prompt parameter helps focus the extraction on relevant details.`,
 		Tags:       []string{"web", "fetch", "url", "content", "http"},
 		IsReadOnly: true,
 		Parameters: []core.Parameter{

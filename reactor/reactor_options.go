@@ -1,8 +1,8 @@
 package reactor
 
 import (
-	gochatcore "github.com/DotNetAge/gochat/core"
 	"github.com/DotNetAge/goreact/core"
+	"github.com/DotNetAge/goreact/tools"
 )
 
 // ReactorOption configures a Reactor during creation.
@@ -98,15 +98,10 @@ func WithMemory(mem core.Memory) ReactorOption {
 	}
 }
 
-// MockLLMFunc is the signature for a mock LLM function used in testing.
-// When provided via WithMockLLM, the reactor delegates all LLM calls
-// to this function instead of the real API client.
-type MockLLMFunc func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
-
 // WithMockLLM replaces the real LLM client with a deterministic mock function.
 // This is intended for end-to-end testing without requiring real API keys or network access.
-// The mock function receives the full prompt context (system prompt, user message, history)
-// and must return a complete LLM response.
+// The mock function receives the full prompt context via CallInput and must return a
+// complete LLM response.
 func WithMockLLM(fn MockLLMFunc) ReactorOption {
 	return func(s *reactorSetup) {
 		s.mockLLM = fn
@@ -119,26 +114,16 @@ func WithSystemPrompt(prompt string) ReactorOption {
 	}
 }
 
-// --- Registry Injection Options ---
-
-// WithIntentRegistry sets a custom IntentRegistry implementation.
-// Use this to provide LLM-based intent classification, custom intent types, etc.
-// If not set, DefaultIntentRegistry with built-in definitions is used automatically.
-//
-// Example: embedding-enhanced semantic intent matching:
-//
-//	type SemanticIntentRegistry struct {
-//	    *reactor.DefaultIntentRegistry
-//	    embedder *embedding.Client
-//	}
-//	func (s *SemanticIntentRegistry) FormatPromptSection() string { /* ... */ }
-//
-//	r := reactor.NewReactor(config, reactor.WithIntentRegistry(&SemanticIntentRegistry{...}))
-func WithIntentRegistry(reg IntentRegistry) ReactorOption {
-	return func(s *reactorSetup) {
-		s.intentRegistry = reg
+// WithPrompt sets a centralized Prompt struct for system prompt generation.
+// This replaces the older systemPrompt string approach — the Prompt struct
+// provides structured sections that remain stable across rounds (KV cache friendly).
+func WithPrompt(p *Prompt) ReactorOption {
+	return func(rs *reactorSetup) {
+		rs.prompt = p
 	}
 }
+
+// --- Registry Injection Options ---
 
 // WithToolRegistry sets a custom ToolRegistry implementation.
 // Use this to add dynamic tool discovery, MCP integration, semantic filtering, etc.
@@ -175,6 +160,20 @@ func WithSessionStore(store core.SessionStore) ReactorOption {
 	}
 }
 
+// WithAgentRegistry sets the agent definition registry for FindAgent/CreateAgent tools.
+func WithAgentRegistry(reg tools.AgentDefinitionRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.agentRegistry = reg
+	}
+}
+
+// WithRuntimeDirectory sets the runtime directory for agent metadata (state, scores).
+func WithRuntimeDirectory(dir *core.RuntimeDirectory) ReactorOption {
+	return func(s *reactorSetup) {
+		s.runtimeDir = dir
+	}
+}
+
 // WithRuleRegistry sets a custom RuleRegistry for behavior rule management.
 // Rules are injected into the System Prompt's <behavioral_rules> section,
 // allowing runtime customization of agent behavior without code changes.
@@ -184,19 +183,5 @@ func WithSessionStore(store core.SessionStore) ReactorOption {
 func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.ruleRegistry = reg
-	}
-}
-
-// WithOrchestrator sets the Orchestrator for multi-agent coordination.
-// When set, the Reactor can delegate tasks to specialized agents via
-// the Orchestrator's DelegateTo method, and expose agent metadata
-// via progressive disclosure in the Think phase (L1 routing).
-// This also enables the <agents> section in SystemPrompt.
-//
-// If not set, delegation ("delegate" L1 route) will fail with an error,
-// and no agents metadata will be available in prompts.
-func WithOrchestrator(orch core.AgentOrchestrator) ReactorOption {
-	return func(s *reactorSetup) {
-		s.orchestratorSetter = orch
 	}
 }

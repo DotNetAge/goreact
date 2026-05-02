@@ -270,15 +270,15 @@ type RunScript struct {
 func NewRunScriptTool() core.FuncTool {
 	return &RunScript{
 		info: &core.ToolInfo{
-			Name:        "run_script",
-			Description: `Execute a script file from the current skill's scripts/ directory. Supports Python (.py), Shell (.sh), Node (.js), Ruby (.rb), and other interpreters. For Python scripts, automatically manages virtual environments and dependencies from requirements.txt.
+			Name:        "RunScript",
+			Description: "Execute a script file from a skill's scripts/ directory. Supports Python, Shell, Node, Ruby, and other interpreters.",
+			Prompt: `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the command and routes to the appropriate executor. For Python scripts, automatically manages virtual environments and dependencies from requirements.txt.
 
-Usage examples (pass the command as-is from Skill instructions):
-- "python scripts/analyze.py --input data.json"
-- "./scripts/build.sh --target release"
-- "scripts/fetch_data arg1 arg2"
-
-The tool auto-detects the language from the command string and routes to the appropriate executor.`,
+Usage:
+- Pass the command exactly as specified in the skill's instructions.
+- Include the interpreter if needed (e.g. "python scripts/analyze.py --input data.json").
+- The working_dir defaults to the skill's base directory.
+- Use the args parameter for additional arguments.`,
 			Tags:          []string{"script", "execute", "python", "shell", "skill"},
 			SecurityLevel: core.LevelSensitive,
 			Parameters: []core.Parameter{

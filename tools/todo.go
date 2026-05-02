@@ -14,7 +14,7 @@ import (
 // TodoItem represents a single todo item with priority and execution metadata.
 type TodoItem struct {
 	ID            string   `json:"id"`
-	Status        string   `json:"status"`        // pending, in_progress, completed, cancelled
+	Status        string   `json:"status"`         // pending, in_progress, completed, cancelled
 	Content       string   `json:"content"`        // Task description
 	Priority      int      `json:"priority"`       // Lower number = higher priority (default: 0)
 	Dependencies  []string `json:"dependencies"`   // IDs of items that must complete first
@@ -45,22 +45,27 @@ func NewTodoWriteTool() core.FuncTool {
 	return &TodoWriteTool{}
 }
 
-const todoDescription = `Create and manage a structured task list for your current coding session. This helps track progress, organize complex tasks, and demonstrate thoroughness.
+const prompt = `Track progress on any multi-step task by maintaining a visible checklist. Works for any kind of work — coding, research, analysis, writing, planning, debugging, or anything that requires multiple steps.
+
+When to use:
+- Break any complex task into visible steps: a user request that involves 3+ distinct actions, has branching logic, or requires sequential verification.
+- Show progress to the user: they can see what you've done, what's next, and what's blocked.
+- Manage parallel work streams: use dependencies to express ordering constraints between independent tasks.
+- Keep yourself organized: when switching between tasks, the todo list helps you remember where you left off.
 
 Usage:
-- Use proactively for complex multi-step tasks (3+ distinct steps) or when the user provides multiple tasks.
+- Create todos proactively when starting any multi-step task — before you begin, outline what you'll do.
 - When you START working on a task - mark it as in_progress (use merge=true).
 - IMMEDIATELY after COMPLETING a task - mark it as completed (use merge=true).
-- Always include all properties (id, status, content) for clarity.
 - Status must be one of: pending, in_progress, completed, cancelled.
-- NEVER INCLUDE THESE IN TODOS: linting; testing; searching or examining the codebase.
 - Use priority (lower = higher priority) and dependencies to define execution order.
-- Use tool_call and tool_params to pre-configure how each todo should be executed.`
+- Use tool_call and tool_params to pre-configure which tool to use for each todo item.`
 
 func (t *TodoWriteTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "todo_write",
-		Description: todoDescription,
+		Name:        "TodoWrite",
+		Description: "Track progress on any multi-step task with a visible checklist. Break down work, show progress, and manage dependencies.",
+		Prompt:      prompt,
 		Parameters: []core.Parameter{
 			{
 				Name:        "todos",
@@ -148,9 +153,16 @@ func NewTodoReadTool() core.FuncTool {
 
 func (t *todoReadTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "todo_read",
-		Description: "Read the current todo list. Returns all items and their statuses, sorted by priority.",
-		Tags:         []string{"task", "plan", "read", "status"},
+		Name:        "TodoRead",
+		Description: "Read the current todo list with optional status filter.",
+		Prompt: `View the current todo list, sorted by priority. Use this to check progress, see what's pending, or find tasks matching a specific status.
+
+Usage:
+- Call with no parameters to see everything.
+- Add status="in_progress" to see what you're currently working on.
+- Add status="pending" to see what's next.
+- Use this before TodoWrite to see current state before making changes.`,
+		Tags:        []string{"task", "plan", "read", "status"},
 		Parameters: []core.Parameter{
 			{
 				Name:        "status",
@@ -203,20 +215,19 @@ func NewTodoExecuteTool() core.FuncTool {
 }
 
 const todoExecuteDescription = `Analyze the current todo list and return an execution plan.
-For each pending todo that has tool_call and tool_params configured, it generates
-the corresponding tool invocation plan. Todos are executed in priority order,
-respecting dependencies.
+Pending todos with tool_call and tool_params configured are turned into
+actionable steps, executed in priority order with dependencies respected.
 
 Usage:
-- Call this tool after setting up todos with todo_write.
-- Review the execution plan before proceeding.
-- Execute each step in the plan using the specified tools.
-- Mark completed todos by calling todo_write with merge=true.`
+- Call after setting up todos with TodoWrite.
+- Review the plan, then execute each step.
+- Mark completed todos via TodoWrite with merge=true.`
 
 func (t *TodoExecuteTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "todo_execute",
-		Description: todoExecuteDescription,
+		Name:        "TodoExecute",
+		Description: "Analyze pending todos and produce an execution plan in priority order.",
+		Prompt:      todoExecuteDescription,
 		Parameters: []core.Parameter{
 			{
 				Name:        "auto_execute",

@@ -9,8 +9,6 @@ const (
 	DefaultMaxTokens   = 4096
 	DefaultTemperature = 0.7
 
-	// Intent thresholds
-	IntentClarifyThreshold = 0.7
 )
 
 // Special values

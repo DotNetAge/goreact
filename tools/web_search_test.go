@@ -290,8 +290,8 @@ func TestFilterResults_InvalidURLSkipped(t *testing.T) {
 func TestWebSearchTool_Info(t *testing.T) {
 	tool := NewWebSearchTool()
 	info := tool.Info()
-	if info.Name != "web_search" {
-		t.Errorf("Name = %q, want %q", info.Name, "web_search")
+	if info.Name != "WebSearch" {
+		t.Errorf("Name = %q, want %q", info.Name, "WebSearch")
 	}
 	if !info.IsReadOnly {
 		t.Error("web_search should be read-only")
@@ -431,8 +431,8 @@ func TestFormatSearchResults(t *testing.T) {
 	if !strings.Contains(output, "Search engine") {
 		t.Error("output should contain snippets")
 	}
-	if !strings.Contains(output, "web_fetch") {
-		t.Error("output should mention web_fetch for follow-up")
+	if !strings.Contains(output, "WebFetch") {
+		t.Error("output should mention WebFetch for follow-up")
 	}
 }
 

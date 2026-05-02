@@ -1,180 +1,45 @@
 package reactor
 
 import (
-	"bytes"
-	"embed"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"text/template"
 
 	gochatcore "github.com/DotNetAge/gochat/core"
 
 	"github.com/DotNetAge/goreact/core"
 )
 
-// promptTemplates is the embedded filesystem containing prompt template files.
-// Templates are stored as .tmpl files under the prompts/ directory, making them
-// easy to review and edit independently of Go source code.
-//
-//go:embed prompts/*.tmpl
-var promptTemplates embed.FS
+// summaryPromptTemplate is the prompt for generating task execution summaries.
+const summaryPromptTemplate = `<instruction>
+You are summarizing a completed task execution. Produce a concise, informative summary of what was accomplished.
+</instruction>
 
-// promptFuncMap defines custom template functions used across all prompts.
-var promptFuncMap = template.FuncMap{
-	"jsonMarshal": func(v any) string {
-		b, _ := json.Marshal(v)
-		return string(b)
-	},
-}
+<task_input>
+%s
+</task_input>
 
-// templateNames maps the embed path to the parsed template name used for Lookup.
-// Go's template.ParseFS strips the directory prefix, so "prompts/summary_prompt.tmpl"
-// becomes associated name "summary_prompt.tmpl".
-const (
-	tmplIntent   = "intent_prompt.tmpl"
-	tmplThink    = "think_prompt.tmpl"
-	tmplSystem   = "default_system_prompt.tmpl"
-	tmplSummary  = "summary_prompt.tmpl"
-	tmplL1Routing = "l1_routing_prompt.tmpl"
-)
+<execution_stats>
+- Iterations: %d
+- Tools used: %s
+- Duration: %s
+- Termination: %s
+</execution_stats>
 
-// intentPromptTemplate is parsed once at init from the embedded .tmpl file.
-var intentPromptTemplate = template.Must(
-	template.New("intent_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/intent_prompt.tmpl"),
-)
+<final_answer>
+%s
+</final_answer>
 
-// thinkPromptTemplate is parsed once at init from the embedded .tmpl file.
-var thinkPromptTemplate = template.Must(
-	template.New("think_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/think_prompt.tmpl"),
-)
+<output_format>
+Return ONLY a concise summary (2-4 sentences) in the same language as the task input. Focus on:
+1. What was the user's original request?
+2. What was done to fulfill it (tools used, steps taken)?
+3. What was the final outcome?
 
-// defaultSystemPromptTemplate is parsed once at init from the embedded .tmpl file.
-var defaultSystemPromptTemplate = template.Must(
-	template.New("default_system_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/default_system_prompt.tmpl"),
-)
+If the answer is already very short (single sentence or trivial), just return it as-is. Do NOT add unnecessary framing or formatting.
+</output_format>`
 
-// summaryPromptTemplate is parsed once at init from the embedded .tmpl file.
-var summaryPromptTemplate = template.Must(
-	template.New("summary_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/summary_prompt.tmpl"),
-)
-
-// l1RoutingPromptTemplate is parsed once at init from the embedded .tmpl file.
-var l1RoutingPromptTemplate = template.Must(
-	template.New("l1_routing_prompt").Funcs(promptFuncMap).ParseFS(promptTemplates, "prompts/l1_routing_prompt.tmpl"),
-)
-
-// intentPromptData holds template variables for the intent classification prompt.
-type intentPromptData struct {
-	IntentTypes string
-	Input       string
-	Context     string
-}
-
-// thinkPromptData holds template variables for the Think phase prompt (Phase 2).
-// When HasActiveSkill is true, the template renders skill-guided instructions.
-type thinkPromptData struct {
-	IntentSection string
-	MemorySection string
-	Input         string
-
-	IntentRules string // dynamically generated from IntentRegistry.FormatDecisionRules()
-
-	HasActiveSkill          bool
-	ActiveSkillName         string
-	ActiveSkillDesc         string
-	ActiveSkillInstructions string
-	FilteredToolList        string // comma-separated tool names available to the active skill
-	ResourceBasePath        string // P3: base path for scripts/, references/, assets/
-
-	// L3 Progressive Disclosure: resolved reference file contents
-	L3ReferencesContent string // <references>...</references> XML block with text content
-	L3ReferencesLinks   string // <reference-links>...</reference-links> XML block with metadata
-}
-
-// skillSelectPromptData holds template variables for the Skill Selection prompt (Phase 1).
-// Capabilities are injected via SystemPrompt (skillsSection), not rendered in this template.
-type skillSelectPromptData struct {
-	IntentSection string
-	Input         string
-}
-
-// systemPromptData holds template variables for the default agent system prompt.
-type systemPromptData struct {
-	Name         string
-	Role         string
-	Description  string
-	Introduction string
-	Rules        string // formatted rules from RuleRegistry (or defaults)
-}
-
-// summaryPromptData holds template variables for the task summary prompt.
-type summaryPromptData struct {
-	Input             string
-	Answer            string
-	Iterations        int
-	ToolsUsed         string
-	Duration          string
-	TerminationReason string
-}
-
-// l1RoutingPromptData holds template variables for the L1 routing prompt.
-type l1RoutingPromptData struct {
-	HasSkills bool // whether specialized capabilities are available
-}
-
-// renderIntentPrompt renders the intent prompt using the embedded Go template.
-func renderIntentPrompt(data intentPromptData) (string, error) {
-	t := intentPromptTemplate.Lookup(tmplIntent)
-	if t == nil {
-		return "", template.ExecError{Name: tmplIntent, Err: nil}
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-// renderThinkPrompt renders the Think prompt using the embedded Go template.
-func renderThinkPrompt(data thinkPromptData) (string, error) {
-	t := thinkPromptTemplate.Lookup(tmplThink)
-	if t == nil {
-		return "", template.ExecError{Name: tmplThink, Err: nil}
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-// RenderDefaultSystemPrompt renders the default agent system prompt using the embedded template.
-// It accepts the agent's name, domain, description, and formatted behavior rules.
-// When rules is empty string, default behavioral rules are used.
-func RenderDefaultSystemPrompt(name, role, description, introduction, rules string) (string, error) {
-	t := defaultSystemPromptTemplate.Lookup(tmplSystem)
-	if t == nil {
-		return "", template.ExecError{Name: tmplSystem, Err: nil}
-	}
-	if rules == "" {
-		rules = DefaultBehavioralRules()
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, systemPromptData{
-		Name:         name,
-		Role:         role,
-		Description:  description,
-		Introduction: introduction,
-		Rules:        rules,
-	}); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-// DefaultBehavioralRules returns the built-in behavioral rules used when
-// no custom RuleRegistry is configured.
+// DefaultBehavioralRules returns the built-in behavioral rules.
 func DefaultBehavioralRules() string {
 	return `1. Language Consistency: Always respond in the same language as the user's input.
 2. Concise & Precise: Answer directly to the point, avoid redundancy without sacrificing completeness.
@@ -185,33 +50,13 @@ func DefaultBehavioralRules() string {
 7. Memory-driven: Prefer known facts from memory; when memory conflicts with prior knowledge, defer to memory.`
 }
 
-// renderSummaryPrompt renders the task summary prompt using the embedded template.
-func renderSummaryPrompt(data summaryPromptData) (string, error) {
-	t := summaryPromptTemplate.Lookup(tmplSummary)
-	if t == nil {
-		return "", template.ExecError{Name: tmplSummary, Err: nil}
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+// renderSummaryPrompt renders the task summary prompt with the given data.
+func renderSummaryPrompt(input, answer string, iterations int, toolsUsed, duration, terminationReason string) string {
+	return fmt.Sprintf(summaryPromptTemplate,
+		input, iterations, toolsUsed, duration, terminationReason, answer)
 }
 
-// renderL1RoutingPrompt renders the L1 routing prompt using the embedded template.
-func renderL1RoutingPrompt(data l1RoutingPromptData) (string, error) {
-	t := l1RoutingPromptTemplate.Lookup(tmplL1Routing)
-	if t == nil {
-		return "", template.ExecError{Name: tmplL1Routing, Err: nil}
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-// BuildSummaryToolsUsed extracts unique tool names from step history into a comma-separated string.
+// BuildSummaryToolsUsed extracts unique tool names from step history.
 func BuildSummaryToolsUsed(steps []Step) string {
 	seen := make(map[string]bool)
 	var tools []string
@@ -229,10 +74,8 @@ func BuildSummaryToolsUsed(steps []Step) string {
 	return strings.Join(tools, ", ")
 }
 
-// ToolInfosToLLMTools converts goreact core.ToolInfo slice into gochat core.Tool slice
-// for native function calling via LLM's Tools parameter.
-// Each ToolInfo's Parameters are converted to full JSON Schema format.
-// Use this for L2/L3 stages where the model needs complete parameter definitions.
+// ToolInfosToLLMTools converts ToolInfo slice into gochat Tool slice
+// with full JSON Schema parameters for native function calling.
 func ToolInfosToLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
 	if len(infos) == 0 {
 		return nil
@@ -242,64 +85,19 @@ func ToolInfosToLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
 		params := buildJSONSchemaParams(info.Parameters)
 		tools = append(tools, gochatcore.Tool{
 			Name:        info.Name,
-			Description: info.Description,
+			Description: toolDescription(info),
 			Parameters:  params,
 		})
 	}
 	return tools
 }
 
-// ToolInfosToMinimalLLMTools converts ToolInfo slice into gochat core.Tool slice
-// with MINIMAL parameter schema (empty properties {}).
-//
-// Verified by Experiment 1 (TestExp1_QwenAcceptsMinimalNativeTools_EmptyParams):
-// Qwen 3.5 Flash accepts this format and returns structured tool_calls correctly.
-// Token savings: ~29% vs full schema (~50 tokens/tool vs ~70+ tokens/tool).
-//
-// Use this for L1 (routing) stage where the model only needs Name+Description
-// to make routing decisions — full parameter schemas are unnecessary overhead.
-func ToolInfosToMinimalLLMTools(infos []core.ToolInfo) []gochatcore.Tool {
-	if len(infos) == 0 {
-		return nil
+// toolDescription returns the best description: Prompt if non-empty, else Description.
+func toolDescription(info core.ToolInfo) string {
+	if info.Prompt != "" {
+		return info.Prompt
 	}
-	emptyParams := json.RawMessage(`{"type":"object","properties":{}}`)
-	tools := make([]gochatcore.Tool, 0, len(infos))
-	for _, info := range infos {
-		tools = append(tools, gochatcore.Tool{
-			Name:        info.Name,
-			Description: info.Description,
-			Parameters:  emptyParams,
-		})
-	}
-	return tools
-}
-
-// UpgradeToolsToFullSchema takes a list of tool names and returns only those tools
-// with FULL parameter JSON Schema. Tools not in the source list are omitted.
-//
-// This is the L3 stage: after L2 has identified which tools are needed via
-// semantic capability matching, we re-inject only those tools with complete
-// schemas so the LLM can generate correct tool_call arguments.
-func UpgradeToolsToFullSchema(selectedNames []string, allInfos []core.ToolInfo) []gochatcore.Tool {
-	if len(selectedNames) == 0 || len(allInfos) == 0 {
-		return nil
-	}
-	nameSet := make(map[string]bool, len(selectedNames))
-	for _, n := range selectedNames {
-		nameSet[n] = true
-	}
-	var upgraded []gochatcore.Tool
-	for _, info := range allInfos {
-		if nameSet[info.Name] {
-			params := buildJSONSchemaParams(info.Parameters)
-			upgraded = append(upgraded, gochatcore.Tool{
-				Name:        info.Name,
-				Description: info.Description,
-				Parameters:  params,
-			})
-		}
-	}
-	return upgraded
+	return info.Description
 }
 
 // buildJSONSchemaParams converts core.Parameter slice into JSON Schema RawMessage.
@@ -353,294 +151,35 @@ func paramTypeToSchema(t string) string {
 	}
 }
 
-// BuildSkillsSystemPrompt builds a system-prompt-level skills section.
-// Skills contain domain-specific behavioral instructions and should be injected
-// into the System Prompt layer (not User Prompt) so they define agent capabilities.
-func BuildSkillsSystemPrompt(skills []*core.Skill) string {
-	if len(skills) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("\n<available_capabilities>\n")
-	sb.WriteString("The following specialized capabilities (skills) are active for this session.\n")
-	sb.WriteString("Each skill provides domain-specific instructions — reference them when planning your approach.\n\n")
-	for _, s := range skills {
-		sb.WriteString(fmt.Sprintf("- **%s**", s.Name))
-		if s.Description != "" {
-			sb.WriteString(fmt.Sprintf(": %s", s.Description))
-		}
-		if s.AllowedTools != "" {
-			sb.WriteString(fmt.Sprintf(" [tools: %s]", s.AllowedTools))
-		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("</available_capabilities>\n")
-	return sb.String()
+// BuildAgentCoordinationGuidance returns the system prompt section for agent orchestration tools.
+func BuildAgentCoordinationGuidance() string {
+	return `## Agent Coordination
+
+Agent coordination has two purposes: (a) handing off tasks that fall outside your role to a specialist, and (b) parallelizing large workloads by dispatching independent sub-tasks to multiple agents simultaneously.
+
+Do NOT use these tools for tasks you can handle directly. Your first responsibility is to complete the work yourself.
+
+### When to delegate to another agent
+- The user asks for something that is not in your area of expertise (e.g. you are a code reviewer and they ask for legal advice).
+- The task requires a specialized capability you do not have access to.
+- The user explicitly requests that another agent handle the task.
+
+In those cases, use FindAgent to find a matching agent, then Delegate.
+
+### When to parallelize by spawning multiple agents
+- The current task involves many independent sub-tasks that could run in parallel (e.g. reviewing 10 files, researching 5 topics, testing 3 configurations).
+- You estimate that the total task would take significantly longer if done sequentially — dispatching sub-tasks to agents with the same capabilities as yourself can reduce wall-clock time.
+- Each sub-task is self-contained and does not depend on results from other sub-tasks.
+
+In those cases, call Delegate multiple times in the same Act phase with different sub-tasks — they will run in parallel. Use CollectResults to gather all outcomes.
+
+### When to create a new agent
+- A specialized task type repeats frequently, and no existing agent covers it.
+- The user asks you to define a new expert role with a custom system prompt.
+
+When creating an agent, call SkillList to query all available skills (your SkillsCatalog only shows your own configured skills). Select those that match the new agent's role and pass them as an array in the skills parameter. If no skill fits, describe the capability in the agent's introduction instead.
+
+### When to rank an agent
+- After a delegated task completes and you have evaluated the result.
+- Scoring helps the system learn which agents perform well for which kinds of tasks.`
 }
-
-// BuildCapabilitiesList builds a compact L1 summary of skills for Phase 1 selection prompt.
-// Format: "- **name**: description [tools: tool1, tool2]"
-func BuildCapabilitiesList(skills []*core.Skill) string {
-	if len(skills) == 0 {
-		return "(no specialized capabilities available)"
-	}
-	var sb strings.Builder
-	for _, s := range skills {
-		sb.WriteString(fmt.Sprintf("- **%s**", s.Name))
-		if s.Description != "" {
-			sb.WriteString(fmt.Sprintf(": %s", s.Description))
-		}
-		if s.AllowedTools != "" {
-			sb.WriteString(fmt.Sprintf(" [tools: %s]", s.AllowedTools))
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-// EstimateTokensForTools estimates the total token count for a set of LLM tools
-// by measuring their JSON serialization size.
-func EstimateTokensForTools(tools []gochatcore.Tool, estimateFn func(string) int) int64 {
-	if estimateFn == nil || len(tools) == 0 {
-		return 0
-	}
-	var total int64
-	for _, t := range tools {
-		b, _ := json.Marshal(t)
-		total += int64(estimateFn(string(b)))
-	}
-	return total
-}
-
-// ---------------------------------------------------------------------------
-// Skill Activation (Two-Phase Think)
-// ---------------------------------------------------------------------------
-
-// ActivatedSkillContext holds the loaded L2 instructions and filtered tools
-// for a selected skill, produced by Reactor.ActivateSkill().
-type ActivatedSkillContext struct {
-	Skill            *core.Skill       // The selected skill (with full L2 instructions)
-	Instructions     string            // L2 instructions text (for injection into Phase 2 prompt)
-	FilteredTools    []gochatcore.Tool // Tools filtered by skill.AllowedTools (LLM native format)
-	FilteredInfos    []core.ToolInfo   // Same tools in goreact ToolInfo format (for display in prompt)
-	ResourceBasePath string            // 🆕 P3: skill.RootDir — base path for scripts/, references/, assets/
-}
-
-// ActivateSkill loads a skill's L2 instructions and filters available tools
-// by its allowed-tools list. Returns an activation context ready for Phase 2 thinking.
-//
-// If skillName is empty or not found, returns nil with no error (no-skill mode).
-// If found but has no allowed-tools restriction, all registered tools are included.
-func (r *Reactor) ActivateSkill(skillName string, allToolInfos []core.ToolInfo) (*ActivatedSkillContext, error) {
-	if skillName == "" {
-		return nil, nil
-	}
-
-	chosen, err := r.skillRegistry.GetSkill(skillName)
-	if err != nil {
-		return nil, fmt.Errorf("skill %q not found: %w", skillName, err)
-	}
-
-	filteredInfos := filterToolsByAllowed(allToolInfos, chosen.AllowedTools)
-	llmTools := ToolInfosToLLMTools(filteredInfos)
-
-	if chosen.AllowedTools != "" && chosen.AllowedTools != "*" {
-		warnMentionedButNotAllowed(chosen.Name, chosen.Instructions, chosen.AllowedTools, filteredInfos)
-	}
-
-	return &ActivatedSkillContext{
-		Skill:            chosen,
-		Instructions:     chosen.Instructions,
-		FilteredTools:    llmTools,
-		FilteredInfos:    filteredInfos,
-		ResourceBasePath: chosen.RootDir,
-	}, nil
-}
-
-// filterToolsByAllowed filters tool infos to only those whose names appear in
-// the comma-separated allowedTools string. If allowedTools is empty, returns all.
-func filterToolsByAllowed(infos []core.ToolInfo, allowedTools string) []core.ToolInfo {
-	if allowedTools == "" || allowedTools == "*" {
-		return infos
-	}
-
-	allowed := make(map[string]bool)
-	for _, name := range strings.Split(allowedTools, ",") {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			allowed[name] = true
-		}
-	}
-
-	var filtered []core.ToolInfo
-	for _, info := range infos {
-		if allowed[info.Name] {
-			filtered = append(filtered, info)
-		}
-	}
-	return filtered
-}
-
-// warnMentionedButNotAllowed checks if a skill's Instructions text mentions tool names
-// that are NOT in its AllowedTools list. This catches configuration errors where
-// the SKILL.md tells the LLM to use tools it won't have access to in Phase 2.
-func warnMentionedButNotAllowed(skillName, instructions, allowedTools string, filtered []core.ToolInfo) {
-	mentioned := extractMentionedToolNames(instructions)
-	if len(mentioned) == 0 {
-		return
-	}
-
-	allowedSet := make(map[string]bool)
-	for _, name := range strings.Split(allowedTools, ",") {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			allowedSet[name] = true
-			allowedSet[strings.ToLower(name)] = true
-		}
-	}
-
-	filteredSet := make(map[string]bool)
-	for _, info := range filtered {
-		filteredSet[info.Name] = true
-		filteredSet[strings.ToLower(info.Name)] = true
-	}
-
-	var missing []string
-	for _, m := range mentioned {
-		lower := strings.ToLower(m)
-		if !allowedSet[m] && !allowedSet[lower] && !filteredSet[m] && !filteredSet[lower] {
-			missing = append(missing, m)
-		}
-	}
-
-	if len(missing) > 0 {
-		logger.Warn("skill Instructions mention tools not in AllowedTools",
-			"skill", skillName,
-			"allowedTools", allowedTools,
-			"missing", missing)
-	}
-}
-
-// extractMentionedToolNames scans text for known tool name patterns.
-// It matches words that look like tool names (lowercase with underscores, e.g., "read", "web_search").
-func extractMentionedToolNames(text string) []string {
-	var names []string
-	seen := make(map[string]bool)
-
-	knownToolPatterns := []string{
-		// File operations
-		"bash", "read", "write", "glob", "grep", "file_edit",
-		// Execution
-		"run_script", "repl",
-		// Network
-		"web_search", "web_fetch",
-		// Task management
-		"todo_write", "todo_read", "todo_execute",
-		// Memory
-		"memory_save", "memory_search",
-		// Communication
-		"email", "ask_user", "ask_permission",
-		// Orchestration
-		"subagent", "subagent_result", "subagent_list",
-		"task_create", "task_result", "task_list",
-		"skill_create", "skill_list",
-		// Platform-specific (not registered by default but may be added)
-		"crontab", "launchd", "systemd",
-	}
-
-	for _, pattern := range knownToolPatterns {
-		if containsWord(text, pattern) && !seen[pattern] {
-			names = append(names, pattern)
-			seen[pattern] = true
-		}
-	}
-
-	return names
-}
-
-// containsWord checks if `word` appears as a whole word (not a substring) in text.
-func containsWord(text, word string) bool {
-	text = strings.ToLower(text)
-	word = strings.ToLower(word)
-	for {
-		idx := strings.Index(text, word)
-		if idx == -1 {
-			return false
-		}
-		before := 0
-		if idx > 0 {
-			before = idx - 1
-		}
-		after := idx + len(word)
-		if after < len(text) {
-			after++
-		}
-		beforeOK := before < 0 || !isWordChar(rune(text[before]))
-		afterOK := after >= len(text) || !isWordChar(rune(text[after-1]))
-		if beforeOK && afterOK {
-			return true
-		}
-		text = text[idx+len(word):]
-	}
-}
-
-func isWordChar(c rune) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
-}
-
-// BuildThinkPrompt constructs the Think phase prompt (Phase 2) using Go template.
-// It includes classified intent, memory records, user input, optionally
-// an activated skill's L2 instructions with filtered tool list, and L3 resolved
-// references.
-// The registry parameter controls intent-specific decision rules; if nil, defaults are used.
-func BuildThinkPrompt(input string, intent *Intent, memoryRecords []core.MemoryRecord, actCtx *ActivatedSkillContext, registry IntentRegistry, l3Refs *ResolvedReferences) string {
-	if registry == nil {
-		registry = NewDefaultIntentRegistry()
-	}
-
-	intentSection := "(no intent)"
-	if intent != nil {
-		b, _ := json.Marshal(intent)
-		intentSection = string(b)
-	}
-
-	memorySection := ""
-	if len(memoryRecords) > 0 {
-		memorySection = core.FormatMemoryRecords(memoryRecords)
-	}
-
-	data := thinkPromptData{
-		IntentSection: intentSection,
-		MemorySection: memorySection,
-		Input:         input,
-		IntentRules:   registry.FormatDecisionRules(),
-	}
-
-	if actCtx != nil && actCtx.Skill != nil {
-		data.HasActiveSkill = true
-		data.ActiveSkillName = actCtx.Skill.Name
-		data.ActiveSkillDesc = actCtx.Skill.Description
-		data.ActiveSkillInstructions = actCtx.Instructions
-		data.ResourceBasePath = actCtx.ResourceBasePath
-
-		var toolNames []string
-		for _, t := range actCtx.FilteredInfos {
-			toolNames = append(toolNames, t.Name)
-		}
-		data.FilteredToolList = strings.Join(toolNames, ", ")
-	}
-
-	// L3 Progressive Disclosure: inject resolved reference content
-	if l3Refs != nil {
-		data.L3ReferencesContent = l3Refs.Content
-		data.L3ReferencesLinks = l3Refs.Links
-	}
-
-	result, err := renderThinkPrompt(data)
-	if err != nil {
-		return fmt.Sprintf("think prompt render error: %v", err)
-	}
-	return result
-}
-
-// BuildIntentPrompt constructs the intent classification prompt using Go template.

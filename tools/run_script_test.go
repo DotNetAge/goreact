@@ -12,7 +12,7 @@ func TestRunScript_Info(t *testing.T) {
 	tool := NewRunScriptTool()
 	info := tool.Info()
 
-	if info.Name != "run_script" {
+	if info.Name != "RunScript" {
 		t.Errorf("expected name 'run_script', got %q", info.Name)
 	}
 	if info.SecurityLevel != core.LevelSensitive {

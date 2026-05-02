@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+// TokenUsage records the token consumption for a single LLM call.
+// It is both returned in CallResult and persisted via SessionStore for billing/monitoring.
+type TokenUsage struct {
+	Timestamp    time.Time `json:"timestamp"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	RemainTokens int       `json:"remain_tokens"`
+}
+
 // SlideEvent is emitted when the ContextWindow slides out old messages.
 // It contains the messages that were evicted, so consumers (e.g. RAG/Memory)
 // can semantically process them into long-term knowledge.
@@ -69,6 +78,14 @@ type SessionStore interface {
 
 	// ListSessions returns metadata for all sessions, sorted by LastActivityAt descending (newest first).
 	ListSessions(ctx context.Context) ([]SessionInfo, error)
+
+	// AppendTokenUsage persists a token usage record for a session.
+	// Called by LLMCaller after each completed Call/CallStream/CallGate.
+	AppendTokenUsage(ctx context.Context, sessionID string, usage TokenUsage) error
+
+	// GetTokenUsages retrieves all token usage records for a session.
+	// Used for billing, monitoring, and external token statistics.
+	GetTokenUsages(ctx context.Context, sessionID string) ([]TokenUsage, error)
 }
 
 // NoopSlideHandler is a no-op SlideHandler for implementations that don't need it.

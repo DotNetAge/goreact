@@ -22,7 +22,7 @@ type AskUser struct {
 func NewAskUserTool() core.FuncTool {
 	return &AskUser{
 		info: &core.ToolInfo{
-			Name:        "ask_user",
+			Name:        "AskUser",
 			Description: "Asks the user multiple choice questions to gather information, clarify ambiguity, understand preferences, make decisions or offer them choices.",
 			Prompt: `Use this tool when you need to ask the user questions during execution. This allows you to:
 1. Gather user preferences or requirements
@@ -64,7 +64,7 @@ func (t *AskUser) Execute(ctx context.Context, params map[string]any) (any, erro
 		"_interaction": &core.InteractionRequest{
 			Type:     core.InteractionAskUser,
 			Question: question,
-			ToolName: "ask_user",
+			ToolName: "AskUser",
 		},
 		"status": "waiting_for_user",
 	}, nil

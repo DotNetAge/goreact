@@ -8,6 +8,7 @@ import (
 
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/reactor"
+	"github.com/DotNetAge/goreact/tools"
 	"github.com/google/uuid"
 )
 
@@ -116,6 +117,13 @@ type agentSetup struct {
 
 	// Behavior rules
 	ruleRegistry core.RuleRegistry
+
+	// Unified Prompt (if nil, built from config defaults)
+	prompt *reactor.Prompt
+
+	// Agent orchestration
+	agentRegistry tools.AgentDefinitionRegistry
+	runtimeDir    *core.RuntimeDirectory
 }
 
 // AgentOption configures an Agent during creation via NewAgent.
@@ -217,6 +225,29 @@ func WithEventBus(bus reactor.EventBus) AgentOption {
 func WithSessionStore(store core.SessionStore) AgentOption {
 	return func(s *agentSetup) {
 		s.sessionStore = store
+	}
+}
+
+// WithPrompt sets a custom Prompt struct for system prompt generation.
+// If not set, NewAgent builds a default Prompt from the AgentConfig.
+// This replaces the older SystemPrompt approach with the structured Prompt sections.
+func WithPrompt(p *reactor.Prompt) AgentOption {
+	return func(s *agentSetup) {
+		s.prompt = p
+	}
+}
+
+// WithAgentRegistry sets the agent definition registry for FindAgent/CreateAgent tools.
+func WithAgentRegistry(reg tools.AgentDefinitionRegistry) AgentOption {
+	return func(s *agentSetup) {
+		s.agentRegistry = reg
+	}
+}
+
+// WithRuntimeDirectory sets the runtime directory for agent metadata tracking.
+func WithRuntimeDirectory(dir *core.RuntimeDirectory) AgentOption {
+	return func(s *agentSetup) {
+		s.runtimeDir = dir
 	}
 }
 
@@ -335,23 +366,6 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	config := setup.config
 	model := setup.model
 
-	// Resolve system prompt: AgentConfig.SystemPrompt > template render > fallback
-	systemPrompt := config.Introduction
-	if systemPrompt == "" {
-		rulesText := ""
-		if setup.ruleRegistry != nil {
-			rulesText = setup.ruleRegistry.FormatPromptSection()
-		}
-		if rendered, err := reactor.RenderDefaultSystemPrompt(
-			config.Name, config.Role, config.Description, config.Introduction, rulesText,
-		); err == nil {
-			systemPrompt = rendered
-		}
-
-	}
-
-	config.Introduction = systemPrompt
-
 	// Validate required fields
 	if model.APIKey == "" {
 		return nil, fmt.Errorf("goreact: ModelConfig.APIKey is required, got empty. Use goreact.WithModel(model) where model.APIKey is set")
@@ -384,9 +398,71 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	reactorOpts = append(reactorOpts, reactor.WithSessionStore(setup.sessionStore))
 
 	// Build ReactorConfig from ModelConfig — align all generation parameters
-	reactorConfig := buildReactorConfig(model, systemPrompt)
+	reactorConfig := buildReactorConfig(model, config.Introduction)
+
+	// Build default Prompt if none provided
+	if setup.prompt == nil {
+		p := reactor.NewDefaultPrompt(config.Name, config.Role, config.Description, config.Introduction)
+		p.ThinkInstr = "Decide the next action based on the user's input and conversation history.\nDecision must be one of: act (call tools), answer (respond directly), clarify (ask for more info).\nOutput JSON: {\"decision\": \"...\", \"reasoning\": \"...\", \"tool_calls\": {...}, \"final_answer\": \"...\", \"is_final\": false}"
+		p.ExecutionGuidelines = reactor.BuildExecutionGuidelines()
+		p.ToolUsage = reactor.BuildToolUsageGuidelines()
+		p.AgentCoordination = reactor.BuildAgentCoordinationGuidance()
+		p.ToneAndStyle = reactor.BuildToneAndStyle()
+		p.SystemReminders = reactor.BuildSystemReminders()
+		p.OutputEfficiency = reactor.BuildOutputEfficiency()
+		reactorOpts = append(reactorOpts, reactor.WithPrompt(p))
+	} else {
+		reactorOpts = append(reactorOpts, reactor.WithPrompt(setup.prompt))
+	}
+
+	if setup.agentRegistry != nil {
+		reactorOpts = append(reactorOpts, reactor.WithAgentRegistry(setup.agentRegistry))
+	}
+	if setup.runtimeDir != nil {
+		reactorOpts = append(reactorOpts, reactor.WithRuntimeDirectory(setup.runtimeDir))
+	}
 
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)
+
+	// Populate skills catalog on the Prompt — only disclose skills matching AgentConfig.Skills
+	if p := r.Prompt(); p != nil {
+		allSkills := r.SkillRegistry().ListSkills()
+		var matched []*core.Skill
+		if len(config.Skills) > 0 {
+			skillSet := make(map[string]bool, len(config.Skills))
+			for _, name := range config.Skills {
+				skillSet[name] = true
+			}
+			for _, s := range allSkills {
+				if skillSet[s.Name] {
+					matched = append(matched, s)
+				}
+			}
+		}
+		if catalog := reactor.BuildSkillsCatalog(matched); catalog != "" {
+			p.SkillsCatalog = catalog
+		}
+	}
+
+	// Set SpawnFunc so delegate tool can create sub-agents
+	r.SpawnFunc = func(ctx context.Context, agentName, task string) (string, error) {
+		subConfig := *config
+		subConfig.Name = agentName
+		sub, err := NewAgent(
+			WithConfig(&subConfig),
+			WithModel(model),
+			WithEventBus(r.EventBus()),
+			WithMemory(setup.memory),
+		)
+		if err != nil {
+			return "", fmt.Errorf("create sub-agent %q: %w", agentName, err)
+		}
+		result, err := sub.Ask(fmt.Sprintf("sub-%s", agentName), task)
+		if err != nil {
+			return "", fmt.Errorf("sub-agent %q execution: %w", agentName, err)
+		}
+		return result.Answer, nil
+	}
 
 	a := &Agent{
 		config:       config,
@@ -1009,7 +1085,7 @@ func (a *Agent) Switch(config *core.AgentConfig, model *core.ModelConfig) {
 
 	a.reactor = newReactor
 
-	a.emitSwitchEvent()
+	// a.emitSwitchEvent()
 }
 
 // resolveSessionForRole attempts to restore the most recent session for the given role.
@@ -1035,14 +1111,4 @@ func (a *Agent) resolveSessionForRole(role string) *core.ContextWindow {
 	}
 
 	return nil
-}
-
-func (a *Agent) emitSwitchEvent() {
-	if a.eventBus != nil {
-		a.eventBus.Emit(core.ReactEvent{Type: core.AgentSwitched, Data: map[string]any{
-			"name":        a.config.Name,
-			"model":       a.model.Name,
-			"description": a.config.Description,
-		}})
-	}
 }

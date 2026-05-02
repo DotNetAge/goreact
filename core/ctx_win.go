@@ -180,6 +180,7 @@ func (w *ContextWindow) calculateTotalTokens(estimateFn func(string) int) int64 
 
 // Slide batch-removes oldest messages until token usage drops to TargetRatio.
 // It always preserves at least MinPreserveMessages messages.
+// System role messages are NEVER evicted — they are always skipped.
 // Returns the evicted messages so callers can forward them to RAG/Memory.
 //
 // Performance: O(n) total — uses incremental token tracking instead of
@@ -199,12 +200,27 @@ func (w *ContextWindow) Slide(config SlideConfig, estimateFn func(string) int) S
 
 	totalTokens := w.calculateTotalTokens(estimate)
 
-	for len(w.Messages) > config.MinPreserveMessages {
+	// Count non-system messages for the preserve check
+	nonSystemCount := 0
+	for _, m := range w.Messages {
+		if m.Role != "system" {
+			nonSystemCount++
+		}
+	}
+
+	for nonSystemCount > config.MinPreserveMessages && len(w.Messages) > 0 {
 		if totalTokens <= targetTokens {
 			break
 		}
 
 		removed := w.Messages[0]
+
+		// Never evict system role messages
+		if removed.Role == "system" {
+			w.Messages = w.Messages[1:]
+			continue
+		}
+
 		removedTokens := int64(estimate(removed.Content))
 
 		w.Messages = w.Messages[1:]
@@ -212,6 +228,7 @@ func (w *ContextWindow) Slide(config SlideConfig, estimateFn func(string) int) S
 		slidedTokens += removedTokens
 
 		totalTokens -= removedTokens
+		nonSystemCount--
 
 		if config.MaxSlideBatch > 0 && len(slided) >= config.MaxSlideBatch {
 			break

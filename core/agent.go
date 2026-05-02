@@ -22,6 +22,7 @@ type AgentConfig struct {
 	Description  string `json:"description" yaml:"description"`   // Description: role/capability description (≤1024 chars). Used by Orchestrator routing AND Agent self-judgment.
 	Introduction string `json:"introduction" yaml:"introduction"` // Introduction: alias for system prompt / body content. When empty, rendered from template.
 	Model        string `json:"model" yaml:"model"`               // Model is the model name
+	Skills       []string `json:"skills,omitempty" yaml:"skills,omitempty"` // Skill names this agent requires. Activated when the agent is spawned.
 
 	// --- Orchestration fields (all optional, safe zero-values) ---
 	Body                string `json:"body,omitempty" yaml:"body,omitempty"`                               // Full system prompt body. Only loaded into ContextWindow during task execution.

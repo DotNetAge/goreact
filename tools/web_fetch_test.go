@@ -15,8 +15,8 @@ import (
 func TestWebFetchTool_Info(t *testing.T) {
 	tool := NewWebFetchTool()
 	info := tool.Info()
-	if info.Name != "web_fetch" {
-		t.Errorf("Name = %q, want %q", info.Name, "web_fetch")
+	if info.Name != "WebFetch" {
+		t.Errorf("Name = %q, want %q", info.Name, "WebFetch")
 	}
 	if len(info.Parameters) < 2 {
 		t.Error("expected at least 2 parameters (url + prompt)")

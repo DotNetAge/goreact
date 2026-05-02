@@ -19,12 +19,10 @@ import (
 // RegistryHub provides access to all registries and the tool executor.
 type RegistryHub interface {
 	SkillRegistry() core.SkillRegistry
-	IntentRegistry() IntentRegistry
 	ToolRegistry() core.ToolRegistry
 	ToolExecutor() core.ToolExecutor
 	RuleRegistry() core.RuleRegistry
 	RegisterTool(tool core.FuncTool) error
-	RegisterIntent(def IntentDefinition) error
 }
 
 // SessionManager provides context window and session storage management.

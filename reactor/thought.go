@@ -29,22 +29,23 @@ type Thought struct {
 	IsFinal     bool    `json:"is_final" yaml:"is_final"`
 	FinalAnswer string  `json:"final_answer,omitempty" yaml:"final_answer"`
 
-	// Action fields (used when Decision == "act")
+	// ActionTarget + ActionParams: single tool call (legacy path, backward compatible)
 	ActionTarget string         `json:"action_target,omitempty" yaml:"action_target"`
 	ActionParams map[string]any `json:"action_params,omitempty" yaml:"action_params"`
 
-	// Clarification (used when Decision == "clarify")
+	// ToolCalls holds multiple tool calls for batch parallel execution (v2).
+	// Map key = tool name, value = parameter map.
+	// When set, Act executes all tools in parallel: sync tools wait for result,
+	// async tools (IsAsync=true) run in goroutines and return {task_id, status: "running"}.
+	ToolCalls map[string]map[string]any `json:"tool_calls,omitempty" yaml:"tool_calls,omitempty"`
+
 	ClarificationQuestion string `json:"clarification_question,omitempty" yaml:"clarification_question"`
 
-	// Delegate (used when Decision == "delegate")
-	DelegateTarget string `json:"delegate_target,omitempty" yaml:"delegate_target"` // agent name to delegate to
-	DelegatePrompt string `json:"delegate_prompt,omitempty" yaml:"delegate_prompt"` // task prompt for the delegate
+	DelegateTarget string `json:"delegate_target,omitempty" yaml:"delegate_target"`
+	DelegatePrompt string `json:"delegate_prompt,omitempty" yaml:"delegate_prompt"`
 
-	// SelectedSkill is the skill chosen in Phase 1 of two-phase thinking.
-	// Empty string means no specific skill was selected (direct tool use / answer mode).
-	SelectedSkill string `json:"selected_skill,omitempty" yaml:"selected_skill"`
-
-	Timestamp time.Time `json:"timestamp" yaml:"timestamp"`
+	SelectedSkill string    `json:"selected_skill,omitempty" yaml:"selected_skill"`
+	Timestamp     time.Time `json:"timestamp" yaml:"timestamp"`
 }
 
 // jsonBlockRegex matches ```json ... ``` code blocks.

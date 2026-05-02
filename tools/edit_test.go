@@ -130,7 +130,7 @@ func TestEdit(t *testing.T) {
 	})
 
 	t.Run("Name and Description", func(t *testing.T) {
-		if edit.Info().Name != "file_edit" {
+		if edit.Info().Name != "FileEdit" {
 			t.Errorf("Expected 'file_edit', got %q", edit.Info().Name)
 		}
 		if edit.Info().Description == "" {

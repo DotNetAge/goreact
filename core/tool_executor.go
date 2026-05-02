@@ -29,6 +29,7 @@ type toolExecutorConfig struct {
 	postHooks         []Hook
 	resultLimits      ToolResultLimits
 	eventEmitter      func(ReactEvent)
+	resultStore       *ResultStore
 	maxPersistChars   int
 	persistDir        string
 }
@@ -53,6 +54,10 @@ func WithResultLimits(limits ToolResultLimits) ExecutorOption {
 
 func WithEventEmitter(emitter func(ReactEvent)) ExecutorOption {
 	return func(c *toolExecutorConfig) { c.eventEmitter = emitter }
+}
+
+func WithResultStore(store *ResultStore) ExecutorOption {
+	return func(c *toolExecutorConfig) { c.resultStore = store }
 }
 
 func WithMaxPersistChars(n int) ExecutorOption {
@@ -167,8 +172,12 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 		}
 	}
 
+	// Inject ToolContext so bridge tools (delegate, etc.) can access event bus
+	toolCtx := &ToolContext{EmitEvent: e.cfg.eventEmitter, ResultStore: e.cfg.resultStore}
+	execCtx := WithToolContext(ctx, toolCtx)
+
 	start := time.Now()
-	result, err := tool.Execute(ctx, params)
+	result, err := tool.Execute(execCtx, params)
 	duration := time.Since(start)
 
 	if len(e.cfg.postHooks) > 0 {
