@@ -10,13 +10,13 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Read 文件读取工具
+// Read implements a tool for reading files from the filesystem.
 type Read struct {
 	info   *core.ToolInfo
 	limits core.FileReadingLimits
 }
 
-// NewReadTool 创建文件读取工具
+// NewReadTool creates a file read tool with default limits.
 func NewReadTool() core.FuncTool {
 	return NewReadToolWithLimits(core.DefaultFileReadingLimits())
 }

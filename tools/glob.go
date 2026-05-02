@@ -15,7 +15,7 @@ type GlobTool struct {
 	MaxResults int
 }
 
-// NewGlobTool 创建 Glob 工具
+// NewGlobTool creates a Glob tool.
 func NewGlobTool() core.FuncTool {
 	return &GlobTool{MaxResults: 200}
 }
@@ -59,7 +59,7 @@ func (t *GlobTool) Execute(ctx context.Context, params map[string]any) (any, err
 		searchPath = p
 	}
 
-	// 验证路径是否存在且是目录
+	// Verify the search path exists and is a directory
 	info, err := os.Stat(searchPath)
 	if err != nil {
 		return nil, fmt.Errorf("search path error: %w", err)

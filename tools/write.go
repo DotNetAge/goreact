@@ -9,7 +9,7 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Write 文件写入工具
+// Write implements a tool for writing files to the filesystem.
 type Write struct {
 	info *core.ToolInfo
 }
@@ -22,7 +22,7 @@ Usage:
 - ALWAYS prefer editing existing files using file_edit tool in the codebase. NEVER write new files unless explicitly required.
 - The path parameter must be an absolute path, not a relative path.`
 
-// NewWriteTool 创建文件写入工具
+// NewWriteTool creates a file write tool.
 func NewWriteTool() core.FuncTool {
 	return &Write{
 		info: &core.ToolInfo{
@@ -56,18 +56,18 @@ func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error)
 		return nil, err
 	}
 
-	// 安全检查
+	// Security check
 	if err := ValidateFileSafety(path); err != nil {
 		return nil, err
 	}
 
-	// 确保目录存在
+	// Ensure the parent directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// 检查是否是追加模式
+	// Check if append mode is enabled
 	appendMode := false
 	if append, ok := params["append"].(bool); ok {
 		appendMode = append
@@ -75,13 +75,13 @@ func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error)
 
 	var file *os.File
 	if appendMode {
-		// 追加模式
+		// Append mode
 		file, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open file for appending: %w", err)
 		}
 	} else {
-		// 覆盖模式
+		// Overwrite mode
 		file, err = os.Create(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file: %w", err)
@@ -89,13 +89,13 @@ func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error)
 	}
 	defer file.Close()
 
-	// 写入内容
+	// Write content
 	bytesWritten, err := file.WriteString(content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write content: %w", err)
 	}
 
-	// 获取文件信息
+	// Get file info
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat file: %w", err)

@@ -16,7 +16,7 @@ type GrepTool struct {
 	MaxOutputChars int // Maximum characters in output (second layer defense)
 }
 
-// NewGrepTool 创建 Grep 工具
+// NewGrepTool creates a Grep tool.
 func NewGrepTool() core.FuncTool {
 	return &GrepTool{
 		MaxResults:     100,

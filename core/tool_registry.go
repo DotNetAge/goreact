@@ -12,8 +12,8 @@ type ToolRegistry interface {
 }
 
 type ToolFilter struct {
-	Terms        string        // 匹配语义内容
-	Security     SecurityLevel // 匹配安全等级
-	Keywords     []string      // 匹配关键词
-	AllowedNames []string      // 匹配工具名称
+	Terms        string        // semantic matching terms
+	Security     SecurityLevel // matching security level
+	Keywords     []string      // matching keywords
+	AllowedNames []string      // matching tool names
 }

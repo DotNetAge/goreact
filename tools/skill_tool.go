@@ -37,7 +37,7 @@ When you identify a skill from the available capabilities list that matches the 
 
 Always load a skill before attempting tasks that require its domain expertise.
 
-Available skills are listed in the system prompt under "## 可用的技能".`,
+Available skills are listed in the system prompt under "## Available Skills".`,
 		Tags: []string{"skill", "capability"},
 		Parameters: []core.Parameter{
 			{

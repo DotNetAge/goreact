@@ -79,7 +79,7 @@ func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any,
 		return nil, err
 	}
 
-	// 安全检查
+	// Security check
 	if err := ValidateFileSafety(filePath); err != nil {
 		return nil, err
 	}

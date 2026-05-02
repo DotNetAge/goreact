@@ -28,7 +28,7 @@ const (
 //	    Description: "Never delete production data",
 //	    Scope:       core.ScopeGlobal,
 //	    Priority:    100,
-//	    Content:     "绝对禁止删除生产环境的数据文件。如需修改，必须先备份。",
+//	    Content:     "Absolutely prohibited to delete production data files. Any modification must be backed up first.",
 //	    Enabled:     true,
 //	}
 type Rule struct {

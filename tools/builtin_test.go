@@ -10,10 +10,10 @@ import (
 )
 
 func TestGrep(t *testing.T) {
-	// 创建 Grep 工具
+	// Create Grep tool
 	grep := NewGrepTool()
 
-	// 测试在当前文件中查找模式
+	// Test searching for a pattern in the current file
 	result, err := grep.Execute(context.Background(), map[string]any{"pattern": "TestGrep", "path": "./builtin_test.go"})
 	if err != nil {
 		t.Errorf("Expected no error for grep, got %v", err)

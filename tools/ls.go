@@ -55,18 +55,18 @@ func (l *LS) Info() *core.ToolInfo {
 }
 
 func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
-	// 获取目录路径（默认为当前目录）
+	// Get directory path (defaults to current directory)
 	dirPath := "."
 	if path, ok := params["path"].(string); ok && path != "" {
 		dirPath = path
 	}
 
-	// 安全检查
+	// Security check
 	if err := ValidateFileSafety(dirPath); err != nil {
 		return nil, err
 	}
 
-	// 检查路径是否存在
+	// Check if path exists
 	info, err := os.Stat(dirPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -79,7 +79,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 		return nil, fmt.Errorf("path is not a directory: %s", dirPath)
 	}
 
-	// 获取参数
+	// Get parameters
 	recursive := false
 	if rec, ok := params["recursive"].(bool); ok {
 		recursive = rec
@@ -90,17 +90,17 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 		showHidden = hidden
 	}
 
-	// 读取目录内容
+	// Read directory contents
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	// 构建结果
+	// Build result
 	var items []map[string]any
 
 	for _, entry := range entries {
-		// 跳过隐藏文件（除非指定显示）
+		// Skip hidden files unless show_hidden is set
 		if !showHidden && strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -120,7 +120,7 @@ func (l *LS) Execute(ctx context.Context, params map[string]any) (any, error) {
 			"mode":    finfo.Mode().String(),
 		}
 
-		// 如果是递归模式且是目录，继续读取
+		// If recursive mode and entry is a directory, list its children
 		if recursive && entry.IsDir() {
 			subDir := filepath.Join(dirPath, entry.Name())
 			subEntries, err := os.ReadDir(subDir)
