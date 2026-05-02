@@ -16,27 +16,6 @@ import (
 
 var logger = slog.Default()
 
-// AgentOrchestrator is the minimal interface Reactor needs for multi-agent coordination.
-// Defined locally to avoid import cycle with the orchestration package.
-// The orchestration.Orchestrator implementation satisfies this interface.
-// Also satisfies tools.AgentOrchestrator (superset with TaskStore method).
-type AgentOrchestrator interface {
-	// Delegation
-	DelegateTo(ctx context.Context, agentName, taskPrompt, parentID string, metadata map[string]any) (*DelegateResult, error)
-	WaitForResult(ctx context.Context, taskID string) (*core.Task, error)
-
-	// Task store access (for tool-layer task queries)
-	ListTasks(parentID string) ([]*core.Task, error)
-	GetTask(taskID string) (*core.Task, error)
-}
-
-// DelegateResult holds the result of a delegation request.
-// Mirrors orchestration.DelegateResult to avoid import cycle.
-type DelegateResult struct {
-	TaskID   string
-	ResultCh <-chan any
-}
-
 const (
 	historyTokenBudgetRatio = 0.7
 	StreamChannelBufferSize = 256
@@ -98,24 +77,24 @@ type RunResult struct {
 	Experience            *core.ExperienceData `json:"experience,omitempty" yaml:"experience,omitempty"`
 }
 
-// ReActor is the public interface for the T-A-O reactor.
+// Runner is the public interface for the T-A-O reactor.
 // External consumers only need Run/RunFromSnapshot for task execution.
-type ReActor interface {
+type Runner interface {
 	Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error)
 	RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, newInput string) (*RunResult, error)
 }
 
-// ReActorInternal extends ReActor with individual T-A-O phase access.
+// TAORunner extends Runner with individual T-A-O phase access.
 // Used by test code and internal orchestration that needs fine-grained control.
-type ReActorInternal interface {
-	ReActor
+type TAORunner interface {
+	Runner
 	Think(ctx *ReactContext) (int, error)
 	Act(ctx *ReactContext) error
 	Observe(ctx *ReactContext) error
 	CheckTermination(ctx *ReactContext) (bool, string)
 }
 
-var _ ReActorInternal = (*Reactor)(nil)
+var _ TAORunner = (*Reactor)(nil)
 
 type Reactor struct {
 	config         ReactorConfig
@@ -138,7 +117,7 @@ type Reactor struct {
 	slideConfig   core.SlideConfig
 
 	// === Orchestration (delegated to Orchestrator) ===
-	orchestrator AgentOrchestrator
+	orchestrator core.AgentOrchestrator
 
 	mockLLM func(systemPrompt, userMessage string, history ConversationHistory) (*gochatcore.Response, error)
 
@@ -219,10 +198,10 @@ type reactorSetup struct {
 	toolRegistry      core.ToolRegistry
 	skillRegistry     core.SkillRegistry
 	ruleRegistry      core.RuleRegistry
-	orchestratorSetter AgentOrchestrator
+	orchestratorSetter core.AgentOrchestrator
 }
 
-func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
+func (r *Reactor) applyDefaults(config *ReactorConfig) {
 	if config.MaxIterations <= 0 {
 		config.MaxIterations = core.DefaultMaxSteps
 	}
@@ -232,26 +211,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if config.MaxTokens <= 0 {
 		config.MaxTokens = core.DefaultMaxTokens
 	}
+}
 
-	setup := &reactorSetup{skipTools: make(map[string]bool)}
-	for _, opt := range opts {
-		opt(setup)
-	}
-
-	if setup.systemPrompt != "" {
-		config.SystemPrompt = setup.systemPrompt
-	}
-
-	r := &Reactor{
-		config:         config,
-		tokenEstimator: core.NewTokenEstimator(),
-		memory:         setup.memory,
-		mockLLM:        setup.mockLLM,
-		sessionStore:   setup.sessionStore,
-		slideConfig:    core.DefaultSlideConfig,
-		orchestrator:   setup.orchestratorSetter,
-	}
-
+func (r *Reactor) initRegistries(setup *reactorSetup) {
 	if setup.intentRegistry != nil {
 		r.intentRegistry = setup.intentRegistry
 	} else {
@@ -278,12 +240,16 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	} else {
 		r.eventBus = NewEventBus()
 	}
+}
 
+func (r *Reactor) initLLMClient(config ReactorConfig) {
 	r.llmClient = gochat.Client().Config(
 		gochat.WithAPIKey(config.APIKey),
 		gochat.WithBaseURL(config.BaseURL),
 	)
+}
 
+func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
 	if !setup.skipBundledSkills {
 		if err := RegisterBundledSkills(r.skillRegistry, setup.skills); err != nil {
 			logger.Warn("failed to register bundled skills", "error", err)
@@ -298,7 +264,6 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			continue
 		}
 		for _, skill := range skills {
-			// If setup.skills is not empty, only register matching skills
 			if len(setup.skills) > 0 {
 				match := false
 				for _, name := range setup.skills {
@@ -316,9 +281,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			}
 		}
 	}
+}
 
-	r.registerOrchestrationTools()
-
+func (r *Reactor) initInteractionHandler() {
 	r.interactionHandler = NewDefaultInteractionHandler(func(e core.ReactEvent) {
 		if r.eventBus != nil {
 			r.eventBus.Emit(e)
@@ -334,6 +299,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			r.eventBus.Emit(e)
 		}
 	})
+}
+
+func (r *Reactor) initToolExecutor(setup *reactorSetup) {
 	r.toolExecutor = core.NewToolExecutor(
 		r.toolRegistry,
 		core.WithPermissionChecker(r.askPermission),
@@ -344,50 +312,72 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 			}
 		}),
 	)
+}
 
-	if !setup.skipAllBundled {
-		bundledTools := []struct {
-			name string
-			tool core.FuncTool
-		}{
-			// --- File operations ---
-			{"grep", tools.NewGrepTool()},
-			{"glob", tools.NewGlobTool()},
-			{"read", tools.NewReadTool()},
-			{"write", tools.NewWriteTool()},
-			{"file_edit", tools.NewFileEditTool()},
+func (r *Reactor) registerBundledTools(setup *reactorSetup) {
+	if setup.skipAllBundled {
+		return
+	}
 
-			// --- Execution ---
-			{"bash", tools.NewBashTool()},
-			{"run_script", tools.NewRunScriptTool()},
-
-			// --- Network ---
-			{"web_search", tools.NewWebSearchTool()},
-			{"web_fetch", tools.NewWebFetchTool()},
-
-			// --- Knowledge & Memory ---
-			// {"memory_save", tools.NewMemorySaveTool()},
-			// {"memory_search", tools.NewMemorySearchTool()},
-
-			// --- Task management ---
-			{"todo_write", tools.NewTodoWriteTool()},
-			{"todo_read", tools.NewTodoReadTool()},
-			{"todo_execute", tools.NewTodoExecuteTool()},
-
-			// --- Communication ---
-			{"email", tools.NewEmailTool(tools.EmailConfig{})},
-			{"ask_user", tools.NewAskUserTool()},
-		}
-		for _, bt := range bundledTools {
-			if !setup.skipTools[bt.name] {
-				if err := r.RegisterTool(bt.tool); err != nil {
-					logger.Warn("failed to register bundled tool", "name", bt.name, "error", err)
-				}
+	bundledTools := []struct {
+		name string
+		tool core.FuncTool
+	}{
+		{"grep", tools.NewGrepTool()},
+		{"glob", tools.NewGlobTool()},
+		{"read", tools.NewReadTool()},
+		{"write", tools.NewWriteTool()},
+		{"file_edit", tools.NewFileEditTool()},
+		{"bash", tools.NewBashTool()},
+		{"run_script", tools.NewRunScriptTool()},
+		{"web_search", tools.NewWebSearchTool()},
+		{"web_fetch", tools.NewWebFetchTool()},
+		{"todo_write", tools.NewTodoWriteTool()},
+		{"todo_read", tools.NewTodoReadTool()},
+		{"todo_execute", tools.NewTodoExecuteTool()},
+		{"email", tools.NewEmailTool(tools.EmailConfig{})},
+		{"ask_user", tools.NewAskUserTool()},
+	}
+	for _, bt := range bundledTools {
+		if !setup.skipTools[bt.name] {
+			if err := r.RegisterTool(bt.tool); err != nil {
+				logger.Warn("failed to register bundled tool", "name", bt.name, "error", err)
 			}
 		}
-
-		r.registerOrchestrationTools()
 	}
+	r.registerOrchestrationTools()
+}
+
+func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
+	r := &Reactor{
+		tokenEstimator: core.NewTokenEstimator(),
+		slideConfig:    core.DefaultSlideConfig,
+	}
+
+	r.applyDefaults(&config)
+
+	setup := &reactorSetup{skipTools: make(map[string]bool)}
+	for _, opt := range opts {
+		opt(setup)
+	}
+
+	if setup.systemPrompt != "" {
+		config.SystemPrompt = setup.systemPrompt
+	}
+
+	r.config = config
+	r.memory = setup.memory
+	r.mockLLM = setup.mockLLM
+	r.sessionStore = setup.sessionStore
+	r.orchestrator = setup.orchestratorSetter
+
+	r.initRegistries(setup)
+	r.initLLMClient(config)
+	r.discoverAndLoadSkills(setup)
+	r.registerOrchestrationTools()
+	r.initInteractionHandler()
+	r.initToolExecutor(setup)
+	r.registerBundledTools(setup)
 
 	for _, tool := range setup.extraTools {
 		if err := r.RegisterTool(tool); err != nil {
@@ -570,98 +560,41 @@ func (r *Reactor) RunFromSnapshot(ctx context.Context, snapshot *RunSnapshot, ne
 	return r.runTAOLoop(reactCtx, 0, time.Now())
 }
 
-func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
-	totalTokens := initialTokens
-
-	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
-		if terminated, reason := r.CheckTermination(reactCtx); terminated {
-			reactCtx.IsTerminated = true
-			reactCtx.TerminationReason = reason
-			break
-		}
-
-		cycleStart := time.Now()
-		r.toolExecutor.ResetCycle()
-
-		tokens, err := r.Think(reactCtx)
-		totalTokens += tokens
-		if err != nil {
-			reactCtx.TerminationReason = fmt.Sprintf("think error: %v", err)
-			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			break
-		}
-		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
-
-		// ====== Coordinator Mode: Skip normal Act/Observe, use coord path ======
-		if reactCtx.Mode == ModeCoordinator && reactCtx.LastThought != nil &&
-			reactCtx.LastThought.Decision == DecisionCoordinate {
-			return r.runCoordinatorLoop(reactCtx, totalTokens, cycleStart, runStart)
-		}
-
-		if err := r.Act(reactCtx); err != nil {
-			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
-			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			break
-		}
-
-		if reactCtx.LastAction.Type == ActionTypeToolCall {
-			reactCtx.EmitEvent(core.ActionStart, core.ActionStartData{
-				ToolName: reactCtx.LastAction.Target,
-				Params:   reactCtx.LastAction.Params,
-			})
-			resultData := core.ActionResultData{
-				ToolName: reactCtx.LastAction.Target,
-				Duration: reactCtx.LastAction.Duration,
-				Success:  reactCtx.LastAction.Error == nil,
-			}
-			if reactCtx.LastAction.Error != nil {
-				resultData.Error = reactCtx.LastAction.ErrorMsg
-			} else {
-				resultData.Result = reactCtx.LastAction.Result
-			}
-			reactCtx.EmitEvent(core.ActionResult, resultData)
-		}
-
-		if err := r.Observe(reactCtx); err != nil {
-			reactCtx.TerminationReason = fmt.Sprintf("observe error: %v", err)
-			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			break
-		}
-		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
-
-		step := Step{
-			Iteration:   reactCtx.CurrentIteration + 1,
-			Thought:     *reactCtx.LastThought,
-			Action:      *reactCtx.LastAction,
-			Observation: *reactCtx.LastObservation,
-			Timestamp:   time.Now(),
-			Duration:    time.Since(cycleStart),
-		}
-		reactCtx.AppendHistory(step)
-
-		reactCtx.EmitEvent(core.CycleEnd, core.CycleInfo{
-			Iteration: reactCtx.CurrentIteration + 1,
-			Duration:  time.Since(cycleStart),
-		})
-
-		var stepSummary strings.Builder
-		fmt.Fprintf(&stepSummary, "<thought>%s</thought>", reactCtx.LastThought.Reasoning)
-		if reactCtx.LastThought.Decision == DecisionAct {
-			fmt.Fprintf(&stepSummary, "\n<action>%s(%v)</action>", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
-		}
-		if reactCtx.LastObservation.Result != "" {
-			fmt.Fprintf(&stepSummary, "\n<observation>%s</observation>", reactCtx.LastObservation.Result)
-		}
-		if reactCtx.LastObservation.Error != "" {
-			fmt.Fprintf(&stepSummary, "\n<observation-error>%s</observation-error>", reactCtx.LastObservation.Error)
-		}
-		stepSummaryStr := stepSummary.String()
-		reactCtx.AddMessage("assistant", stepSummaryStr)
-		r.persistMessage(reactCtx.Ctx(), "assistant", stepSummaryStr)
-
-		reactCtx.CurrentIteration++
+// persistStep records a T-A-O cycle step into history and persistent storage.
+func (r *Reactor) persistStep(reactCtx *ReactContext, cycleStart time.Time) {
+	step := Step{
+		Iteration:   reactCtx.CurrentIteration + 1,
+		Thought:     *reactCtx.LastThought,
+		Action:      *reactCtx.LastAction,
+		Observation: *reactCtx.LastObservation,
+		Timestamp:   time.Now(),
+		Duration:    time.Since(cycleStart),
 	}
+	reactCtx.AppendHistory(step)
 
+	reactCtx.EmitEvent(core.CycleEnd, core.CycleInfo{
+		Iteration: reactCtx.CurrentIteration + 1,
+		Duration:  time.Since(cycleStart),
+	})
+
+	var stepSummary strings.Builder
+	fmt.Fprintf(&stepSummary, "<thought>%s</thought>", reactCtx.LastThought.Reasoning)
+	if reactCtx.LastThought.Decision == DecisionAct {
+		fmt.Fprintf(&stepSummary, "\n<action>%s(%v)</action>", reactCtx.LastAction.Target, reactCtx.LastAction.Params)
+	}
+	if reactCtx.LastObservation.Result != "" {
+		fmt.Fprintf(&stepSummary, "\n<observation>%s</observation>", reactCtx.LastObservation.Result)
+	}
+	if reactCtx.LastObservation.Error != "" {
+		fmt.Fprintf(&stepSummary, "\n<observation-error>%s</observation-error>", reactCtx.LastObservation.Error)
+	}
+	stepSummaryStr := stepSummary.String()
+	reactCtx.AddMessage("assistant", stepSummaryStr)
+	r.persistMessage(reactCtx.Ctx(), "assistant", stepSummaryStr)
+}
+
+// buildResultFromContext constructs a RunResult from the ReactContext state.
+func (r *Reactor) buildResultFromContext(reactCtx *ReactContext, totalTokens int, runStart time.Time) *RunResult {
 	result := &RunResult{
 		Intent:            reactCtx.Intent,
 		Steps:             reactCtx.History,
@@ -710,6 +643,11 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 	}
 	reactCtx.EmitEvent(core.ExecutionSummary, summary)
 
+	return result
+}
+
+// handlePauseSnapshot checks if a pause was requested and saves a snapshot if so.
+func (r *Reactor) handlePauseSnapshot(reactCtx *ReactContext) {
 	r.pauseMu.Lock()
 	paused := r.pauseRequested
 	r.pauseRequested = false
@@ -719,15 +657,87 @@ func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart
 		snap.TerminationReason = "paused"
 		r.setSnapshot(snap)
 	}
+}
+
+func (r *Reactor) runTAOLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
+	totalTokens := initialTokens
+
+	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
+		if terminated, reason := r.CheckTermination(reactCtx); terminated {
+			reactCtx.IsTerminated = true
+			reactCtx.TerminationReason = reason
+			break
+		}
+
+		cycleStart := time.Now()
+		r.toolExecutor.ResetCycle()
+
+		tokens, err := r.Think(reactCtx)
+		totalTokens += tokens
+		if err != nil {
+			reactCtx.TerminationReason = fmt.Sprintf("think error: %v", err)
+			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			break
+		}
+		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
+
+		// ====== Coordinator Mode: Skip normal Act/Observe, use coord path ======
+		if reactCtx.Mode == ModeCoordinator && reactCtx.LastThought != nil &&
+			reactCtx.LastThought.Decision == DecisionCoordinate {
+			return r.runCoordinatorLoop(reactCtx, totalTokens, cycleStart, runStart)
+		}
+
+		if err := r.Act(reactCtx); err != nil {
+			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
+			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			break
+		}
+
+		if reactCtx.LastAction.Type == ActionTypeToolCall {
+			r.emitActionResult(reactCtx)
+		}
+
+		if err := r.Observe(reactCtx); err != nil {
+			reactCtx.TerminationReason = fmt.Sprintf("observe error: %v", err)
+			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			break
+		}
+		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
+
+		r.persistStep(reactCtx, cycleStart)
+		reactCtx.CurrentIteration++
+	}
+
+	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
+	r.handlePauseSnapshot(reactCtx)
 
 	result.Experience = r.buildExperienceCandidate(reactCtx, result)
 
 	if result.TotalIterations > 1 && result.Answer != "" &&
 		!strings.Contains(result.TerminationReason, "error") {
-		r.generateSummary(reactCtx, result, totalDuration)
+		r.generateSummary(reactCtx, result, time.Since(runStart))
 	}
 
 	return result, nil
+}
+
+// emitActionResult emits ActionStart and ActionResult events for a tool call action.
+func (r *Reactor) emitActionResult(reactCtx *ReactContext) {
+	reactCtx.EmitEvent(core.ActionStart, core.ActionStartData{
+		ToolName: reactCtx.LastAction.Target,
+		Params:   reactCtx.LastAction.Params,
+	})
+	resultData := core.ActionResultData{
+		ToolName: reactCtx.LastAction.Target,
+		Duration: reactCtx.LastAction.Duration,
+		Success:  reactCtx.LastAction.Error == nil,
+	}
+	if reactCtx.LastAction.Error != nil {
+		resultData.Error = reactCtx.LastAction.ErrorMsg
+	} else {
+		resultData.Result = reactCtx.LastAction.Result
+	}
+	reactCtx.EmitEvent(core.ActionResult, resultData)
 }
 
 // runCoordinatorLoop runs the Coordinator-mode T-A-O loop (Design §4.3 / §10).

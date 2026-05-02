@@ -23,77 +23,26 @@ import (
 )
 
 // ===========================================================================
-// Step A: Responsibility Check (§5.1)
+// Merged Gate: Responsibility + Atomicity Check (Step A+B, Design §5.1)
 // =========================================================================//
 
-// checkResponsibility determines whether the current task falls within this
-// agent's functional scope by comparing user intent against its Description.
-//
-// Two strategies are tried in order:
-//  1. Keyword match (fast path): check if Description keywords appear in intent
-//  2. LLM semantic match (default path): ask LLM to judge similarity
-//
-// Returns ResponsibilityCheck with IsMatch=true if agent should handle it.
-func (r *Reactor) checkResponsibility(ctx *ReactContext, l1Result *l1RoutingResult) (*ResponsibilityCheck, error) {
-	description := r.config.SystemPrompt
-	if len(description) > 1024 {
-		description = description[:1024]
-	}
-	if description == "" {
-		description = "general-purpose assistant"
-	}
+// gatePromptData contains all inputs needed for the merged gate prompt.
+type gatePromptData struct {
+	description    string // agent description (from SystemPrompt)
+	userInput      string // user's original input
+	intentSummary  string // intent classification summary
+	intentTopic    string // intent topic
+	capabilities   string // list of available skills/capabilities
+}
 
-	// Fast path: keyword overlap detection
-	if r.keywordMatch(description, ctx.Input) {
-		return &ResponsibilityCheck{
-			IsMatch:    true,
-			Confidence: 0.8,
-			Reasoning:  "keyword match in description",
-		}, nil
-	}
-
-	// Default path: LLM semantic judgment
-	prompt := fmt.Sprintf(`You are checking whether a task matches an agent's capabilities.
-
-## Agent Description
-%s
-
-## User Task
-%s
-
-## Intent Summary
-%s
-
-Respond with JSON only:
-{"is_match": true/false, "confidence": 0.0-1.0, "reasoning": "brief explanation"}`,
-		description, ctx.Input,
-		func() string {
-			if ctx.Intent != nil { return ctx.Intent.Summary }
-			return ctx.Input
-		}(),
-	)
-
-	resp, err := r.callLLMForGate(ctx, prompt)
-	if err != nil {
-		// Fallback: assume it IS our responsibility (safe default)
-		logger.Warn("responsibility check LLM failed, assuming match", "error", err)
-		return &ResponsibilityCheck{
-			IsMatch:    true,
-			Confidence: 0.5,
-			Reasoning:  "llm-failed-assume-match",
-		}, nil
-	}
-
-	var result ResponsibilityCheck
-	if err := json.Unmarshal([]byte(resp), &result); err != nil {
-		return &ResponsibilityCheck{
-			IsMatch:    true,
-			Confidence: 0.5,
-			Reasoning:  "parse-failed-assume-match",
-		}, nil
-	}
-
-	return &result, nil
+// combinedGateResponse is the JSON structure parsed from the merged LLM call.
+type combinedGateResponse struct {
+	IsMatch               bool                `json:"is_match"`
+	Confidence            float64             `json:"confidence"`
+	MatchReasoning        string              `json:"match_reasoning"`
+	RequiresDecomposition bool                `json:"requires_decomposition"`
+	DecompReasoning       string              `json:"decomp_reasoning"`
+	SubTasks              []TaskDecomposition `json:"sub_tasks,omitempty"`
 }
 
 // keywordMatch checks if any significant word from desc appears in input.
@@ -103,17 +52,15 @@ func (r *Reactor) keywordMatch(desc, input string) bool {
 	matchCount := 0
 	for _, w := range descWords {
 		if len(w) <= 2 {
-			continue // skip short words
+			continue
 		}
 		if strings.Contains(inputLower, strings.ToLower(w)) {
 			matchCount++
 		}
 	}
-	// At least 2 keyword hits or >30% of description words
 	return matchCount >= 2 || (len(descWords) > 0 && float64(matchCount)/float64(len(descWords)) > 0.3)
 }
 
-// tokenize splits text into words, removing punctuation.
 func tokenize(text string) []string {
 	var words []string
 	var current strings.Builder
@@ -135,78 +82,108 @@ func isAlphaNumeric(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
 }
 
-// ===========================================================================
-// Step B: Atomicity / WBS Decomposition Check (§5.1)
-// =========================================================================//
+// checkResponsibilityAndAtomicity performs a single merged LLM call to determine
+// both whether this agent should handle the task AND whether it needs decomposition.
+//
+// Before the LLM call, a keyword-match fast path is tried. If keywords match,
+// the agent is known to be responsible and only the atomicity check runs.
+//
+// Returns ResponsibilityCheck, AtomicityCheck, and optionally decomposition sub-tasks.
+func (r *Reactor) checkResponsibilityAndAtomicity(ctx *ReactContext, l1Result *l1RoutingResult) (*ResponsibilityCheck, *AtomicityCheck, error) {
+	description := r.config.SystemPrompt
+	if len(description) > 1024 {
+		description = description[:1024]
+	}
+	if description == "" {
+		description = "general-purpose assistant"
+	}
 
-// checkAtomicity asks the LLM whether the current task is atomic (can be
-// completed by a single agent in one T-A-O cycle) or requires WBS
-// decomposition into multiple sub-tasks.
-func (r *Reactor) checkAtomicity(ctx *ReactContext, l1Result *l1RoutingResult) (*AtomicityCheck, error) {
-	// Build available capabilities list for context
+	// Fast path: keyword match → known responsibility, only check atomicity
+	if r.keywordMatch(description, ctx.Input) {
+		atomicity := r.checkAtomicity(ctx, l1Result)
+		return &ResponsibilityCheck{
+			IsMatch:    true,
+			Confidence: 0.8,
+			Reasoning:  "keyword match in description",
+		}, atomicity, nil
+	}
+
+	// Merged LLM path: build combined prompt
+	data := gatePromptData{
+		description: description,
+		userInput:   ctx.Input,
+		capabilities: r.buildCapabilityList(),
+	}
+	if ctx.Intent != nil {
+		data.intentSummary = ctx.Intent.Summary
+		data.intentTopic = ctx.Intent.Topic
+	} else {
+		data.intentSummary = ctx.Input
+		data.intentTopic = ""
+	}
+
+	prompt := buildCombinedGatePrompt(data)
+
+	resp, err := r.callLLMForGate(ctx, prompt)
+	if err != nil {
+		logger.Warn("combined gate LLM failed, assuming match + atomic", "error", err)
+		return &ResponsibilityCheck{
+			IsMatch:    true,
+			Confidence: 0.5,
+			Reasoning:  "llm-failed-assume-match",
+		}, &AtomicityCheck{
+			IsAtomic:  true,
+			Reasoning: "llm-failed-assume-atomic",
+		}, nil
+	}
+
+	var result combinedGateResponse
+	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+		logger.Warn("combined gate parse failed, assuming match + atomic", "error", err)
+		return &ResponsibilityCheck{
+			IsMatch:    true,
+			Confidence: 0.5,
+			Reasoning:  "parse-failed-assume-match",
+		}, &AtomicityCheck{
+			IsAtomic:  true,
+			Reasoning: "parse-failed-assume-atomic",
+		}, nil
+	}
+
+	respCheck := &ResponsibilityCheck{
+		IsMatch:    result.IsMatch,
+		Confidence: result.Confidence,
+		Reasoning:  result.MatchReasoning,
+	}
+
+	// Decomposition is only relevant when agent IS responsible
+	atomicity := &AtomicityCheck{
+		IsAtomic:  !result.IsMatch || !result.RequiresDecomposition,
+		SubTasks:  result.SubTasks,
+		Reasoning: result.DecompReasoning,
+	}
+
+	return respCheck, atomicity, nil
+}
+
+// checkAtomicity runs atomicity-only check (used when keyword match bypasses merged gate).
+func (r *Reactor) checkAtomicity(ctx *ReactContext, l1Result *l1RoutingResult) *AtomicityCheck {
 	capabilities := r.buildCapabilityList()
-
 	taskDesc := fmt.Sprintf("Task: %s\nIntent: %s", ctx.Input,
 		func() string {
-			if ctx.Intent != nil { return fmt.Sprintf("%s (topic: %s)", ctx.Intent.Summary, ctx.Intent.Topic) }
+			if ctx.Intent != nil {
+				return fmt.Sprintf("%s (topic: %s)", ctx.Intent.Summary, ctx.Intent.Topic)
+			}
 			return ctx.Input
 		}(),
 	)
 
-	prompt := fmt.Sprintf(`You are analyzing whether a complex task needs to be decomposed into subtasks.
-
-## Task Decomposition Judgment (Step B)
-
-Before diving into execution, you need to determine if the current task needs to be decomposed into multiple subtasks.
-
-### Judgment Criteria
-A task SHOULD be decomposed if it meets ANY of the following conditions:
-1. Requires 3 or more different Skill/Tool combinations to complete
-2. Contains obvious serial or parallel steps (do A then B; or A and B can be done simultaneously)
-3. Different steps may require different domain knowledge
-4. Estimated total duration exceeds 60 seconds
-
-### Decomposition Requirements (if decomposition is needed)
-- Break the task into atomic subtasks, each completable by a single agent independently
-- Specify dependencies between subtasks (DependsOn)
-- Specify desired capability for each subtask (DesiredCapability), leave empty if uncertain
-- Set reasonable priority (Priority, lower number = higher priority)
-- Each subtask description must be detailed enough for another agent to complete independently based on the description alone
-
-## Input Task
-%s
-%s
-
-## Output Format (JSON only, no markdown, no code blocks)
-{
-  "requires_decomposition": true/false,
-  "reasoning": "why decomposition is or isn't needed",
-  "sub_tasks": [
-    {
-      "id": "task-001",
-      "title": "brief title",
-      "description": "detailed description including goals, inputs, expected outputs",
-      "capability": "desired capability or empty",
-      "priority": 1,
-      "depends_on": []
-    }
-  ]
-}`,
-		taskDesc,
-		func() string {
-			if capabilities == "" { return "" }
-			return "\n### Available Capabilities\n" + capabilities
-		}(),
-	)
+	prompt := buildAtomicityOnlyPrompt(taskDesc, capabilities)
 
 	resp, err := r.callLLMForGate(ctx, prompt)
 	if err != nil {
-		// Fallback: treat as atomic (safer — avoids infinite decomposition loops)
 		logger.Warn("atomicity check LLM failed, treating as atomic", "error", err)
-		return &AtomicityCheck{
-			IsAtomic:  true,
-			Reasoning: "llm-failed-assume-atomic",
-		}, nil
+		return &AtomicityCheck{IsAtomic: true, Reasoning: "llm-failed-assume-atomic"}
 	}
 
 	var result struct {
@@ -215,17 +192,118 @@ A task SHOULD be decomposed if it meets ANY of the following conditions:
 		SubTasks              []TaskDecomposition `json:"sub_tasks"`
 	}
 	if err := json.Unmarshal([]byte(resp), &result); err != nil {
-		return &AtomicityCheck{
-			IsAtomic:  true,
-			Reasoning: "parse-failed-assume-atomic",
-		}, nil
+		return &AtomicityCheck{IsAtomic: true, Reasoning: "parse-failed-assume-atomic"}
 	}
 
 	return &AtomicityCheck{
 		IsAtomic:  !result.RequiresDecomposition,
 		SubTasks:  result.SubTasks,
 		Reasoning: result.Reasoning,
-	}, nil
+	}
+}
+
+// buildCombinedGatePrompt constructs the merged prompt for responsibility + atomicity.
+func buildCombinedGatePrompt(d gatePromptData) string {
+	capSection := ""
+	if d.capabilities != "" {
+		capSection = "\n### Available Capabilities\n" + d.capabilities
+	}
+
+	return fmt.Sprintf(`You are determining whether a task matches an agent's capabilities and whether it needs decomposition.
+
+## Agent Description
+%s
+
+## User Task
+%s
+
+## Intent Summary
+%s
+%s
+%s
+
+### Responsibility Judgment
+A task IS your responsibility if its topic and intent match your agent description.
+Respond with is_match=true if you are the right agent for this task.
+
+### Decomposition Judgment (only relevant if is_match=true)
+A task SHOULD be decomposed if it meets ANY of:
+1. Requires 3+ different Skill/Tool combinations
+2. Contains obvious serial or parallel steps
+3. Different steps require different domain knowledge
+4. Estimated total duration exceeds 60 seconds
+
+### Decomposition Requirements (only if decomposed)
+- Break into atomic subtasks, each completable independently
+- Each subtask description must be self-contained
+- Specify dependencies (depends_on) between subtasks
+- Set reasonable priorities (lower = higher priority)
+- Max 15 subtasks
+
+## Output Format (JSON only, no markdown)
+{
+  "is_match": true/false,
+  "confidence": 0.0-1.0,
+  "match_reasoning": "why this task is/is not your responsibility",
+  "requires_decomposition": false,
+  "decomp_reasoning": "why decomposition is or isn't needed",
+  "sub_tasks": []
+}`,
+		d.description, d.userInput, d.intentSummary,
+		func() string {
+			if d.intentTopic != "" { return "Topic: " + d.intentTopic }
+			return ""
+		}(),
+		capSection,
+	)
+}
+
+// buildAtomicityOnlyPrompt constructs the atomicity-only prompt (used after keyword match).
+func buildAtomicityOnlyPrompt(taskDesc, capabilities string) string {
+	capSection := ""
+	if capabilities != "" {
+		capSection = "\n### Available Capabilities\n" + capabilities
+	}
+
+	return fmt.Sprintf(`You are analyzing whether a complex task needs to be decomposed into subtasks.
+
+## Task Decomposition Judgment
+
+### Criteria
+A task SHOULD be decomposed if it meets ANY of:
+1. Requires 3+ different Skill/Tool combinations
+2. Contains obvious serial or parallel steps
+3. Different steps require different domain knowledge
+4. Estimated total duration exceeds 60 seconds
+
+### Requirements (if decomposed)
+- Break into atomic subtasks, each completable independently
+- Specify dependencies (depends_on)
+- Specify desired capability (leave empty if uncertain)
+- Set reasonable priority (lower = higher priority)
+- Max 15 subtasks
+
+## Input Task
+%s
+%s
+
+## Output Format (JSON only, no markdown)
+{
+  "requires_decomposition": true/false,
+  "reasoning": "why decomposition is or isn't needed",
+  "sub_tasks": [
+    {
+      "id": "task-001",
+      "title": "brief title",
+      "description": "detailed description",
+      "capability": "desired capability or empty",
+      "priority": 1,
+      "depends_on": []
+    }
+  ]
+}`,
+		taskDesc, capSection,
+	)
 }
 
 // validateWBSQuality runs quality checks on the decomposed sub-tasks (P1-2 / Design §11.3).
@@ -576,21 +654,29 @@ func computeTaskDuration(task *core.Task) time.Duration {
 }
 
 // ===========================================================================
-// executeResponsibilityGate — Orchestrates the 4-step gate (Design §5)
+// executeResponsibilityGate — Orchestrates the merged gate (Step A+B, Design §5)
 // =========================================================================//
 
-// executeResponsibilityGate runs the full four-step gate between L1 routing
-// and L2 planning. Returns (additionalTokens, error). If the gate handles the
-// decision (delegate or coordinate), ctx.LastThought is set and the caller
-// should return immediately. If error is non-nil, caller should fall through.
+// executeResponsibilityGate runs the merged responsibility+atomicity gate between
+// L1 routing and L2 planning. Uses a SINGLE LLM call for both judgments.
+//
+// Flow:
+//  1. Keyword match fast path (threshold: 2+ keyword hits or >30% desc overlap)
+//  2. If fast path fails: single LLM call for responsibility + atomicity
+//  3. Not our job → delegate to orchestrator
+//  4. Atomic task → proceed to Level 2
+//  5. Non-atomic task → validate WBS → dispatch & coordinate
 func (r *Reactor) executeResponsibilityGate(ctx *ReactContext, l1Result *l1RoutingResult, tokensSoFar int) (int, error) {
-	// Step A: Responsibility Check — Is this my job?
-	respCheck, err := r.checkResponsibility(ctx, l1Result)
+	// Merged Step A+B: Single LLM call (with keyword fast path)
+	respCheck, atomicity, err := r.checkResponsibilityAndAtomicity(ctx, l1Result)
 	if err != nil {
-		return 0, fmt.Errorf("step A (responsibility): %w", err)
+		return 0, fmt.Errorf("merged gate (A+B): %w", err)
 	}
+
 	logger.Info("gate Step A: responsibility", "is_match", respCheck.IsMatch,
 		"confidence", respCheck.Confidence)
+	logger.Info("gate Step B: atomicity", "is_atomic", atomicity.IsAtomic,
+		"subtasks", len(atomicity.SubTasks))
 
 	if !respCheck.IsMatch {
 		// Not our job → delegate to orchestrator → Coordinator mode
@@ -598,28 +684,17 @@ func (r *Reactor) executeResponsibilityGate(ctx *ReactContext, l1Result *l1Routi
 		return delegateTokens, delErr
 	}
 
-	// Step B: Atomicity Check — Can I handle this as one atomic task?
-	atomicity, err := r.checkAtomicity(ctx, l1Result)
-	if err != nil {
-		return 0, fmt.Errorf("step B (atomicity): %w", err)
-	}
-	logger.Info("gate Step B: atomicity", "is_atomic", atomicity.IsAtomic,
-		"subtasks", len(atomicity.SubTasks))
-
 	if atomicity.IsAtomic {
 		// Atomic task → proceed to Level 2 (normal executor path)
-		// Return 0 extra tokens; caller continues to L2
 		return 0, nil
 	}
 
-	// P1-2: WBS Quality Assurance — validate decomposition before dispatching
+	// WBS Quality Assurance — validate decomposition before dispatching
 	if err := validateWBSQuality(atomicity.SubTasks); err != nil {
 		logger.Warn("wbs quality validation failed, falling back to executor mode", "error", err)
-		// Fallback: treat as atomic to avoid dispatching invalid decomposition
 		return 0, nil
 	}
 
-	// Non-atomic task → WBS decomposition done → Step C/D: dispatch & coordinate
-	dispatchTokens, dispErr := r.dispatchAndCoordinate(ctx, tokensSoFar, atomicity.SubTasks)
-	return dispatchTokens, dispErr
+	// Non-atomic task → dispatch & coordinate
+	return r.dispatchAndCoordinate(ctx, tokensSoFar, atomicity.SubTasks)
 }

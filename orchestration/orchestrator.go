@@ -16,25 +16,26 @@ import (
 //
 // All agents (Master and SubAgents) communicate with the Orchestrator exclusively
 // through Go channels. Agents never hold direct references to each other.
+//
+// P2-SOLID-02: This composite interface is assembled from smaller focused interfaces
+// below for better API design and dependency injection.
 type Orchestrator interface {
-	// === Lifecycle ===
+	TaskOrchestrator
+	AgentFactoryOps
+	EventAggregator
+	RuntimeAccess
+	Lifecycle
+}
+
+// Lifecycle handles start/stop of the orchestrator.
+type Lifecycle interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
+}
 
-	// === Agent Factory ===
-	// GetAgent retrieves or creates an Agent by name from the AgentRegistry.
-	// It automatically resolves the Model from ModelRegistry using AgentConfig.Model as key.
-	// Results are cached: subsequent calls return the same instance (same Session).
-	GetAgent(name string) (*goreact.Agent, error)
-
-	// ReleaseAgent discards a cached Agent instance (drops Session context).
-	// Next GetAgent creates a fresh instance.
-	ReleaseAgent(name string)
-
-	// === Orchestration Operations ===
+// TaskOrchestrator handles task delegation and coordination.
+type TaskOrchestrator interface {
 	// DelegateTo sends a task to a named agent asynchronously.
-	// Returns immediately with a DelegateResult containing a TaskID and result channel.
-	// The actual result arrives asynchronously when the sub-agent completes.
 	DelegateTo(
 		ctx context.Context,
 		agentName string,
@@ -49,29 +50,39 @@ type Orchestrator interface {
 	// CancelTask cancels a running or pending task.
 	CancelTask(taskID string) error
 
-	// === Event Aggregation ===
-	// Events subscribes to the global event stream (all agents + orchestrator events).
-	// Each event is tagged with AgentID/AgentName for source identification.
+	// Send delivers a raw message to the Orchestrator inbox channel.
+	Send(msg Message) <-chan Response
+}
+
+// AgentFactoryOps handles agent creation and caching.
+type AgentFactoryOps interface {
+	// GetAgent retrieves or creates an Agent by name from the AgentRegistry.
+	GetAgent(name string) (*goreact.Agent, error)
+
+	// ReleaseAgent discards a cached Agent instance.
+	ReleaseAgent(name string)
+
+	// RegisterAgent registers an agent's runtime metadata.
+	RegisterAgent(meta *core.AgentRuntimeMeta) error
+}
+
+// EventAggregator provides event streaming.
+type EventAggregator interface {
+	// Events subscribes to the global event stream.
 	Events() (<-chan core.ReactEvent, func())
 
 	// EventsFiltered subscribes with a filter function.
 	EventsFiltered(filter func(core.ReactEvent) bool) (<-chan core.ReactEvent, func())
+}
 
-	// === Low-Level Access ===
-	// Send delivers a raw message to the Orchestrator inbox channel.
-	// Returns a response channel for request-response patterns.
-	Send(msg Message) <-chan Response
-
-	// TaskStore returns the internal task store (read-only view for monitoring/debugging).
+// RuntimeAccess provides read-only views for monitoring and debugging.
+type RuntimeAccess interface {
+	// TaskStore returns the internal task store.
 	TaskStore() TaskStore
 
-	// ModelRegistry returns the internal model registry (read-only view).
+	// ModelRegistry returns the internal model registry.
 	ModelRegistry() core.ModelRegistry
 
-	// RegisterAgent registers an agent's runtime metadata with the orchestrator.
-	// Called by Agent during NewAgent() when EnableOrchestration=true.
-	RegisterAgent(meta *core.AgentRuntimeMeta) error
-
-	// RuntimeDir returns the runtime state directory for agent lifecycle tracking.
+	// RuntimeDir returns the runtime state directory.
 	RuntimeDir() *core.RuntimeDirectory
 }

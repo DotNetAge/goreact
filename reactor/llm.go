@@ -117,10 +117,8 @@ func (r *Reactor) buildLLMBuilder(systemPrompt, userMessage string, history Conv
 	var chatMessages []gochatcore.Message
 	messages := history
 
-	if maxHistoryTurns > 0 && len(messages) > maxHistoryTurns {
-		messages = messages[len(messages)-maxHistoryTurns:]
-	}
-
+	// History trimming: only by token budget (turn-based limit removed as redundant,
+	// since token budget trimming covers the same purpose more precisely).
 	estimateFn := r.tokenEstimator.Estimate
 	var selectedMessages []core.Message
 	var usedTokens int64
@@ -184,11 +182,9 @@ func (r *Reactor) estimateInputTokens(systemPrompt, userMessage string, history 
 		total += estimateFn(userMessage)
 	}
 
-	// Layer 3: Conversation history — replicate exact trim logic from buildLLMBuilder
+	// Layer 3: Conversation history — trim by token budget only (turn-based limit removed
+	// as redundant, since token budget trimming covers the same purpose more precisely).
 	messages := history
-	if maxHistoryTurns > 0 && len(messages) > maxHistoryTurns {
-		messages = messages[len(messages)-maxHistoryTurns:]
-	}
 	maxTokensForHistory := int64(float64(r.config.MaxTokens) * historyTokenBudgetRatio)
 	var usedTokens int64
 	for i := len(messages) - 1; i >= 0; i-- {

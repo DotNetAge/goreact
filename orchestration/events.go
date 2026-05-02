@@ -84,7 +84,7 @@ type TimeoutWarningEvent struct {
 // Lifecycle control event sent to a Coordinator (Design §10.5.1).
 // Extended with Requester, Timestamp and Priority for orchestration-layer tracking.
 type CoordControlCommand struct {
-	ControlCommand          // Embedded core control command
+	core.ControlCommand     // Embedded core control command
 	Reason     string       // Human-readable reason
 	Requester  string       // "user" | "system" | "parent_coordinator" | "orchestrator"
 	Timestamp  time.Time    // When the command was issued

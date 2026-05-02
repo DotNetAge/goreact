@@ -40,7 +40,11 @@ type Skill struct {
 	Source  string `json:"source,omitempty"` // "bundled" or "filesystem".
 }
 
-// SkillRegistry manages available skills and their activation.
+// SkillRegistry manages Skill definitions.
+// Skills encapsulate reusable domain knowledge and instructions (e.g., "code reviewer",
+// "design doc writer"). They follow a progressive disclosure pattern:
+//   L1 (Name+Description) → L2 (SKILL.md body) → L3 (references/ resources).
+// This is distinct from ToolRegistry: Skills guide LLM behavior, tools enable execution.
 type SkillRegistry interface {
 	// RegisterSkill adds a skill to the registry.
 	RegisterSkill(skill *Skill) error

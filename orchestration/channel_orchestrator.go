@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DotNetAge/goreact"
+	"github.com/DotNetAge/goreact/concurrent"
 	"github.com/DotNetAge/goreact/core"
 )
 
@@ -39,20 +40,19 @@ type ChannelOrchestrator struct {
 	scoreTracker *ScoreTracker // 绩效追踪器 (nil = 不记录绩效)
 
 	// === Agent Factory Cache ===
-	agentCache   map[string]*goreact.Agent // name -> cached instance
-	agentCacheMu sync.RWMutex
+	agentCache *concurrent.SafeMap[string, *goreact.Agent]
 
 	// === Runtime State Tracking ===
 	runtimeDir *core.RuntimeDirectory // Agent runtime state (idle/busy/coordinating/error, scores)
+	agentInit  *concurrent.SafeMap[string, bool] // Track initialized agents (replaces map[string]*sync.Once)
 
 	// === Task Management ===
 	store TaskStore
 
 	// === Channel Actor Loop (P0-2: per-agent inbox architecture) ===
-	agentInboxes   map[string]chan Message // agentName → buffered inbox (Design §7.2)
-	agentInboxesMu sync.RWMutex            // Protects agentInboxes map
-	controlCh      chan Message            // Global control messages (delegate/query/cancel/broadcast)
-	done           chan struct{}           // Closed when Stop() completes
+	agentInboxes *concurrent.SafeMap[string, chan Message] // agentName → buffered inbox (Design §7.2)
+	controlCh      chan Message                            // Global control messages (delegate/query/cancel/broadcast)
+	done           chan struct{}                           // Closed when Stop() completes
 	started        bool
 	startOnce      sync.Once
 	state          OrchestratorState // P2-4: full state machine (Initializing/Running/Draining/Stopped)
@@ -68,17 +68,15 @@ type ChannelOrchestrator struct {
 	logger *slog.Logger
 
 	// === P1-5: Heartbeat tracking ===
-	heartbeatMu    sync.RWMutex
-	heartbeats     map[string]time.Time // agentName → last heartbeat timestamp
-	heartbeatCheck *time.Ticker         // Periodic heartbeat checker
+	heartbeats     *concurrent.SafeMap[string, time.Time] // agentName → last heartbeat timestamp
+	heartbeatCheck *time.Ticker                           // Periodic heartbeat checker
 
 	// === P1-4: Idle agent cleanup ===
 	idleCleanupConfig IdleCleanupConfig
 	idleCleanupTicker *time.Ticker
 
 	// === CoordinatorPool — manages active Coordinator instances ===
-	coordinators   map[string]*Coordinator
-	coordinatorsMu sync.RWMutex
+	coordinators *concurrent.SafeMap[string, *Coordinator]
 }
 
 // New creates a new ChannelOrchestrator with the given options.
@@ -98,8 +96,8 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 		router:            setup.llmRouter,
 		factory:           setup.agentFactory,
 		scoreTracker:      setup.scoreTracker,
-		agentCache:        make(map[string]*goreact.Agent),
-		agentInboxes:      make(map[string]chan Message),
+		agentCache:        concurrent.NewSafeMap[string, *goreact.Agent](),
+		agentInboxes:      concurrent.NewSafeMapWithCapacity[string, chan Message](setup.inboxSize),
 		controlCh:         make(chan Message, setup.inboxSize),
 		runtimeDir:        core.NewRuntimeDirectory(0), // unlimited
 		store:             NewInMemoryTaskStore(),
@@ -108,9 +106,9 @@ func New(opts ...OrchestratorOption) (*ChannelOrchestrator, error) {
 		eventSubs:         make(map[chan<- core.ReactEvent]func(core.ReactEvent) bool),
 		eventDone:         make(chan struct{}),
 		logger:            slog.Default(),
-		heartbeats:        make(map[string]time.Time),
+		heartbeats:        concurrent.NewSafeMap[string, time.Time](),
 		idleCleanupConfig: IdleCleanupConfig{},
-		coordinators:      make(map[string]*Coordinator),
+		coordinators:      concurrent.NewSafeMap[string, *Coordinator](),
 	}
 
 	// Resolve default model if provided via WithDefaultModel
@@ -241,12 +239,11 @@ func (o *ChannelOrchestrator) Stop(ctx context.Context) error {
 	}
 
 	// Close all agent inboxes to signal per-agent goroutines to exit
-	o.agentInboxesMu.Lock()
-	for name, ch := range o.agentInboxes {
+	o.agentInboxes.Range(func(name string, ch chan Message) bool {
 		close(ch)
-		delete(o.agentInboxes, name)
-	}
-	o.agentInboxesMu.Unlock()
+		return true
+	})
+	o.agentInboxes.Clear()
 
 	// Close control channel to signal runLoop to drain and exit
 	close(o.controlCh)
@@ -727,20 +724,15 @@ func (o *ChannelOrchestrator) CancelTask(taskID string) error {
 // --- Agent Factory ---
 
 func (o *ChannelOrchestrator) GetAgent(name string) (*goreact.Agent, error) {
-	o.agentCacheMu.RLock()
-	cached, ok := o.agentCache[name]
-	o.agentCacheMu.RUnlock()
-	if ok {
+	if cached, ok := o.agentCache.Get(name); ok {
 		return cached, nil
 	}
 
-	// Not cached — build fresh
 	config := o.registry.Get(name)
 	if config == nil {
 		return nil, fmt.Errorf("agent %q not found in registry", name)
 	}
 
-	// Resolve model from AgentConfig.Model field
 	modelName := config.Model
 	if modelName == "" {
 		modelName = "default"
@@ -750,7 +742,6 @@ func (o *ChannelOrchestrator) GetAgent(name string) (*goreact.Agent, error) {
 		return nil, fmt.Errorf("model %q not registered for agent %q: %w", modelName, name, err)
 	}
 
-	// Build Agent with both Config and Model
 	agent, err := goreact.NewAgent(
 		goreact.WithConfig(config),
 		goreact.WithModel(modelCfg),
@@ -759,23 +750,16 @@ func (o *ChannelOrchestrator) GetAgent(name string) (*goreact.Agent, error) {
 		return nil, fmt.Errorf("failed to build agent %q: %w", name, err)
 	}
 
-	// Cache before returning
-	o.agentCacheMu.Lock()
-	// Double-check: another goroutine may have cached while we were building
-	if existing, ok := o.agentCache[name]; ok {
-		o.agentCacheMu.Unlock()
+	if existing, ok := o.agentCache.Get(name); ok {
 		return existing, nil
 	}
-	o.agentCache[name] = agent
-	o.agentCacheMu.Unlock()
+	o.agentCache.Set(name, agent)
 
 	return agent, nil
 }
 
 func (o *ChannelOrchestrator) ReleaseAgent(name string) {
-	o.agentCacheMu.Lock()
-	delete(o.agentCache, name)
-	o.agentCacheMu.Unlock()
+	o.agentCache.Delete(name)
 }
 
 // --- Event Aggregation ---
@@ -844,26 +828,21 @@ func (o *ChannelOrchestrator) emitEvent(event core.ReactEvent) {
 // --- P1-5: Heartbeat ---
 
 // RecordHeartbeat records a heartbeat from an agent (P1-5 / Design §7.3).
-// Should be called periodically by each agent to indicate liveness.
 func (o *ChannelOrchestrator) RecordHeartbeat(agentName string) {
-	o.heartbeatMu.Lock()
-	defer o.heartbeatMu.Unlock()
-	o.heartbeats[agentName] = time.Now()
+	o.heartbeats.Set(agentName, time.Now())
 }
 
 // CheckAgentLiveness returns a list of agents that haven't sent a heartbeat
 // within the given threshold duration.
 func (o *ChannelOrchestrator) CheckAgentLiveness(threshold time.Duration) []string {
-	o.heartbeatMu.RLock()
-	defer o.heartbeatMu.RUnlock()
-
 	now := time.Now()
 	var dead []string
-	for name, lastBeat := range o.heartbeats {
+	o.heartbeats.Range(func(name string, lastBeat time.Time) bool {
 		if now.Sub(lastBeat) > threshold {
 			dead = append(dead, name)
 		}
-	}
+		return true
+	})
 	return dead
 }
 
@@ -907,27 +886,23 @@ func (o *ChannelOrchestrator) scanAndCleanupIdleAgents() {
 		return
 	}
 
-	o.heartbeatMu.Lock()
-	defer o.heartbeatMu.Unlock()
-
 	now := time.Now()
 	var idleAgents []string
-	for name, lastBeat := range o.heartbeats {
+	o.heartbeats.Range(func(name string, lastBeat time.Time) bool {
 		if now.Sub(lastBeat) > o.idleCleanupConfig.IdleTimeout {
 			idleAgents = append(idleAgents, name)
 		}
-	}
+		return true
+	})
 
 	// Don't clean up below minimum retained
-	if len(o.heartbeats)-len(idleAgents) < o.idleCleanupConfig.MinRetained {
+	if o.heartbeats.Len()-len(idleAgents) < o.idleCleanupConfig.MinRetained {
 		return
 	}
 
 	for _, name := range idleAgents {
 		o.logger.Info("marking agent as dormant due to idle timeout", "agent_name", name)
-		delete(o.heartbeats, name)
-		// Note: actual agent removal should be handled by the AgentRegistry
-		// This is a soft cleanup — removes heartbeat tracking only
+		o.heartbeats.Delete(name)
 	}
 }
 
@@ -975,24 +950,19 @@ func (o *ChannelOrchestrator) SendToAgent(agentName string, msg Message) <-chan 
 
 // ensureAgentInbox returns the buffered inbox for an agent, creating one if needed (P0-2).
 func (o *ChannelOrchestrator) ensureAgentInbox(agentName string) chan Message {
-	o.agentInboxesMu.RLock()
-	ch, ok := o.agentInboxes[agentName]
-	o.agentInboxesMu.RUnlock()
-	if ok {
-		return ch
-	}
-
-	// Create new inbox
-	o.agentInboxesMu.Lock()
-	defer o.agentInboxesMu.Unlock()
-
-	// Double-check after lock upgrade
-	if ch, ok = o.agentInboxes[agentName]; ok {
+	ch, exists := o.agentInboxes.Get(agentName)
+	if exists {
 		return ch
 	}
 
 	ch = make(chan Message, o.inboxSize)
-	o.agentInboxes[agentName] = ch
+	_, inserted := o.agentInboxes.PutIfAbsent(agentName, ch)
+	if !inserted {
+		// Another goroutine created it while we were creating ours
+		existing, _ := o.agentInboxes.Get(agentName)
+		close(ch) // Close our unused channel
+		return existing
+	}
 
 	// Start a goroutine to multiplex this agent's messages into the control channel
 	go func() {
@@ -1008,11 +978,9 @@ func (o *ChannelOrchestrator) ensureAgentInbox(agentName string) chan Message {
 // UnregisterAgentInbox removes and closes an agent's inbox (P0-2).
 // Used when an agent is destroyed or removed from the system.
 func (o *ChannelOrchestrator) UnregisterAgentInbox(agentName string) {
-	o.agentInboxesMu.Lock()
-	defer o.agentInboxesMu.Unlock()
-	if ch, ok := o.agentInboxes[agentName]; ok {
+	if ch, ok := o.agentInboxes.Get(agentName); ok {
 		close(ch)
-		delete(o.agentInboxes, agentName)
+		o.agentInboxes.Delete(agentName)
 		o.logger.Debug("removed agent inbox", "agent_name", agentName)
 	}
 }

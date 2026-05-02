@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DotNetAge/goreact/concurrent"
 	"github.com/DotNetAge/goreact/core"
 )
 
@@ -63,23 +64,23 @@ const (
 
 // AgentPerformance holds computed performance metrics for an agent (Design §8.2).
 type AgentPerformance struct {
-	AvgScore       float64   // weighted average score (time-decay)
-	RawAvgScore    float64   // unweighted average for reference
-	SampleCount    int       // total number of scores
-	SuccessRate    float64   // percentage of successful executions
-	LastScoreTime  time.Time // timestamp of most recent score
-	LastUpdated    time.Time // last time performance was computed
+	AvgScore      float64   // weighted average score (time-decay)
+	RawAvgScore   float64   // unweighted average for reference
+	SampleCount   int       // total number of scores
+	SuccessRate   float64   // percentage of successful executions
+	LastScoreTime time.Time // timestamp of most recent score
+	LastUpdated   time.Time // last time performance was computed
 }
 
 // ScoreTracker tracks and manages agent performance scores using an
 // epsilon-greedy strategy for agent selection during cold start and beyond.
 type ScoreTracker struct {
 	mu          sync.RWMutex
-	scores      map[string][]scoreEntry // key: agent ID -> score history
-	totalScores map[string]float64      // Running total for quick average
-	epsilon     float64                 // Exploration probability
-	halfLife    time.Duration           // Half-life for time-decay weighting
-	decayRate   float64                 // Epsilon decay per selection
+	scores      map[string][]scoreEntry        // key: agent ID -> score history
+	totalScores map[string]float64             // Running total for quick average
+	epsilon     *concurrent.SafeValue[float64] // Exploration probability
+	halfLife    time.Duration                  // Half-life for time-decay weighting
+	decayRate   float64                        // Epsilon decay per selection
 }
 
 type scoreEntry struct {
@@ -94,7 +95,7 @@ func NewScoreTracker() *ScoreTracker {
 	return &ScoreTracker{
 		scores:      make(map[string][]scoreEntry),
 		totalScores: make(map[string]float64),
-		epsilon:     DefaultEpsilon,
+		epsilon:     concurrent.NewSafeValue(DefaultEpsilon),
 		halfLife:    DefaultScoreHalfLife,
 		decayRate:   DefaultEpsilonDecayRate,
 	}
@@ -102,9 +103,7 @@ func NewScoreTracker() *ScoreTracker {
 
 // SetEpsilon updates the exploration probability.
 func (st *ScoreTracker) SetEpsilon(eps float64) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	st.epsilon = eps
+	st.epsilon.Set(eps)
 }
 
 // SetHalfLife updates the time-decay half-life duration.
@@ -206,11 +205,17 @@ func (st *ScoreTracker) GetPerformance(agentID string) AgentPerformance {
 }
 
 // GetAllScores returns a map of all agent IDs to their (weighted avg, count).
-func (st *ScoreTracker) GetAllScores() map[string]struct{ Avg float64; Count int } {
+func (st *ScoreTracker) GetAllScores() map[string]struct {
+	Avg   float64
+	Count int
+} {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
-	result := make(map[string]struct{ Avg float64; Count int }, len(st.scores))
+	result := make(map[string]struct {
+		Avg   float64
+		Count int
+	}, len(st.scores))
 	for id, entries := range st.scores {
 		if len(entries) == 0 {
 			continue
@@ -254,9 +259,10 @@ func (st *ScoreTracker) SelectBest(candidates []*core.AgentRuntimeMeta) int {
 	}
 
 	st.mu.Lock()
-	epsilon := st.epsilon
+	epsilon := st.epsilon.Get()
 	// Decay epsilon: reduce exploration over time
-	st.epsilon = math.Max(MinEpsilon, st.epsilon*(1-st.decayRate))
+	newEpsilon := math.Max(MinEpsilon, epsilon*(1-st.decayRate))
+	st.epsilon.Set(newEpsilon)
 	st.mu.Unlock()
 
 	// Epsilon-greedy: with probability ε, explore (random); otherwise exploit (best score)
@@ -315,7 +321,6 @@ func (st *ScoreTracker) Reset(agentID string) {
 // DecayEpsilon reduces the exploration probability by one decay step.
 // Called periodically to simulate learning over time.
 func (st *ScoreTracker) DecayEpsilon() {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	st.epsilon = math.Max(MinEpsilon, st.epsilon*(1-st.decayRate))
+	current := st.epsilon.Get()
+	st.epsilon.Set(math.Max(MinEpsilon, current*(1-st.decayRate)))
 }

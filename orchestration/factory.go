@@ -2,10 +2,14 @@ package orchestration
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -403,14 +407,10 @@ func (f *AgentFactory) matchSkills(capabilities []string) []*core.Skill {
 		}
 	}
 
-	// Sort by score descending (bubble sort for simplicity)
-	for i := 0; i < len(scored); i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].score > scored[i].score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
-		}
-	}
+	// Sort by score descending
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
 
 	result := make([]*core.Skill, len(scored))
 	for i, s := range scored {
@@ -423,18 +423,7 @@ func (f *AgentFactory) matchSkills(capabilities []string) []*core.Skill {
 
 // parseJSONFromContent extracts JSON from LLM output, stripping markdown code block wrappers if present.
 func parseJSONFromContent(content string, target any) error {
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```") {
-		lines := strings.Split(content, "\n")
-		var cleaned []string
-		for _, line := range lines[1:] {
-			if strings.HasPrefix(line, "```") {
-				break
-			}
-			cleaned = append(cleaned, line)
-		}
-		content = strings.TrimSpace(strings.Join(cleaned, "\n"))
-	}
+	content = core.StripMarkdownCodeBlock(content)
 	return json.Unmarshal([]byte(content), target)
 }
 
@@ -442,9 +431,15 @@ func parseJSONFromContent(content string, target any) error {
 
 func generateShortID() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	charsLen := big.NewInt(int64(len(chars)))
 	id := make([]byte, 6)
 	for i := range id {
-		id[i] = chars[i%len(chars)]
+		n, err := rand.Int(rand.Reader, charsLen)
+		if err != nil {
+			// Fallback: use timestamp to avoid deterministic failure
+			return fmt.Sprintf("auto-%d", time.Now().UnixNano())
+		}
+		id[i] = chars[n.Int64()]
 	}
 	return string(id)
 }

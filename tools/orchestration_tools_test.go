@@ -25,13 +25,13 @@ type mockAgentOrchestrator struct {
 	tm *core.InMemoryTaskManager
 }
 
-func (m *mockAgentOrchestrator) DelegateTo(_ context.Context, _, taskPrompt, _ string, _ map[string]any) (*DelegateResult, error) {
+func (m *mockAgentOrchestrator) DelegateTo(_ context.Context, _, taskPrompt, _ string, _ map[string]any) (*core.DelegateResult, error) {
 	// Create a task and complete it inline for testing
 	task, _ := m.tm.CreateTask("", taskPrompt, taskPrompt)
 	_ = m.tm.UpdateTaskStatus(task.ID, core.TaskStatusCompleted, "mock result: "+taskPrompt, "")
 	resultCh := make(chan any, 1)
 	resultCh <- "mock result: " + taskPrompt
-	return &DelegateResult{TaskID: task.ID, ResultCh: resultCh}, nil
+	return &core.DelegateResult{TaskID: task.ID, ResultCh: resultCh}, nil
 }
 func (m *mockAgentOrchestrator) WaitForResult(_ context.Context, taskID string) (*core.Task, error) {
 	return m.tm.GetTask(taskID)
@@ -41,7 +41,7 @@ func (m *mockAgentOrchestrator) AgentInfo(_ string) *core.AgentConfig           
 func (m *mockAgentOrchestrator) ListTasks(parentID string) ([]*core.Task, error)    { return m.tm.ListAllTasks() }
 func (m *mockAgentOrchestrator) GetTask(taskID string) (*core.Task, error)           { return m.tm.GetTask(taskID) }
 
-func (m *mockOrchestratorAccessor) Orchestrator() AgentOrchestrator {
+func (m *mockOrchestratorAccessor) Orchestrator() core.AgentOrchestrator {
 	return &mockAgentOrchestrator{tm: m.taskManager}
 }
 func (m *mockOrchestratorAccessor) EventEmitter() func(core.ReactEvent) { return nil }

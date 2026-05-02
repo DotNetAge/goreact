@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
 	"github.com/DotNetAge/goreact/core"
 )
 
@@ -19,17 +20,16 @@ func NewGlobTool() core.FuncTool {
 	return &GlobTool{MaxResults: 200}
 }
 
-const globDescription = `- Fast file pattern matching tool that works with any codebase size
+func (t *GlobTool) Info() *core.ToolInfo {
+	return &core.ToolInfo{
+		Name:        "glob",
+		Description: "Find files",
+		Prompt: `- Fast file pattern matching tool that works with any codebase size
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
 - Use this tool when you need to find files by name patterns
-- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use task_create to delegate to a subagent`
-
-func (t *GlobTool) Info() *core.ToolInfo {
-	return &core.ToolInfo{
-		Name:          "glob",
-		Description:   globDescription,
-		Tags:         []string{"file", "search", "pattern", "filesystem", "discovery"},
+- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the delegate tool instead`,
+		Tags:          []string{"file", "search", "pattern", "filesystem", "discovery"},
 		SecurityLevel: core.LevelSafe,
 		Parameters: []core.Parameter{
 			{

@@ -6,24 +6,6 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
-// AgentOrchestrator is the minimal interface for orchestration that tools need.
-// Defined locally to avoid import cycle with the orchestration package.
-// Both reactor.AgentOrchestrator and orchestration.Orchestrator satisfy this.
-type AgentOrchestrator interface {
-	DelegateTo(ctx context.Context, agentName, taskPrompt, parentID string, metadata map[string]any) (*DelegateResult, error)
-	WaitForResult(ctx context.Context, taskID string) (*core.Task, error)
-	ListAgents() []string
-	AgentInfo(name string) *core.AgentConfig
-	ListTasks(parentID string) ([]*core.Task, error)
-	GetTask(taskID string) (*core.Task, error)
-}
-
-// DelegateResult holds the result of a delegation request.
-type DelegateResult struct {
-	TaskID   string
-	ResultCh <-chan any
-}
-
 // OrchestrationAccessor provides orchestration dependencies to tools.
 // This interface decouples tools from the concrete reactor/orchestrator
 // while providing access to orchestration resources.
@@ -35,7 +17,7 @@ type DelegateResult struct {
 type OrchestrationAccessor interface {
 	// Orchestrator returns the orchestrator for task delegation, agent queries, etc.
 	// Returns nil if no orchestrator is configured (single-agent mode).
-	Orchestrator() AgentOrchestrator
+	Orchestrator() core.AgentOrchestrator
 
 	// Config returns the reactor configuration (model, API key, system prompt, etc.).
 	Config() ReactorConfig

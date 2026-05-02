@@ -10,6 +10,7 @@ type FuncTool interface {
 type ToolInfo struct {
 	Name              string        `json:"name" yaml:"name"`
 	Description       string        `json:"description" yaml:"description"`
+	Prompt            string        `json:"prompt,omitempty" yaml:"prompt,omitempty"` // 详尽的工具使用说明，第一轮加载到 NativeTools.description
 	Tags              []string      `json:"tags" yaml:"tags"`
 	SecurityLevel     SecurityLevel `json:"security_level" yaml:"security_level"`
 	IsIdempotent      bool          `json:"is_idempotent" yaml:"is_idempotent"`

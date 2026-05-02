@@ -23,7 +23,6 @@ func LoadModels(path string) (*ModelRegistry, error) {
 		return nil, fmt.Errorf("failed to read models file: %w", err)
 	}
 
-	// var configs []core.ModelConfig
 	var configs ModelsConfig
 	if err := yaml.Unmarshal(data, &configs); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal models YAML: %w", err)
@@ -60,10 +59,6 @@ func (m *ModelRegistry) Save(model *core.ModelConfig) error {
 		return fmt.Errorf("model name cannot be empty")
 	}
 
-	// if model.ID == "" {
-	// 	return fmt.Errorf("model name cannot be empty")
-	// }
-
 	if m.models == nil {
 		m.models = make(map[string]*core.ModelConfig)
 	}
@@ -72,7 +67,7 @@ func (m *ModelRegistry) Save(model *core.ModelConfig) error {
 	configs := make([]core.ModelConfig, 0, len(m.models))
 	for _, cfg := range m.models {
 		if cfg == nil {
-			continue // skip nil entries, though they shouldn't exist
+			continue
 		}
 		configs = append(configs, *cfg)
 	}
@@ -86,18 +81,4 @@ func (m *ModelRegistry) Save(model *core.ModelConfig) error {
 		return fmt.Errorf("failed to write models file: %w", err)
 	}
 	return nil
-}
-
-func (m *ModelRegistry) Models() []core.ModelConfig {
-	if m.models == nil {
-		return nil
-	}
-	configs := make([]core.ModelConfig, 0, len(m.models))
-	for _, cfg := range m.models {
-		if cfg == nil {
-			continue // skip nil entries, though they shouldn't exist
-		}
-		configs = append(configs, *cfg)
-	}
-	return configs
 }

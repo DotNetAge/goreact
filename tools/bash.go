@@ -11,6 +11,12 @@ import (
 	"github.com/DotNetAge/goreact/core"
 )
 
+// Default bash command timeout in milliseconds.
+const defaultBashTimeoutMs = 30000
+
+// Maximum output size (in characters) for bash stdout/stderr.
+const maxBashOutputSize = 30000
+
 // BashTool implements a tool for executing shell commands with whitelist security.
 type BashTool struct {
 	whitelistEnabled bool
@@ -129,7 +135,7 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		}
 	}
 
-	timeoutMs := 30000
+	timeoutMs := defaultBashTimeoutMs
 	if val, ok := params["timeout"].(float64); ok {
 		timeoutMs = int(val)
 	}
@@ -168,8 +174,8 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		}
 	}
 
-	// Truncate output if too large (ClueCode style)
-	const maxOutputSize = 30000
+	// Truncate output if too large
+	const maxOutputSize = maxBashOutputSize
 	result["stdout"] = truncateOutput(stdoutStr, maxOutputSize)
 	result["stderr"] = truncateOutput(stderrStr, maxOutputSize)
 

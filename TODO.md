@@ -201,14 +201,14 @@
 
 ### 当前编排器 vs 设计文档对照表
 
-| 设计组件 | 设计文档 | 当前状态 |
-|---------|---------|---------|
-| **LLM Router** | §6.3: 完整的 LLM 语义匹配引擎 | ✅ 已实现（含缓存+fallback） |
-| **Dispatcher** | §6.4: Router→选择→状态更新→转发 | ✅ 已实现（handleDelegate + RouteTask） |
-| **AgentFactory** | §12: 动态创建 + 两阶段生成 | ✅ 已实现（含重叠检测+降级） |
-| **ScoreTracker** | §8: 0-3分 + EMA衰减 + 多因子排序 | ⚠️ 基础版接入（多因子排序待集成到 Dispatcher）|
-| **Coordinator 模态** | §4.3/§10: Executor↔Coordinator 转换 | ❌ 未实现（下一阶段） |
-| **事件类型全集** | §7.1: TaskDispatchEvent 等 | ⚠️ 部分已有（core 层已定义）|
+| 设计组件             | 设计文档                            | 当前状态                                      |
+| -------------------- | ----------------------------------- | --------------------------------------------- |
+| **LLM Router**       | §6.3: 完整的 LLM 语义匹配引擎       | ✅ 已实现（含缓存+fallback）                   |
+| **Dispatcher**       | §6.4: Router→选择→状态更新→转发     | ✅ 已实现（handleDelegate + RouteTask）        |
+| **AgentFactory**     | §12: 动态创建 + 两阶段生成          | ✅ 已实现（含重叠检测+降级）                   |
+| **ScoreTracker**     | §8: 0-3分 + EMA衰减 + 多因子排序    | ⚠️ 基础版接入（多因子排序待集成到 Dispatcher） |
+| **Coordinator 模态** | §4.3/§10: Executor↔Coordinator 转换 | ❌ 未实现（下一阶段）                          |
+| **事件类型全集**     | §7.1: TaskDispatchEvent 等          | ⚠️ 部分已有（core 层已定义）                   |
 
 ### 待实现（Phase 4 范围）
 
@@ -272,18 +272,73 @@
 
 ### 当前设计文档覆盖率
 
-| 设计组件 | 设计文档 | 当前状态 |
-|---------|---------|---------|
-| **LLM Router** | §6.3: LLM 语义匹配 + 缓存 + fallback | ✅ 完整（含模板+多因子排序） |
-| **Dispatcher** | §6.4: Router→选择→状态更新→转发 | ✅ RouteTask + DelegateTo 双路径 |
-| **AgentFactory** | §12: 动态创建 + 双阶段 LLM 生成 | ✅ 完整（含重叠检测+降级+英文模板）|
-| **ScoreTracker** | §8: 0-3分 + EMA衰减 + epsilon-greedy | ✅ 已接入 handleResult + SelectBest |
-| **事件类型全集** | §7.1: 8种上行 + 4种下行 + 控制事件 | ✅ 完整实现 |
-| **多因子排序** | §8.5: 四因子加权排序 | ✅ rankAgents() + SelectBest() |
-| **WBS 分解** | §11: 模板就绪，待接入 Think | ⚠️ 模板完成，待 Reactor 集成 |
-| **Coordinator 模态** | §4.3/§10: TaskProgressTable + Wait 循环 | ⚠️ 数据结构就绪，待行为实现 |
-| **超时分级** | §10.3: 三级超时策略 | ❌ 待实现 |
-| **生命周期控制** | §10.5: Interrupt/Resume/Cancel | ⚠️ 类型定义完成，待行为实现 |
-| **Prompt 模板化** | 遵循项目 embed.FS 模式 | ✅ 全部英文 .tmpl 文件 |
+| 设计组件             | 设计文档                                | 当前状态                           |
+| -------------------- | --------------------------------------- | ---------------------------------- |
+| **LLM Router**       | §6.3: LLM 语义匹配 + 缓存 + fallback    | ✅ 完整（含模板+多因子排序）        |
+| **Dispatcher**       | §6.4: Router→选择→状态更新→转发         | ✅ RouteTask + DelegateTo 双路径    |
+| **AgentFactory**     | §12: 动态创建 + 双阶段 LLM 生成         | ✅ 完整（含重叠检测+降级+英文模板） |
+| **ScoreTracker**     | §8: 0-3分 + EMA衰减 + epsilon-greedy    | ✅ 已接入 handleResult + SelectBest |
+| **事件类型全集**     | §7.1: 8种上行 + 4种下行 + 控制事件      | ✅ 完整实现                         |
+| **多因子排序**       | §8.5: 四因子加权排序                    | ✅ rankAgents() + SelectBest()      |
+| **WBS 分解**         | §11: 模板就绪，待接入 Think             | ⚠️ 模板完成，待 Reactor 集成        |
+| **Coordinator 模态** | §4.3/§10: TaskProgressTable + Wait 循环 | ⚠️ 数据结构就绪，待行为实现         |
+| **超时分级**         | §10.3: 三级超时策略                     | ❌ 待实现                           |
+| **生命周期控制**     | §10.5: Interrupt/Resume/Cancel          | ⚠️ 类型定义完成，待行为实现         |
+| **Prompt 模板化**    | 遵循项目 embed.FS 模式                  | ✅ 全部英文 .tmpl 文件              |
 
 ### 测试结果: 34/34 PASS (0.947s)
+
+---
+
+- [ ] buildLLMBuilder 和 estimateInputTokens 包含了 完全相同的历史消息裁剪逻辑 （从末尾向前遍历、按 token 预算截断）
+  - 位置 : llm.go:L115-L139 和 llm.go:L188-L201
+  - 影响 : 修改裁剪逻辑时需要两处同步更新
+  - 建议 : 抽取公共的 trimHistoryByTokenBudget() 函数
+- [ ] List() 和 Models() 方法 功能完全重复 ，都是遍历 m.models 返回列表
+  - 位置 : model_registry.go:L50-L56 和 model_registry.go:L91-L103
+  - 建议 : 删除其中一个，或明确两个方法的不同语义
+- [ ] Ask() 和 AskStream() 使用 context.TODO() 而非 context.Background() 或带超时的 context
+  - 影响 : context.TODO() 是一个占位符，表明开发者不确定应该用什么 context。 在生产环境中，这会导致请求没有超时机制，可能无限期阻塞
+  - 建议 : 使用 context.WithTimeout 设置合理的超时（如 5 分钟），或将 context 作为参数传入
+  - 位置 : agent.go:L520 , agent.go:L591
+- [ ] 问题 : 直接对 a.sessionStore 进行 *core.MemorySessionStore 类型断言——这违反了接口设计原则，且假定 sessionStore 一定是内存实现
+  - 建议 : 在 SessionStore 接口中添加 RegisterRole 方法，避免类型断言
+  - 位置 : agent.go:L468 , agent.go:L996
+- [ ] 问题 : historyTokenBudgetRatio = 0.7 在两个地方独立定义
+  - 建议 : 统一定义在 core/constants.go ，只在 reactor 中定义一次
+  - 位置 : reactor/reactor.go:L40-L41 和 agent.go:L681
+- [ ] 131072 硬编码作为会话 token 预算，注释说 "如果 MaxTokens 小于 40K 对于一般任务都难以处理"
+  - 建议 : 定义为常量 DefaultSessionTokens
+  - 位置 : agent.go:L281 , agent.go:L399
+- [ ] 问题 : Coordinator 轮询间隔 500ms 、最大 5s 、超时 10min 全部硬编码
+  - 建议 : 定义为常量或配置项
+  - 位置 : reactor/reactor.go:L752-L753
+- [ ] 问题 : NewReactor() 函数 超过 180 行 ，承担了 Reactor 的全部初始化职责：配置校验、注册表创建、技能加载、工具注册、事件绑定等
+  - 建议 : 拆分为 applyDefaults() , initRegistries() , loadSkills() , registerTools() , setupToolExecutor() 等独立方法
+  - 位置 : reactor.go:L225-L407
+- [] 问题 : runTAOLoop() 函数 约 160 行 ，混合了循环控制、T-A-O 调度、消息持久化、步骤记录、结果构建等多种职责
+  - 建议 : 将步骤记录和结果构建拆分为独立方法
+  - 位置 : reactor.go:L573-L731
+- [ ] 问题 : Reactor 结构体是一个 "上帝对象" ，持有 15+ 个字段，囊括了:
+  - 配置管理 ( config )
+  - 意图注册表 ( intentRegistry )
+  - 工具注册表 + 执行器 ( toolRegistry , toolExecutor )
+  - 技能注册表 ( skillRegistry )
+  - 规则注册表 ( ruleRegistry )
+  - LLM 调用 ( llmClient )
+  - 内存检索 ( memory )
+  - 事件总线 ( eventBus )
+  - 会话管理 ( sessionStore , contextWindow )
+  - 编排器 ( orchestrator )
+  - 快照/暂停状态管理 ( snapshotHolder , pauseRequested )
+  - 影响 : 单个类的变更原因过多，测试困难，难以复用
+  - 建议 : 将 Reactor 拆分为：
+  - Executor — 负责 T-A-O 循环执行
+  - RegistryManager — 管理 tool/skill/rule 注册
+  - SessionManager — 管理上下文窗口和会话状态
+  - 位置 : reactor/reactor.go:L120-L152
+  - 影响 : 单个类的变更原因过多，测试困难，难以复用
+  - 建议 : 将 Reactor 拆分为：
+  - Executor — 负责 T-A-O 循环执行
+  - RegistryManager — 管理 tool/skill/rule 注册
+  - SessionManager — 管理上下文窗口和会话状态

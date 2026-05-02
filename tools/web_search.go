@@ -246,19 +246,20 @@ func (t *WebSearchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
 		Name: "web_search",
 		Description: `Search the web for real-time information. Returns a list of {title, url} results.
-Use this tool when you need up-to-date information beyond your training data.
+Use this tool when you need up-to-date information beyond your training data.`,
+		Prompt: `Search the web for real-time information. Returns search result information formatted as search result blocks, including links as markdown hyperlinks.
+Provides up-to-date information for current events and recent data.
+Use this tool for accessing information beyond the model's knowledge cutoff.
+Searches are performed automatically within a single API call.
 
-Key behaviors:
-- Returns only {title, url} pairs (small token cost).
-- Use 'web_fetch' to read the full content of any interesting URL.
-- Supports domain filtering via allowed_domains and blocked_domains.
-- Results are cached for 15 minutes to avoid redundant searches.
+CRITICAL REQUIREMENT - You MUST follow this:
+- After answering the user's question, you MUST include a "Sources:" section at the end of your response
+- In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)
+- This is MANDATORY - never skip including sources in your response
 
-Parameters:
-- query: the search query string (required)
-- max_results: maximum number of results to return (default: 10)
-- allowed_domains: restrict results to these domains (optional)
-- blocked_domains: exclude results from these domains (optional)`,
+Usage notes:
+- Domain filtering is supported to include or block specific websites
+- IMPORTANT: Use the correct year in search queries`,
 		IsReadOnly: true,
 		Parameters: []core.Parameter{
 			{
@@ -477,7 +478,7 @@ func NewWebFetchTool() core.FuncTool {
 
 func (t *WebFetchTool) Info() *core.ToolInfo {
 	return &core.ToolInfo{
-		Name:        "web_fetch",
+		Name: "web_fetch",
 		Description: `Fetch and extract content from a web page. Unlike web_search which discovers URLs, web_fetch reads the actual content of a known URL.
 
 Claude-style architecture:

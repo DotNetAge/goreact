@@ -195,7 +195,7 @@ func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
 //
 // If not set, delegation ("delegate" L1 route) will fail with an error,
 // and no agents metadata will be available in prompts.
-func WithOrchestrator(orch AgentOrchestrator) ReactorOption {
+func WithOrchestrator(orch core.AgentOrchestrator) ReactorOption {
 	return func(s *reactorSetup) {
 		s.orchestratorSetter = orch
 	}

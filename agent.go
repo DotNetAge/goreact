@@ -11,6 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// defaultAskTimeout is the timeout applied to Ask/AskStream convenience methods
+// when no explicit context.Context is provided by the caller.
+const defaultAskTimeout = 5 * time.Minute
+
 // ---------------------------------------------------------------------------
 // Default presets
 // ---------------------------------------------------------------------------
@@ -514,11 +518,13 @@ func (a *Agent) SessionID() string {
 //	// Or target a specific session:
 //	result, err := agent.Ask("session-abc", "Continue our discussion about AI")
 //
-// WARNING: This method uses context.TODO() which has NO timeout or cancellation.
-// For production use, prefer AskWithContext with a proper context.Context
-// that includes a timeout deadline to prevent indefinite blocking.
+// Ask sends a question to the agent in the given session.
+// A default timeout of defaultAskTimeout is applied to prevent indefinite blocking.
+// For fine-grained timeout control, use AskWithContext instead.
 func (a *Agent) Ask(sessionID string, question string) (*Result, error) {
-	return a.AskWithContext(context.TODO(), sessionID, question)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultAskTimeout)
+	defer cancel()
+	return a.AskWithContext(ctx, sessionID, question)
 }
 
 // AskWithSession is a convenience alias for Ask("", question) that uses
@@ -585,10 +591,13 @@ func (a *Agent) AskWithContext(ctx context.Context, sessionID string, question s
 // AskStream sends a question and returns a channel that streams text fragments
 // as they are produced by the reactor. See Ask for session semantics.
 //
-// WARNING: This method uses context.TODO() which has NO timeout or cancellation.
-// For production use, prefer AskStreamWithContext with a proper context.Context.
+// AskStream sends a question and streams response fragments via channel.
+// A default timeout of defaultAskTimeout is applied to prevent indefinite blocking.
+// For fine-grained timeout control, use AskStreamWithContext instead.
 func (a *Agent) AskStream(sessionID string, question string) (<-chan string, func(), error) {
-	return a.AskStreamWithContext(context.TODO(), sessionID, question)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultAskTimeout)
+	defer cancel()
+	return a.AskStreamWithContext(ctx, sessionID, question)
 }
 
 // AskStreamWithSession is a convenience alias using the currently bound session.

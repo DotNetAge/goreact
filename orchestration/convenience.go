@@ -126,16 +126,12 @@ func (o *ChannelOrchestrator) ValidateStartup() ([]string, error) {
 
 // Stats returns runtime statistics about the Orchestrator.
 func (o *ChannelOrchestrator) Stats() map[string]interface{} {
-	o.agentCacheMu.RLock()
-	cachedCount := len(o.agentCache)
-	o.agentCacheMu.RUnlock()
-
 	return map[string]interface{}{
-		"cached_agents":  cachedCount,
-		"active_tasks":    o.store.ActiveTasks(),
+		"cached_agents":    o.agentCache.Len(),
+		"active_tasks":     o.store.ActiveTasks(),
 		"registered_agents": len(o.ListAgents()),
 		"registered_models": len(o.RegisteredModels()),
-		"started":           o.started,
+		"started":          o.started,
 		"event_subscribers": func() int {
 			o.eventSubsMu.RLock()
 			n := len(o.eventSubs)

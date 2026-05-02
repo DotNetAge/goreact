@@ -10,53 +10,10 @@ import (
 // Ensure Reactor implements tools.OrchestrationAccessor (v2).
 var _ tools.OrchestrationAccessor = (*Reactor)(nil)
 
-// orchestratorAdapter wraps reactor.AgentOrchestrator to implement tools.AgentOrchestrator.
-// Needed because each package defines its own DelegateResult type to avoid import cycles.
-type orchestratorAdapter struct {
-	inner AgentOrchestrator
-}
-
-func (a *orchestratorAdapter) DelegateTo(ctx context.Context, agentName, taskPrompt, parentID string, metadata map[string]any) (*tools.DelegateResult, error) {
-	result, err := a.inner.DelegateTo(ctx, agentName, taskPrompt, parentID, metadata)
-	if err != nil {
-		return nil, err
-	}
-	return &tools.DelegateResult{TaskID: result.TaskID, ResultCh: result.ResultCh}, nil
-}
-
-func (a *orchestratorAdapter) WaitForResult(ctx context.Context, taskID string) (*core.Task, error) {
-	return a.inner.WaitForResult(ctx, taskID)
-}
-
-func (a *orchestratorAdapter) ListAgents() []string {
-	if la, ok := a.inner.(interface{ ListAgents() []string }); ok {
-		return la.ListAgents()
-	}
-	return nil
-}
-
-func (a *orchestratorAdapter) AgentInfo(name string) *core.AgentConfig {
-	if ai, ok := a.inner.(interface{ AgentInfo(string) *core.AgentConfig }); ok {
-		return ai.AgentInfo(name)
-	}
-	return nil
-}
-
-func (a *orchestratorAdapter) ListTasks(parentID string) ([]*core.Task, error) {
-	return a.inner.ListTasks(parentID)
-}
-
-func (a *orchestratorAdapter) GetTask(taskID string) (*core.Task, error) {
-	return a.inner.GetTask(taskID)
-}
-
 // Orchestrator returns the reactor's orchestrator for tool-layer orchestration access.
-// Implements tools.OrchestrationAccessor v2 interface via adapter pattern.
-func (r *Reactor) Orchestrator() tools.AgentOrchestrator {
-	if r.orchestrator == nil {
-		return nil
-	}
-	return &orchestratorAdapter{inner: r.orchestrator}
+// Implements tools.OrchestrationAccessor v2 interface.
+func (r *Reactor) Orchestrator() core.AgentOrchestrator {
+	return r.orchestrator
 }
 
 // EventEmitter returns a function to emit ReactEvents via the event bus.

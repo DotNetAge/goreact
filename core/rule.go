@@ -44,6 +44,12 @@ type Rule struct {
 // RuleRegistry manages behavior rules for an agent.
 // Rules are rendered into the System Prompt's <behavioral_rules> section
 // before each LLM call, allowing dynamic behavior control.
+//
+// RuleRegistry manages behavioral rules that define WHAT an agent SHOULD do
+// or MUST NOT do. Rules are STATIC constraints (e.g., "always ask before executing
+// destructive commands") that apply regardless of the current Intent or context.
+// This is distinct from IntentRegistry which dynamically classifies WHAT the user
+// WANTS to do — rules define "should/must", intent identifies "wants".
 type RuleRegistry interface {
 	Register(rule Rule) error
 	Unregister(id string)

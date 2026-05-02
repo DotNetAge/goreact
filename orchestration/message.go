@@ -7,6 +7,8 @@
 // Design doc: goreact/docs/SubAgent机制.md
 package orchestration
 
+import "github.com/DotNetAge/goreact/core"
+
 // MessageType identifies the type of message sent to the Orchestrator inbox.
 type MessageType string
 
@@ -62,7 +64,4 @@ type RouteTaskRequest struct {
 
 // DelegateResult is returned immediately when a delegate is accepted.
 // The actual result arrives asynchronously via MsgResult → handleResult.
-type DelegateResult struct {
-	TaskID    string // Assigned task ID
-	ResultCh  <-chan any // Closed when result is ready (read for the actual result)
-}
+type DelegateResult = core.DelegateResult

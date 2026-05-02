@@ -327,7 +327,7 @@ func TestCoordinator_ControlChannel(t *testing.T) {
 
 	// Send control command via channel — should not block
 	c.Control(&CoordControlCommand{
-		ControlCommand: core.ControlCommand{Action: CmdInterrupt, Reason: "channel test"},
+		ControlCommand: core.ControlCommand{Action: core.CmdInterrupt, Reason: "channel test"},
 		Requester:     core.RequesterUser,
 		Timestamp:      time.Now(),
 	})
@@ -732,7 +732,7 @@ func TestEventConstruction(t *testing.T) {
 	// Control command
 	ctrlCmd := CoordControlCommand{
 		ControlCommand: core.ControlCommand{
-			Action:    CmdInterrupt,
+			Action:    core.CmdInterrupt,
 			Reason:    "user requested pause",
 			Requester: core.RequesterUser,
 			Timestamp: now,
@@ -743,7 +743,7 @@ func TestEventConstruction(t *testing.T) {
 		Priority:  PriorityUser,
 	}
 
-	if ctrlCmd.Action != CmdInterrupt {
+	if ctrlCmd.Action != core.CmdInterrupt {
 		t.Error("action mismatch")
 	}
 	if ctrlCmd.Priority != PriorityUser {

@@ -3,7 +3,7 @@ package reactor
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,12 +90,12 @@ func (r *Reactor) resolveL3References(actCtx *ActivatedSkillContext) *ResolvedRe
 	}
 
 	refDir := filepath.Join(actCtx.ResourceBasePath, "references")
-	info, err := os.Stat(refDir)
-	if err != nil || !info.IsDir() {
+	_, err := fs.Stat(core.OS, strings.TrimLeft(refDir, "/"))
+	if err != nil {
 		return nil // no references/ directory — L3 not applicable
 	}
 
-	entries, err := os.ReadDir(refDir)
+	entries, err := fs.ReadDir(core.OS, strings.TrimLeft(refDir, "/"))
 	if err != nil || len(entries) == 0 {
 		return nil
 	}
@@ -140,7 +140,7 @@ func (r *Reactor) resolveL3References(actCtx *ActivatedSkillContext) *ResolvedRe
 				result.FilesSkipped++
 				continue
 			}
-			data, readErr := os.ReadFile(rf.AbsPath)
+			data, readErr := core.ReadFileFromFS(core.OS, rf.AbsPath)
 			if readErr != nil {
 				logger.Warn("L3: failed to read reference file", "path", rf.AbsPath, "error", readErr)
 				result.FilesSkipped++
@@ -159,7 +159,7 @@ func (r *Reactor) resolveL3References(actCtx *ActivatedSkillContext) *ResolvedRe
 		default:
 			// --- Binary or non-compliant extension ---
 			isBinary := false
-			if f, openErr := os.Open(rf.AbsPath); openErr == nil {
+			if f, openErr := core.OpenFromFS(core.OS, rf.AbsPath); openErr == nil {
 				buf := make([]byte, 512)
 				n, _ := f.Read(buf)
 				f.Close()
@@ -229,31 +229,12 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	estimateFn := r.tokenEstimator.Estimate
 	totalTokens := 0
 
-	// --- Load ALL tools (L1 minimal + L2 full ready) ---
 	allToolInfos := core.ToToolInfos(r.toolRegistry.All())
 	minimalLLMTools := ToolInfosToMinimalLLMTools(allToolInfos)
-
-	// --- Load applicable skills ---
 	skills, _ := r.skillRegistry.FindApplicableSkills(ctx.Intent)
 	skillsSection := BuildSkillsSystemPrompt(skills)
 
-	// --- Agent metadata NOT exposed at L1 (Design §2.1 / §13.3) ---
-	// Per information isolation principle, agent routing decisions are made
-	// exclusively by the Orchestrator's LLM Router, not by the Agent's L1.
-
-	var memoryRecords []core.MemoryRecord
-	if r.memory != nil {
-		records, err := r.memory.Retrieve(
-			ctx.Ctx(), ctx.Input,
-			core.WithMemoryTypes(core.MemoryTypeLongTerm, core.MemoryTypeUser, core.MemoryTypeExperience),
-			core.WithMemoryLimit(3),
-		)
-		if err != nil {
-			ctx.EmitEvent(core.Error, fmt.Sprintf("memory retrieval failed (non-fatal): %v", err))
-		} else {
-			memoryRecords = records
-		}
-	}
+	memoryRecords := r.retrieveMemory(ctx)
 
 	accountTokens := func(content string) {
 		if r.contextWindow != nil && content != "" {
@@ -261,9 +242,9 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		}
 	}
 
-	// --- Pre-L1 accounting (FIX P1-#4: complete all layers) ---
+	// --- Pre-L1 token accounting ---
 	accountTokens(skillsSection)
-	accountTokens(r.config.SystemPrompt) // FIX: was missing — base identity prompt
+	accountTokens(r.config.SystemPrompt)
 	minimalTokens := EstimateTokensForTools(minimalLLMTools, estimateFn)
 	if minimalTokens > 0 && r.contextWindow != nil {
 		r.contextWindow.AddTokens(minimalTokens)
@@ -271,44 +252,19 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 
 	// ====================================================================
 	// PHASE 1 (L1 Routing): Minimal tools + skills -> route decision
-	// (Agent metadata NOT exposed here — routing delegated to Orchestrator)
 	// ====================================================================
-	l1Prompt := buildL1RoutingPrompt(skills)
-	accountTokens(l1Prompt)  // FIX: was missing — phase instruction
-	accountTokens(ctx.Input) // FIX: was missing — user message
-
-	// FIX: Account history tokens for ContextWindow (replicates buildLLMBuilder trim logic)
-	maxTurns := r.maxHistoryTurns()
-	historyForL1 := ctx.ConversationHistory
-	if maxTurns > 0 && len(historyForL1) > maxTurns {
-		historyForL1 = historyForL1[len(historyForL1)-maxTurns:]
-	}
-	for _, msg := range historyForL1 {
-		accountTokens(msg.Content)
-	}
-
-	l1Content, l1Tokens, err := r.callLLMStream(
-		ctx, l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection,
-	)
-	if err != nil {
-		return totalTokens + l1Tokens, fmt.Errorf("think L1 routing failed: %w", err)
-	}
+	l1Result, l1Tokens, historyForL1, err := r.thinkL1(ctx, skills, skillsSection, accountTokens)
 	totalTokens += l1Tokens
-
-	// FIX(P1-#4): Add estimated input tokens for L1 call to ContextWindow and return value
-	l1InputTokens := r.estimateInputTokens(l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection)
-	totalTokens += l1InputTokens
-
-	l1Result, err := parseL1RoutingResponse(l1Content)
 	if err != nil {
-		return totalTokens, fmt.Errorf("think L1 parse failed: %w", err)
+		return totalTokens, err
 	}
-	logger.Info("L1 Route", "path", l1Result.Path, "target", l1Result.Target,
-		"tools", l1Result.SelectedTools, "reasoning", truncate(l1Result.Reasoning, 200))
 
+	// ====================================================================
+	// DECISION SWITCH: Early exit for answer/delegate/default paths
+	// ====================================================================
 	var actCtx *ActivatedSkillContext
 	var l1SelectedToolNames []string
-	var l3Refs *ResolvedReferences // L3: resolved reference files for skill activation
+	var l3Refs *ResolvedReferences
 
 	switch l1Result.Path {
 	case "answer":
@@ -321,12 +277,11 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		return totalTokens, nil
 
 	case "delegate":
-		// L1 delegate route: set decision directly, skip L2
 		ctx.LastThought = &Thought{
 			Decision:       DecisionDelegate,
 			Reasoning:      l1Result.Reasoning,
 			DelegateTarget: l1Result.Target,
-			DelegatePrompt: l1Result.Answer, // reuse Answer field for task prompt
+			DelegatePrompt: l1Result.Answer,
 		}
 		if ctx.LastThought.DelegatePrompt == "" {
 			ctx.LastThought.DelegatePrompt = ctx.Input
@@ -334,54 +289,24 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		return totalTokens, nil
 
 	case "tool", "skill":
-		// ====== ★ Four-Step Responsibility Gate (Design §5) ======
-		// Only active when orchestrator is configured.
-		// Inserts Step A (responsibility), Step B (atomicity/WBS),
-		// then either proceeds to Level 2 or enters Coordinator mode.
+		// Responsibility Gate
 		if r.orchestrator != nil {
 			gateTokens, gateErr := r.executeResponsibilityGate(ctx, l1Result, totalTokens)
 			totalTokens += gateTokens
 			if gateErr != nil {
 				logger.Warn("responsibility gate error, falling through to Level 2", "error", gateErr)
-				// Fall through to normal L2 execution on gate errors
 			} else {
-				return totalTokens, nil // Gate handled the decision
+				return totalTokens, nil
 			}
 		}
 
-		// Fall through to normal tool/skill path if gate not active or no-op
-		if l1Result.Path == "skill" {
-			// Skill activation path (moved from below)
-			if l1Result.Target == "" {
-				l1Result.Path = "tool"
-			} else {
-				actCtx, err = r.ActivateSkill(l1Result.Target, allToolInfos)
-				if err != nil {
-					logger.Info("Skill activation failed, falling back to direct tool mode", "error", err)
-					actCtx = nil
-					l1Result.Path = "tool"
-				} else if actCtx != nil {
-					accountTokens(actCtx.Instructions)
-				}
-
-				if actCtx != nil {
-					l3Refs = r.resolveL3References(actCtx)
-					if l3Refs != nil {
-						if l3Refs.Content != "" {
-							accountTokens(l3Refs.Content)
-						}
-						if l3Refs.Links != "" {
-							accountTokens(l3Refs.Links)
-						}
-					}
-				}
-			}
+		// Skill activation + L3 resolution
+		actCtx, l1Result, l3Refs = r.activateAndResolve(l1Result, allToolInfos, accountTokens)
+		l1SelectedToolNames = r.resolveToolNames(l1Result)
+		if l1Result.Path != "skill" && l1Result.Target != "" && l1Result.Path != "" {
+			// actCtx was set by activateAndResolve, path may have changed to "tool"
 		}
-
-		l1SelectedToolNames = l1Result.SelectedTools
-		if len(l1SelectedToolNames) == 0 && l1Result.Target != "" {
-			l1SelectedToolNames = []string{l1Result.Target}
-		}
+		l1SelectedToolNames = r.resolveToolNames(l1Result)
 
 	default:
 		ctx.LastThought = &Thought{
@@ -396,6 +321,124 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	// ====================================================================
 	// PHASE 2 (L2 Planning): Full-schema tools + optional skill instructions
 	// ====================================================================
+	l2Tokens, err := r.thinkL2(ctx, l1SelectedToolNames, actCtx, l3Refs, skillsSection, allToolInfos,
+		minimalTokens, minimalLLMTools, memoryRecords, historyForL1, skills, accountTokens, estimateFn)
+	totalTokens += l2Tokens
+	if err != nil {
+		return totalTokens, err
+	}
+
+	return totalTokens, nil
+}
+
+// retrieveMemory fetches relevant memory records for the current context.
+func (r *Reactor) retrieveMemory(ctx *ReactContext) []core.MemoryRecord {
+	if r.memory == nil {
+		return nil
+	}
+	records, err := r.memory.Retrieve(
+		ctx.Ctx(), ctx.Input,
+		core.WithMemoryTypes(core.MemoryTypeLongTerm, core.MemoryTypeUser, core.MemoryTypeExperience),
+		core.WithMemoryLimit(3),
+	)
+	if err != nil {
+		ctx.EmitEvent(core.Error, fmt.Sprintf("memory retrieval failed (non-fatal): %v", err))
+		return nil
+	}
+	return records
+}
+
+// thinkL1 executes Phase 1 L1 routing and returns the parsed result.
+func (r *Reactor) thinkL1(ctx *ReactContext, skills []*core.Skill, skillsSection string, accountTokens func(string)) (*l1RoutingResult, int, ConversationHistory, error) {
+	totalTokens := 0
+
+	l1Prompt := buildL1RoutingPrompt(skills)
+	accountTokens(l1Prompt)
+	accountTokens(ctx.Input)
+
+	maxTurns := r.maxHistoryTurns()
+	historyForL1 := ctx.ConversationHistory
+	if maxTurns > 0 && len(historyForL1) > maxTurns {
+		historyForL1 = historyForL1[len(historyForL1)-maxTurns:]
+	}
+	for _, msg := range historyForL1 {
+		accountTokens(msg.Content)
+	}
+
+	l1Content, l1Tokens, err := r.callLLMStream(
+		ctx, l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection,
+	)
+	if err != nil {
+		return nil, totalTokens + l1Tokens, nil, fmt.Errorf("think L1 routing failed: %w", err)
+	}
+	totalTokens += l1Tokens
+
+	l1InputTokens := r.estimateInputTokens(l1Prompt, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), nil, skillsSection)
+	totalTokens += l1InputTokens
+
+	l1Result, err := parseL1RoutingResponse(l1Content)
+	if err != nil {
+		return nil, totalTokens, nil, fmt.Errorf("think L1 parse failed: %w", err)
+	}
+	logger.Info("L1 Route", "path", l1Result.Path, "target", l1Result.Target,
+		"tools", l1Result.SelectedTools, "reasoning", truncate(l1Result.Reasoning, 200))
+
+	return l1Result, totalTokens, historyForL1, nil
+}
+
+// activateAndResolve handles skill activation and L3 reference resolution when L1 routes to a skill.
+func (r *Reactor) activateAndResolve(l1Result *l1RoutingResult, allToolInfos []core.ToolInfo, accountTokens func(string)) (*ActivatedSkillContext, *l1RoutingResult, *ResolvedReferences) {
+	if l1Result.Path != "skill" || l1Result.Target == "" {
+		return nil, l1Result, nil
+	}
+
+	actCtx, err := r.ActivateSkill(l1Result.Target, allToolInfos)
+	if err != nil {
+		logger.Info("Skill activation failed, falling back to direct tool mode", "error", err)
+		return nil, l1Result, nil
+	}
+
+	if actCtx == nil {
+		return nil, l1Result, nil
+	}
+
+	accountTokens(actCtx.Instructions)
+
+	var l3Refs *ResolvedReferences
+	if actCtx != nil {
+		l3Refs = r.resolveL3References(actCtx)
+		if l3Refs != nil {
+			if l3Refs.Content != "" {
+				accountTokens(l3Refs.Content)
+			}
+			if l3Refs.Links != "" {
+				accountTokens(l3Refs.Links)
+			}
+		}
+	}
+
+	return actCtx, l1Result, l3Refs
+}
+
+// resolveToolNames extracts selected tool names from the L1 result.
+func (r *Reactor) resolveToolNames(l1Result *l1RoutingResult) []string {
+	if len(l1Result.SelectedTools) > 0 {
+		return l1Result.SelectedTools
+	}
+	if l1Result.Target != "" {
+		return []string{l1Result.Target}
+	}
+	return nil
+}
+
+// thinkL2 executes Phase 2 L2 planning with full-schema tools.
+func (r *Reactor) thinkL2(ctx *ReactContext, l1SelectedToolNames []string, actCtx *ActivatedSkillContext,
+	l3Refs *ResolvedReferences, skillsSection string, allToolInfos []core.ToolInfo,
+	minimalTokens int64, minimalLLMTools []gochatcore.Tool, memoryRecords []core.MemoryRecord,
+	historyForL1 ConversationHistory, skills []*core.Skill, accountTokens func(string), estimateFn func(string) int) (int, error) {
+
+	totalTokens := 0
+
 	var l2FullSchemaTools []gochatcore.Tool
 	if len(l1SelectedToolNames) > 0 && actCtx == nil {
 		l2FullSchemaTools = UpgradeToolsToFullSchema(l1SelectedToolNames, allToolInfos)
@@ -407,22 +450,20 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		l2FullSchemaTools = ToolInfosToLLMTools(allToolInfos)
 	}
 
-	// FIX(P1-#4/#7): Account incremental tool schema cost (L2 full minus L2 minimal overlap).
-	// Use EstimateTokensForTools delta to avoid double-counting the base tool identity cost.
 	fullSchemaTokens := EstimateTokensForTools(l2FullSchemaTools, estimateFn)
-	if fullSchemaTokens > minimalTokens && r.contextWindow != nil {
-		r.contextWindow.AddTokens(fullSchemaTokens - minimalTokens) // Only incremental cost
-	} else if fullSchemaTokens > 0 && r.contextWindow != nil {
-		r.contextWindow.AddTokens(fullSchemaTokens)
+	if r.contextWindow != nil {
+		if fullSchemaTokens > minimalTokens {
+			r.contextWindow.AddTokens(fullSchemaTokens - minimalTokens)
+		} else if fullSchemaTokens > 0 {
+			r.contextWindow.AddTokens(fullSchemaTokens)
+		}
 	}
 
 	instructions := BuildThinkPrompt(ctx.Input, ctx.Intent, memoryRecords, actCtx, r.intentRegistry, l3Refs)
 	accountTokens(instructions)
-
-	// FIX(P1-#4): Re-account per-call inputs for L2 (sent again as separate API call)
-	accountTokens(ctx.Input) // User message sent again
+	accountTokens(ctx.Input)
 	for _, msg := range historyForL1 {
-		accountTokens(msg.Content) // History sent again
+		accountTokens(msg.Content)
 	}
 
 	r.checkSlide(ctx.Ctx())
@@ -433,7 +474,6 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	}
 	totalTokens += tokens
 
-	// FIX(P1-#4): Add estimated input tokens for L2 call
 	l2InputTokens := r.estimateInputTokens(instructions, ctx.Input, ctx.ConversationHistory, r.maxHistoryTurns(), l2FullSchemaTools, skillsSection)
 	totalTokens += l2InputTokens
 
@@ -465,15 +505,7 @@ func buildL1RoutingPrompt(skills []*core.Skill) string {
 
 // parseL1RoutingResponse extracts the L1 routing result from LLM response JSON.
 func parseL1RoutingResponse(content string) (*l1RoutingResult, error) {
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```") {
-		lines := strings.Split(content, "\n")
-		if len(lines) > 2 {
-			content = strings.Join(lines[1:len(lines)-1], "\n")
-		} else {
-			content = stripJSONWrappers(content)
-		}
-	}
+	content = core.StripMarkdownCodeBlock(content)
 	var result l1RoutingResult
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse L1 routing JSON: %w\nraw: %s", err, content)

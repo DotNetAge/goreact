@@ -229,11 +229,11 @@ func (c *Coordinator) RunWaitLoop(ctx context.Context) *CoordinationResult {
 		case ctrl := <-c.controlChan:
 			// --- External lifecycle control (Design §10.5.6) ---
 			switch ctrl.Action {
-			case CmdInterrupt:
+			case core.CmdInterrupt:
 				if err := c.Interrupt(ctrl.Reason); err != nil {
 					c.logger.Warn("coordinator: interrupt failed", "error", err)
 				}
-			case CmdResume:
+			case core.CmdResume:
 				// Resume restarts the loop; current iteration exits after handling
 				c.lifecycleLock.Lock()
 				if c.lifecycleState == LifecycleInterrupted {
@@ -243,7 +243,7 @@ func (c *Coordinator) RunWaitLoop(ctx context.Context) *CoordinationResult {
 					// Resume creates a new goroutine; this loop continues monitoring
 				}
 				c.lifecycleLock.Unlock()
-			case CmdCancel:
+			case core.CmdCancel:
 				_ = c.Cancel(ctrl.Reason)
 				return c.finalize(LifecycleCancelled, ctrl.Reason)
 			}
@@ -1063,35 +1063,27 @@ func estimateDuration(st TaskDecomposition) time.Duration {
 
 // registerCoordinator registers a Coordinator for a parent task ID.
 func (o *ChannelOrchestrator) registerCoordinator(coord *Coordinator) error {
-	o.coordinatorsMu.Lock()
-	defer o.coordinatorsMu.Unlock()
-
-	if _, exists := o.coordinators[coord.ParentTaskID]; exists {
+	if _, exists := o.coordinators.Get(coord.ParentTaskID); exists {
 		return fmt.Errorf("coordinator already exists for parent task %q", coord.ParentTaskID)
 	}
-	o.coordinators[coord.ParentTaskID] = coord
+	o.coordinators.Set(coord.ParentTaskID, coord)
 	return nil
 }
 
 // getCoordinator retrieves the active Coordinator for a parent task ID.
 func (o *ChannelOrchestrator) getCoordinator(parentTaskID string) *Coordinator {
-	o.coordinatorsMu.RLock()
-	defer o.coordinatorsMu.RUnlock()
-	return o.coordinators[parentTaskID]
+	c, _ := o.coordinators.Get(parentTaskID)
+	return c
 }
 
 // unregisterCoordinator removes a completed/cancelled Coordinator from the pool.
 func (o *ChannelOrchestrator) unregisterCoordinator(parentTaskID string) {
-	o.coordinatorsMu.Lock()
-	defer o.coordinatorsMu.Unlock()
-	delete(o.coordinators, parentTaskID)
+	o.coordinators.Delete(parentTaskID)
 }
 
 // activeCoordinators returns the number of currently active Coordinators.
 func (o *ChannelOrchestrator) activeCoordinators() int {
-	o.coordinatorsMu.RLock()
-	defer o.coordinatorsMu.RUnlock()
-	return len(o.coordinators)
+	return o.coordinators.Len()
 }
 
 // ===========================================================================

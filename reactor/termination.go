@@ -197,6 +197,7 @@ func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDur
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				logger.Error("generateSummary panicked", "panic", r)
 			}
 		}()
 
