@@ -167,6 +167,13 @@ func WithAgentRegistry(reg tools.AgentDefinitionRegistry) ReactorOption {
 	}
 }
 
+// WithModelRegistry sets the model registry for the ModelList tool.
+func WithModelRegistry(reg core.ModelRegistry) ReactorOption {
+	return func(s *reactorSetup) {
+		s.modelRegistry = reg
+	}
+}
+
 // WithRuntimeDirectory sets the runtime directory for agent metadata (state, scores).
 func WithRuntimeDirectory(dir *core.RuntimeDirectory) ReactorOption {
 	return func(s *reactorSetup) {

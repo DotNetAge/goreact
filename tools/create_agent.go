@@ -37,7 +37,7 @@ When to use:
 - The user asks you to define a dedicated expert role with its own system prompt.
 - You identified a gap in the agent registry that would benefit from a custom specialist.
 
-Before creating, call SkillList to query all skills available in the system (your own SkillsCatalog only shows your configured skills). Select those that match the new agent's role and pass them as an array in the skills parameter.
+Before creating, call SkillList to query all available skills, and call ModelList to see all available models.
 
 How to create a good agent:
 - Name: short, descriptive, kebab-case (e.g. "code-reviewer", "data-analyst", "security-auditor")
@@ -45,7 +45,7 @@ How to create a good agent:
 - Description: concise capability summary (max 1024 chars) — this is what FindAgent searches against
 - Introduction: the agent's full system prompt — define its behavior, tools, rules, and output format
 - Skills: array of skill names the agent should have — call SkillList first to see what's available (e.g. ["code-review", "security"])
-- Model: optional — leave empty to use the default model
+- Model: pick the model from ModelList results — set this to the model name that best fits the agent's role
 
 Once created, the agent appears in FindAgent results and can receive tasks via Delegate.`,
 		Tags: []string{"agent", "create", "definition", "orchestration"},
@@ -55,7 +55,7 @@ Once created, the agent appears in FindAgent results and can receive tasks via D
 			{Name: "description", Type: "string", Description: "Capability summary (max 1024 chars) — used by FindAgent for search matching", Required: true},
 			{Name: "introduction", Type: "string", Description: "Full system prompt / instructions defining the agent's behavior, rules, and output format", Required: true},
 			{Name: "skills", Type: "array", Description: "Array of skill names the agent should have. Check SkillList for available skills first.", Required: false},
-			{Name: "model", Type: "string", Description: "Optional model name (defaults to parent agent's model)", Required: false},
+			{Name: "model", Type: "string", Description: "Model name from ModelList. Call ModelList first to see available models. Defaults to parent agent's model if empty.", Required: false},
 		},
 	}
 }

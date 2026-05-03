@@ -177,7 +177,7 @@ In those cases, call Delegate multiple times in the same Act phase with differen
 - A specialized task type repeats frequently, and no existing agent covers it.
 - The user asks you to define a new expert role with a custom system prompt.
 
-When creating an agent, call SkillList to query all available skills (your SkillsCatalog only shows your own configured skills). Select those that match the new agent's role and pass them as an array in the skills parameter. If no skill fits, describe the capability in the agent's introduction instead.
+When creating an agent, call ModelList to see available models and SkillList to see available skills. Select the model and skills that match the new agent's role. Skills go in the skills array parameter; the model name goes in the model parameter. If no skill fits, describe the capability in the agent's introduction instead.
 
 ### When to rank an agent
 - After a delegated task completes and you have evaluated the result.

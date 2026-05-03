@@ -8,6 +8,7 @@ import (
 
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/reactor"
+	"github.com/DotNetAge/goreact/tools"
 	"github.com/google/uuid"
 )
 
@@ -119,6 +120,11 @@ type agentSetup struct {
 
 	// Unified Prompt (if nil, built from config defaults)
 	prompt *reactor.Prompt
+
+	// Agent orchestration
+	agentRegistry tools.AgentDefinitionRegistry
+	runtimeDir    *core.RuntimeDirectory
+	modelRegistry core.ModelRegistry
 }
 
 // AgentOption configures an Agent during creation via NewAgent.
@@ -220,6 +226,27 @@ func WithEventBus(bus reactor.EventBus) AgentOption {
 func WithSessionStore(store core.SessionStore) AgentOption {
 	return func(s *agentSetup) {
 		s.sessionStore = store
+	}
+}
+
+// WithAgentRegistry sets the agent definition registry for FindAgent/CreateAgent tools.
+func WithAgentRegistry(reg tools.AgentDefinitionRegistry) AgentOption {
+	return func(s *agentSetup) {
+		s.agentRegistry = reg
+	}
+}
+
+// WithRuntimeDirectory sets the runtime directory for agent metadata tracking.
+func WithRuntimeDirectory(dir *core.RuntimeDirectory) AgentOption {
+	return func(s *agentSetup) {
+		s.runtimeDir = dir
+	}
+}
+
+// WithModelRegistry sets the model registry for the ModelList tool.
+func WithModelRegistry(reg core.ModelRegistry) AgentOption {
+	return func(s *agentSetup) {
+		s.modelRegistry = reg
 	}
 }
 
@@ -393,6 +420,15 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 		reactorOpts = append(reactorOpts, reactor.WithPrompt(p))
 	} else {
 		reactorOpts = append(reactorOpts, reactor.WithPrompt(setup.prompt))
+	}
+	if setup.agentRegistry != nil {
+		reactorOpts = append(reactorOpts, reactor.WithAgentRegistry(setup.agentRegistry))
+	}
+	if setup.runtimeDir != nil {
+		reactorOpts = append(reactorOpts, reactor.WithRuntimeDirectory(setup.runtimeDir))
+	}
+	if setup.modelRegistry != nil {
+		reactorOpts = append(reactorOpts, reactor.WithModelRegistry(setup.modelRegistry))
 	}
 
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)

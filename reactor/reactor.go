@@ -130,6 +130,7 @@ type Reactor struct {
 	// Agent orchestration dependencies (set by Agent, zero-value safe when nil)
 	agentRegistry tools.AgentDefinitionRegistry
 	runtimeDir    *core.RuntimeDirectory
+	modelRegistry core.ModelRegistry
 }
 
 func (r *Reactor) EventBus() EventBus { return r.eventBus }
@@ -204,6 +205,7 @@ type reactorSetup struct {
 	prompt            *Prompt
 	agentRegistry     tools.AgentDefinitionRegistry
 	runtimeDir        *core.RuntimeDirectory
+	modelRegistry     core.ModelRegistry
 }
 
 func (r *Reactor) applyDefaults(config *ReactorConfig) {
@@ -380,6 +382,7 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 		})},
 		{"SkillCreate", tools.NewSkillCreateTool()},
 		{"SkillList", tools.NewSkillListTool()},
+		{"ModelList", tools.NewModelListTool(r.modelRegistry)},
 		{"FindAgent", tools.NewFindAgentTool(r.runtimeDir)},
 		{"Rank", tools.NewRankTool(r.runtimeDir)},
 		{"CreateAgent", tools.NewCreateAgentTool(r.agentRegistry, r.runtimeDir)},
@@ -412,6 +415,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	r.prompt = setup.prompt
 	r.agentRegistry = setup.agentRegistry
 	r.runtimeDir = setup.runtimeDir
+	r.modelRegistry = setup.modelRegistry
 
 	r.initRegistries(setup)
 	r.initLLMCaller(config, setup)
@@ -545,6 +549,7 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 		eventBus:      r.eventBus,
 		agentRegistry: r.agentRegistry,
 		runtimeDir:    r.runtimeDir,
+		modelRegistry: r.modelRegistry,
 	}
 
 	// Clone LLMCaller with parent's shared infrastructure but independent client/context
