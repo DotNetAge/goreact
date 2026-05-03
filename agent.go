@@ -259,26 +259,17 @@ func WithPrompt(p *reactor.Prompt) AgentOption {
 	}
 }
 
-// WithRules registers behavior rules that are injected into the System Prompt's
-// <behavioral_rules> section. Rules control agent behavior at runtime without
-// code changes.
+// WithRuleRegistry sets a custom RuleRegistry implementation for behavioral rules.
+// Rules are injected into the System Prompt's ## Behavioral Rules section.
+// There is no built-in default — users must provide their own implementation.
 //
 // Example:
 //
-//	agent := NewAgent(apiKey,
-//	    WithRules([]core.Rule{
-//	        {ID: "no-delete", Name: "Data Protection", Scope: core.ScopeGlobal,
-//	         Priority: 100, Content: "Never delete production data files."},
-//	        {ID: "chinese-only", Name: "Chinese Response", Scope: core.ScopeConversation,
-//	         Priority: 50, Content: "Always respond in Chinese during this session."},
-//	    }),
-//	)
-func WithRules(rules []core.Rule) AgentOption {
+//	reg := myRuleRegistry{}
+//	reg.Register(core.Rule{ID: "no-delete", Intro: "Never delete production data files."})
+//	agent := NewAgent(WithRuleRegistry(reg))
+func WithRuleRegistry(reg core.RuleRegistry) AgentOption {
 	return func(s *agentSetup) {
-		reg := reactor.NewDefaultRuleRegistry()
-		for _, rule := range rules {
-			_ = reg.Register(rule)
-		}
 		s.ruleRegistry = reg
 	}
 }
@@ -404,6 +395,9 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 		setup.sessionStore = core.NewMemorySessionStore()
 	}
 	reactorOpts = append(reactorOpts, reactor.WithSessionStore(setup.sessionStore))
+	if setup.ruleRegistry != nil {
+		reactorOpts = append(reactorOpts, reactor.WithRuleRegistry(setup.ruleRegistry))
+	}
 
 	// Build ReactorConfig from ModelConfig — align all generation parameters
 	reactorConfig := buildReactorConfig(model, config.Introduction)
@@ -411,7 +405,6 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	// Build default Prompt if none provided
 	if setup.prompt == nil {
 		p := reactor.NewDefaultPrompt(config.Name, config.Role, config.Description, config.Introduction)
-		p.ThinkInstr = "Decide the next action based on the user's input and conversation history.\nDecision must be one of: act (call tools), answer (respond directly), clarify (ask for more info).\nOutput JSON: {\"decision\": \"...\", \"reasoning\": \"...\", \"tool_calls\": {...}, \"final_answer\": \"...\", \"is_final\": false}"
 		p.ExecutionGuidelines = reactor.BuildExecutionGuidelines()
 		p.ToolUsage = reactor.BuildToolUsageGuidelines()
 		p.ToneAndStyle = reactor.BuildToneAndStyle()
@@ -433,11 +426,21 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 
 	r := reactor.NewReactor(reactorConfig, reactorOpts...)
 
-	// Populate skills catalog on the Prompt
+	// Populate skills catalog and rules on the Prompt
 	if p := r.Prompt(); p != nil {
 		skills := r.SkillRegistry().ListSkills()
 		if catalog := reactor.BuildSkillsCatalog(skills); catalog != "" {
 			p.SkillsCatalog = catalog
+		}
+		// Merge custom rules from RuleRegistry into Prompt.Rules (if set)
+		if reg := r.RuleRegistry(); reg != nil {
+			if rules := reg.FormatPromptSection(); rules != "" {
+				if p.Rules != "" {
+					p.Rules += "\n" + rules
+				} else {
+					p.Rules = rules
+				}
+			}
 		}
 	}
 

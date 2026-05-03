@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -185,27 +184,26 @@ func (r *Reactor) PeekSnapshot() *RunSnapshot {
 func (r *Reactor) SetAskPermission(p *tools.AskPermission) { r.askPermission = p }
 
 type reactorSetup struct {
-	systemPrompt      string
-	skipTools         map[string]bool
-	skipAllBundled    bool
-	extraTools        []core.FuncTool
-	resultLimits      core.ToolResultLimits
-	tokenEstimator    core.TokenEstimator
-	eventBus          EventBus
-	mcpRegistry       *core.MCPToolRegistry
-	skillDirs         []string
-	skills            []string
-	skipBundledSkills bool
-	memory            core.Memory
-	mockLLM           MockLLMFunc
-	sessionStore      core.SessionStore
-	toolRegistry      core.ToolRegistry
-	skillRegistry     core.SkillRegistry
-	ruleRegistry      core.RuleRegistry
-	prompt            *Prompt
-	agentRegistry     tools.AgentDefinitionRegistry
-	runtimeDir        *core.RuntimeDirectory
-	modelRegistry     core.ModelRegistry
+	systemPrompt   string
+	skipTools      map[string]bool
+	skipAllBundled bool
+	extraTools     []core.FuncTool
+	resultLimits   core.ToolResultLimits
+	tokenEstimator core.TokenEstimator
+	eventBus       EventBus
+	mcpRegistry    *core.MCPToolRegistry
+	skillDirs      []string
+	skills         []string
+	memory         core.Memory
+	mockLLM        MockLLMFunc
+	sessionStore   core.SessionStore
+	toolRegistry   core.ToolRegistry
+	skillRegistry  core.SkillRegistry
+	ruleRegistry   core.RuleRegistry
+	prompt         *Prompt
+	agentRegistry  tools.AgentDefinitionRegistry
+	runtimeDir     *core.RuntimeDirectory
+	modelRegistry  core.ModelRegistry
 }
 
 func (r *Reactor) applyDefaults(config *ReactorConfig) {
@@ -231,11 +229,7 @@ func (r *Reactor) initRegistries(setup *reactorSetup) {
 	} else {
 		r.skillRegistry = NewDefaultSkillRegistry()
 	}
-	if setup.ruleRegistry != nil {
-		r.ruleRegistry = setup.ruleRegistry
-	} else {
-		r.ruleRegistry = NewDefaultRuleRegistry()
-	}
+	r.ruleRegistry = setup.ruleRegistry
 
 	if setup.eventBus != nil {
 		r.eventBus = setup.eventBus
@@ -281,11 +275,6 @@ func (r *Reactor) initLLMCaller(config ReactorConfig, setup *reactorSetup) {
 }
 
 func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
-	if !setup.skipBundledSkills {
-		if err := RegisterBundledSkills(r.skillRegistry, setup.skills); err != nil {
-			logger.Warn("failed to register bundled skills", "error", err)
-		}
-	}
 
 	for _, dir := range setup.skillDirs {
 		loader := core.NewFileSystemSkillLoader(dir)
@@ -789,11 +778,6 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 
 	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
 	r.handlePauseSnapshot(reactCtx)
-
-	if result.TotalIterations > 1 && result.Answer != "" &&
-		!strings.Contains(result.TerminationReason, "error") {
-		r.generateSummary(reactCtx, result, time.Since(runStart))
-	}
 
 	return result, nil
 }

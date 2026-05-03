@@ -2,32 +2,23 @@ package reactor
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 
 	gochatcore "github.com/DotNetAge/gochat/core"
 	"github.com/DotNetAge/goreact/core"
 )
 
-// Prompt is the centralized system prompt builder.
-// All system prompt fragments are defined here and composed into
-// the final SystemMessage array on each LLM call.
-//
-// Layout (in order):
-//   Static sections (KV Cache anchor — never change between rounds)
-//     Identity → Rules → ExecutionGuidelines → SkillsCatalog → ToolUsage → ThinkInstr → AgentCoordination → ToneAndStyle → SystemReminders
-//   [DYNAMIC_BOUNDARY] — KV Cache split point
-//   Dynamic sections (can change per session/round)
-//     OutputEfficiency → Language → EnvironmentInfo
-//
-// Dynamic context (skill content, progress hints) is injected
-// via tool_result footers instead of System Prompt.
+// Prompt is the centralized system prompt builder (progressive disclosure Level 1).
+// Only static identity, rules, tool guidance, and coordination hints belong here.
+// Think-phase instructions (Level 2) and skill content (Level 3) are loaded separately.
 type Prompt struct {
 	// Static sections — rendered once, stable across rounds
 	Identity            string // Agent name, role, description
 	Rules               string // Behavioral rules
-	ThinkInstr          string // Think phase instructions (decision act/answer/clarify)
 	ToolUsage           string // Tool usage guidelines
-	SkillsCatalog       string // Skills metadata + usage guidance
+	SkillsCatalog       string // Skills metadata matched to AgentConfig.Skills
 	ExecutionGuidelines string // Caution about risky operations
 	AgentCoordination   string // Agent discovery, delegation, ranking, and creation guidance
 	ToneAndStyle        string // Tone and style guidelines
@@ -35,16 +26,7 @@ type Prompt struct {
 
 	// Dynamic sections — after DYNAMIC_BOUNDARY, can change per session
 	OutputEfficiency string // How to communicate with the user (prose style)
-	Language         string // Response language instruction ("Always respond in {lang}...")
-	EnvironmentInfo  string // Runtime environment info (cwd, platform, shell)
-
-	// Render options
-	HasActiveSkill          bool
-	ActiveSkillName         string
-	ActiveSkillDesc         string
-	ActiveSkillInstructions string
-	FilteredToolList        string
-	ResourceBasePath        string
+	Language         string // Response language instruction
 }
 
 // DynamicBoundary is the KV Cache split marker.
@@ -74,7 +56,7 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.Identity))
 	}
 
-	// Section 2: Behavioral rules
+	// Section 2: Behavioral rules (MUST-follow)
 	if p.Rules != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(fmt.Sprintf(
 			"## Behavioral Rules\n%s", p.Rules)))
@@ -95,22 +77,7 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToolUsage))
 	}
 
-	// Section 6: Think instructions
-	if p.ThinkInstr != "" {
-		if p.HasActiveSkill {
-			skillBlock := fmt.Sprintf("\n\n<active_skill>\n=== SKILL: %s ===\nDescription: %s\n\n%s\n\nAvailable tools: %s",
-				p.ActiveSkillName, p.ActiveSkillDesc, p.ActiveSkillInstructions, p.FilteredToolList)
-			if p.ResourceBasePath != "" {
-				skillBlock += fmt.Sprintf("\nResource base path: %s", p.ResourceBasePath)
-			}
-			skillBlock += "\n</active_skill>"
-			msgs = append(msgs, gochatcore.NewSystemMessage(p.ThinkInstr+skillBlock))
-		} else {
-			msgs = append(msgs, gochatcore.NewSystemMessage(p.ThinkInstr))
-		}
-	}
-
-	// Section 7: Agent coordination (agent discovery, delegation, ranking)
+	// Section 6: Agent coordination (agent discovery, delegation, ranking)
 	if p.AgentCoordination != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.AgentCoordination))
 	}
@@ -120,29 +87,23 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToneAndStyle))
 	}
 
+	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo()))
+
 	// Section 9: System reminders
-	if p.SystemReminders != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.SystemReminders))
+	sysReminders := p.SystemReminders
+	if sysReminders == "" {
+		sysReminders = BuildSystemReminders()
 	}
+	msgs = append(msgs, gochatcore.NewSystemMessage(sysReminders))
 
 	// ===== KV Cache boundary =====
 	msgs = append(msgs, gochatcore.NewSystemMessage(DynamicBoundary))
 
 	// ===== Dynamic sections (can vary per session) =====
 
-	// Section 9: Output efficiency (how to communicate with the user)
+	// Section 11: Output efficiency (how to communicate with the user)
 	if p.OutputEfficiency != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.OutputEfficiency))
-	}
-
-	// Section 10: Response language
-	if p.Language != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.Language))
-	}
-
-	// Section 11: Environment info
-	if p.EnvironmentInfo != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.EnvironmentInfo))
 	}
 
 	return msgs
@@ -161,18 +122,6 @@ func (p *Prompt) RenderToLLMInput(
 		History:              history,
 		Tools:                tools,
 	}
-}
-
-// CloneForSkill returns a copy of the Prompt with active skill fields set.
-func (p *Prompt) CloneForSkill(skillName, skillDesc, skillInstructions, filteredTools, resourceBasePath string) *Prompt {
-	cp := *p
-	cp.HasActiveSkill = true
-	cp.ActiveSkillName = skillName
-	cp.ActiveSkillDesc = skillDesc
-	cp.ActiveSkillInstructions = skillInstructions
-	cp.FilteredToolList = filteredTools
-	cp.ResourceBasePath = resourceBasePath
-	return &cp
 }
 
 // ---------------------------------------------------------------------------
@@ -227,24 +176,51 @@ When the user comes back after updates, they may have lost the thread. They do n
 
 Write user-facing text in flowing prose. Avoid fragments, excessive symbols, or notation. A simple question gets a direct answer in prose — not headings and numbered sections.
 
-What matters most is the reader understanding your output without mental overhead or follow-ups. Get straight to the point. Avoid filler or stating the obvious. If something about your reasoning is critical, save it for the end (inverted pyramid).`
+What matters most is the reader understanding your output without mental overhead or follow-ups. Get straight to the point. Avoid filler or stating the obvious. If something about your reasoning is critical, save it for the end (inverted pyramid).
+
+## Task Briefing
+Once you have completed all steps of the task, your final answer MUST include a detailed briefing at the beginning. The briefing must cover:
+1. What the user originally requested.
+2. What steps were taken and which tools were used at each step.
+3. The final outcome and any important findings or caveats.
+
+Structure the briefing as a concise paragraph, not a list. If the task was trivial (single direct answer), no briefing is needed.`
 }
 
 // BuildLanguage returns the response language instruction.
 // The LLM should always respond in the user's language, but may think in English internally.
 func BuildLanguage(language string) string {
+	if language == "" {
+		language = "English"
+	}
 	return fmt.Sprintf(`# Language
 Always respond in %s. Use %s in all explanations, comments, and communication with the user.
 Technical terms and code identifiers should keep their original form.`, language, language)
 }
 
 // BuildEnvironmentInfo returns the runtime environment description.
-func BuildEnvironmentInfo(cwd, platform, shell string) string {
+func BuildEnvironmentInfo() string {
+	cwd, _ := os.Getwd()     // 当前工作目录
+	platform := runtime.GOOS // "darwin" / "linux" / "windows"
+	osVersion := runtime.GOARCH
+	shell, _ := os.LookupEnv("SHELL") // "/bin/zsh" / "/bin/bash"
+
 	return fmt.Sprintf(`# Environment
 You have been invoked in the following environment:
 - Primary working directory: %s
 - Platform: %s
-- Shell: %s`, cwd, platform, shell)
+- OS version: %s
+- Shell: %s
+- App name: %s
+- App version: %s
+%s`,
+		cwd,
+		platform,
+		osVersion,
+		shell,
+		core.SYSTEM_INFO_NAME,
+		core.SYSTEM_INFO_VERSION,
+		core.SYSTEM_INFO_USERS)
 }
 
 // BuildToolUsageGuidelines returns the standard tool usage guidelines section.
@@ -264,12 +240,15 @@ func BuildToolUsageGuidelines() string {
 
 // BuildSkillsCatalog returns the skills metadata section.
 // Only discloses skills matching the agent's Skill list (defined in AgentConfig.Skills).
+// This is the entry point to progressive disclosure Level 2 — skills provide specialized
+// instructions that extend the agent's capabilities beyond the built-in tools.
 func BuildSkillsCatalog(skills []*core.Skill) string {
 	if len(skills) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("## Skills\n")
+	sb.WriteString("## Available Skills\n")
+	sb.WriteString("When your existing tools cannot fully address the user's request, check whether one of the following specialized skills covers the domain. If a skill matches, use the Skill tool to load its instructions, which will guide you through domain-specific workflows and expose additional tools.\n\n")
 	for _, s := range skills {
 		sb.WriteString(fmt.Sprintf("- %s", s.Name))
 		if s.Description != "" {
@@ -280,14 +259,15 @@ func BuildSkillsCatalog(skills []*core.Skill) string {
 	return sb.String()
 }
 
-// BuildDefaultRules returns the default behavioral rules.
+// BuildDefaultRules returns the default behavioral rules in MUST format.
 func BuildDefaultRules() string {
-	return `1. Language Consistency: Always respond in the same language as the user's input.
-2. Don't propose changes to code you haven't read.
-3. Do not create files unless they're absolutely necessary.
-4. If an approach fails, diagnose why before switching tactics.
-5. Never fabricate answers; explicitly state uncertainty.
-6. Do not execute destructive operations without user consent.
-7. When referencing code, include file_path:line_number.
-8. Prefer known facts from memory; when memory is available, use it to ground responses.`
+	return `The following rules MUST be followed without exception:
+- Always respond in the same language as the user's input.
+- Never propose changes to code you haven't read.
+- Do not create files unless they are absolutely necessary.
+- If an approach fails, diagnose why before switching tactics.
+- Never fabricate answers; explicitly state uncertainty.
+- Do not execute destructive operations without user consent.
+- When referencing code, include file_path:line_number.
+- Prefer known facts from memory; when memory is available, use it to ground responses.`
 }

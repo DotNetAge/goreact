@@ -2,42 +2,11 @@ package reactor
 
 import (
 	"encoding/json"
-	"fmt"
-	"strings"
 
 	gochatcore "github.com/DotNetAge/gochat/core"
 
 	"github.com/DotNetAge/goreact/core"
 )
-
-// summaryPromptTemplate is the prompt for generating task execution summaries.
-const summaryPromptTemplate = `<instruction>
-You are summarizing a completed task execution. Produce a concise, informative summary of what was accomplished.
-</instruction>
-
-<task_input>
-%s
-</task_input>
-
-<execution_stats>
-- Iterations: %d
-- Tools used: %s
-- Duration: %s
-- Termination: %s
-</execution_stats>
-
-<final_answer>
-%s
-</final_answer>
-
-<output_format>
-Return ONLY a concise summary (2-4 sentences) in the same language as the task input. Focus on:
-1. What was the user's original request?
-2. What was done to fulfill it (tools used, steps taken)?
-3. What was the final outcome?
-
-If the answer is already very short (single sentence or trivial), just return it as-is. Do NOT add unnecessary framing or formatting.
-</output_format>`
 
 // DefaultBehavioralRules returns the built-in behavioral rules.
 func DefaultBehavioralRules() string {
@@ -48,30 +17,6 @@ func DefaultBehavioralRules() string {
 5. Safety Boundaries: Do not execute destructive operations that risk data loss or security breaches; high-risk operations require user consent.
 6. Context Awareness: Maintain understanding of prior conversation context, leverage context rather than asking users to repeat information.
 7. Memory-driven: Prefer known facts from memory; when memory conflicts with prior knowledge, defer to memory.`
-}
-
-// renderSummaryPrompt renders the task summary prompt with the given data.
-func renderSummaryPrompt(input, answer string, iterations int, toolsUsed, duration, terminationReason string) string {
-	return fmt.Sprintf(summaryPromptTemplate,
-		input, iterations, toolsUsed, duration, terminationReason, answer)
-}
-
-// BuildSummaryToolsUsed extracts unique tool names from step history.
-func BuildSummaryToolsUsed(steps []Step) string {
-	seen := make(map[string]bool)
-	var tools []string
-	for _, step := range steps {
-		if step.Action.Type == ActionTypeToolCall && step.Action.Target != "" {
-			if !seen[step.Action.Target] {
-				seen[step.Action.Target] = true
-				tools = append(tools, step.Action.Target)
-			}
-		}
-	}
-	if len(tools) == 0 {
-		return "none"
-	}
-	return strings.Join(tools, ", ")
 }
 
 // ToolInfosToLLMTools converts ToolInfo slice into gochat Tool slice

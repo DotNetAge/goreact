@@ -17,11 +17,11 @@ import (
 
 func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 	tests := []struct {
-		name     string
-		prompt   *Prompt
-		wantStatic []string  // expected static section texts (before boundary)
+		name        string
+		prompt      *Prompt
+		wantStatic  []string // expected static section texts (before boundary)
 		wantDynamic []string // expected dynamic section texts (after boundary)
-		wantTotal int
+		wantTotal   int
 	}{
 		{
 			name: "all fields filled",
@@ -31,13 +31,11 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 				ExecutionGuidelines: "Be cautious with writes.",
 				SkillsCatalog:       "- skill_a",
 				ToolUsage:           "Use tools wisely.",
-				ThinkInstr:          "Decide act/answer.",
 				AgentCoordination:   "Find and delegate to expert agents.",
 				ToneAndStyle:        "Be concise.",
 				SystemReminders:     "Remember context limits.",
 				OutputEfficiency:    "Use prose.",
 				Language:            "Always respond in English.",
-				EnvironmentInfo:     "cwd: /tmp",
 			},
 			wantStatic: []string{
 				"You are a test agent.",
@@ -45,7 +43,6 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 				"Be cautious with writes.",
 				"- skill_a",
 				"Use tools wisely.",
-				"Decide act/answer.",
 				"Find and delegate to expert agents.",
 				"Be concise.",
 				"Remember context limits.",
@@ -53,9 +50,8 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 			wantDynamic: []string{
 				"Use prose.",
 				"Always respond in English.",
-				"cwd: /tmp",
 			},
-			wantTotal: 13, // 9 static + 1 boundary + 3 dynamic
+			wantTotal: 11, // 8 static + 1 boundary + 2 dynamic
 		},
 		{
 			name: "only identity",
@@ -64,28 +60,10 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 			},
 			wantStatic: []string{
 				"Minimal agent.",
+				BuildSystemReminders(),
 			},
 			wantDynamic: nil,
-			wantTotal:   2, // 1 static + 1 boundary
-		},
-		{
-			name: "active skill appends to ThinkInstr",
-			prompt: &Prompt{
-				Identity:                "Agent.",
-				ThinkInstr:              "Think carefully.",
-				HasActiveSkill:          true,
-				ActiveSkillName:         "debug",
-				ActiveSkillDesc:         "Debug code",
-				ActiveSkillInstructions: "1. Read 2. Fix",
-				FilteredToolList:        "read, write",
-				ResourceBasePath:        "/project",
-			},
-			wantStatic: []string{
-				"Agent.",
-				"Think carefully.\n\n<active_skill>\n=== SKILL: debug ===\nDescription: Debug code\n\n1. Read 2. Fix\n\nAvailable tools: read, write\nResource base path: /project\n</active_skill>",
-			},
-			wantDynamic: nil,
-			wantTotal:   3, // 2 static + 1 boundary (Rules empty → skipped)
+			wantTotal:   3, // 2 static (identity + default system reminders) + 1 boundary
 		},
 	}
 
@@ -130,78 +108,15 @@ func TestPrompt_ToSectionedMessages_EmptyFieldsSkipped(t *testing.T) {
 
 	msgs := p.ToSectionedMessages()
 
-	// Only Identity + DynamicBoundary should be present
-	if len(msgs) != 2 {
-		t.Errorf("expected 2 messages (identity + boundary), got %d", len(msgs))
-	}
-}
-
-func TestPrompt_CloneForSkill(t *testing.T) {
-	original := &Prompt{
-		Identity:       "You are an agent.",
-		Rules:          "Be helpful.",
-		ThinkInstr:     "Decide what to do.",
-		HasActiveSkill: false,
-	}
-
-	cloned := original.CloneForSkill(
-		"file-search",
-		"Search files using glob and grep",
-		"Follow these steps: 1. glob 2. grep",
-		"glob, grep, read",
-		"/workspace",
-	)
-
-	if cloned.HasActiveSkill != true {
-		t.Error("CloneForSkill should set HasActiveSkill=true")
-	}
-	if cloned.ActiveSkillName != "file-search" {
-		t.Errorf("expected skill name 'file-search', got '%s'", cloned.ActiveSkillName)
-	}
-	if cloned.ActiveSkillDesc != "Search files using glob and grep" {
-		t.Errorf("unexpected skill desc: '%s'", cloned.ActiveSkillDesc)
-	}
-
-	// Original must not be modified
-	if original.HasActiveSkill {
-		t.Error("original prompt should not be modified by CloneForSkill")
-	}
-}
-
-func TestPrompt_ToSectionedMessages_WithActiveSkill(t *testing.T) {
-	p := &Prompt{
-		Identity:                "You are an agent.",
-		ThinkInstr:              "Decide act/answer.",
-		HasActiveSkill:          true,
-		ActiveSkillName:         "code-edit",
-		ActiveSkillDesc:         "Edit code safely",
-		ActiveSkillInstructions: "1. Read file 2. Apply changes 3. Verify",
-		FilteredToolList:        "read, write, file_edit",
-		ResourceBasePath:        "/project",
-	}
-
-	msgs := p.ToSectionedMessages()
-
-	// Find the ThinkInstr message (should contain skill block)
-	foundSkillBlock := false
-	for _, m := range msgs {
-		for _, block := range m.Content {
-			if strings.Contains(block.Text, "<active_skill>") &&
-				strings.Contains(block.Text, "code-edit") {
-				foundSkillBlock = true
-				break
-			}
-		}
-	}
-	if !foundSkillBlock {
-		t.Fatal("expected <active_skill> block in ThinkInstr section")
+	// Identity + default SystemReminders + DynamicBoundary
+	if len(msgs) != 3 {
+		t.Errorf("expected 3 messages (identity + system reminders + boundary), got %d", len(msgs))
 	}
 }
 
 func TestPrompt_RenderToLLMInput(t *testing.T) {
 	p := &Prompt{
-		Identity:   "You are a test agent.",
-		ThinkInstr: "Think step by step.",
+		Identity: "You are a test agent.",
 	}
 
 	input := p.RenderToLLMInput(
@@ -234,7 +149,6 @@ func newTestReactor(mockFn MockLLMFunc, opts ...ReactorOption) *Reactor {
 	}
 	allOpts := []ReactorOption{
 		WithMockLLM(mockFn),
-		WithoutBundledSkills(),
 	}
 	allOpts = append(allOpts, opts...)
 	return NewReactor(cfg, allOpts...)
@@ -1110,7 +1024,10 @@ func TestCloneReactor_SharesMemoryAndEventBus(t *testing.T) {
 	bus := NewEventBus()
 
 	cfg := ReactorConfig{Model: "test", MaxIterations: 10}
-	parentReactor := NewReactor(cfg, WithMockLLM(nil), WithoutBundledSkills(), WithMemory(memory), WithEventBus(bus))
+	parentReactor := NewReactor(cfg,
+		WithMockLLM(nil),
+		WithMemory(memory),
+		WithEventBus(bus))
 
 	childReactor := parentReactor.CloneReactor(ReactorConfig{})
 

@@ -3,10 +3,6 @@ package reactor
 import (
 	"fmt"
 	"strings"
-	"time"
-
-	gochatcore "github.com/DotNetAge/gochat/core"
-	"github.com/DotNetAge/goreact/core"
 )
 
 // CheckTermination evaluates whether the T-A-O loop should stop.
@@ -172,49 +168,4 @@ func collectUniqueToolNames(history []Step) []string {
 	return tools
 }
 
-// generateSummary produces a natural-language summary of the completed task using the LLM.
-// This runs asynchronously to avoid blocking the Run return.
-func (r *Reactor) generateSummary(ctx *ReactContext, result *RunResult, totalDuration time.Duration) {
-	toolsUsed := BuildSummaryToolsUsed(ctx.History)
-	durationStr := totalDuration.Round(time.Millisecond).String()
-	answer := result.Answer
-	if len(answer) > 2000 {
-		answer = answer[:2000] + "... [truncated]"
-	}
 
-	prompt := renderSummaryPrompt(
-		ctx.Input, answer,
-		result.TotalIterations, toolsUsed,
-		durationStr, result.TerminationReason,
-	)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("generateSummary panicked", "panic", r)
-			}
-		}()
-
-		summaryInput := CallInput{
-			SystemPromptSections: []gochatcore.Message{
-				gochatcore.NewSystemMessage(prompt),
-			},
-			UserMessage: "Summarize this task execution.",
-		}
-
-		result := r.llmCaller.Call(ctx.Ctx(), summaryInput)
-		if result.Content == "" {
-			return
-		}
-
-		summaryText := strings.TrimSpace(result.Content)
-		summaryText = stripJSONWrappers(summaryText)
-		summaryText = strings.TrimSpace(summaryText)
-
-		ctx.EmitEvent(core.TaskSummary, core.TaskSummaryData{
-			Summary:      summaryText,
-			InputTokens:  result.TokenUsage.InputTokens,
-			OutputTokens: result.TokenUsage.OutputTokens,
-		})
-	}()
-}

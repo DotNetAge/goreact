@@ -72,13 +72,6 @@ func WithSkillDir(dir string) ReactorOption {
 	}
 }
 
-// WithoutBundledSkills skips registration of all built-in bundled skills.
-func WithoutBundledSkills() ReactorOption {
-	return func(s *reactorSetup) {
-		s.skipBundledSkills = true
-	}
-}
-
 // WithSkills specifies which skills to load. If empty, all skills are loaded.
 // If specified, only skills with matching names will be loaded.
 // This applies to both bundled skills and skills loaded from skill directories.
@@ -182,11 +175,8 @@ func WithRuntimeDirectory(dir *core.RuntimeDirectory) ReactorOption {
 }
 
 // WithRuleRegistry sets a custom RuleRegistry for behavior rule management.
-// Rules are injected into the System Prompt's <behavioral_rules> section,
-// allowing runtime customization of agent behavior without code changes.
-//
-// If not set, a new empty DefaultRuleRegistry is created (no custom rules,
-// default behavioral rules from template are used).
+// Rules are injected into the System Prompt's ## Behavioral Rules section.
+// There is no built-in default — external implementations must be provided.
 func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
 	return func(s *reactorSetup) {
 		s.ruleRegistry = reg

@@ -16,29 +16,24 @@ const (
 	ScopeConversation RuleScope = "conversation"
 )
 
-// Rule defines a single behavior constraint or guideline for an AI agent.
-// Rules are injected into the System Prompt before each LLM call,
-// allowing runtime customization of agent behavior without code changes.
+// Rule defines a single behavior constraint for an AI agent.
+// Rules are injected into the System Prompt as MUST-follow behavioral norms.
 //
 // Example:
 //
 //	rule := Rule{
-//	    ID:          "no-delete-prod",
-//	    Name:        "Production Data Protection",
-//	    Description: "Never delete production data",
-//	    Scope:       core.ScopeGlobal,
-//	    Priority:    100,
-//	    Content:     "Absolutely prohibited to delete production data files. Any modification must be backed up first.",
-//	    Enabled:     true,
+//	    ID:       "no-delete-prod",
+//	    Intro:    "Never delete production data files. Any modification must be backed up first.",
+//	    Scope:    core.ScopeGlobal,
+//	    Priority: 100,
+//	    Enabled:  true,
 //	}
 type Rule struct {
-	ID          string    `json:"id" yaml:"id"`
-	Name        string    `json:"name" yaml:"name"`
-	Description string    `json:"description" yaml:"description"`
-	Scope       RuleScope `json:"scope" yaml:"scope"`
-	Priority    int       `json:"priority" yaml:"priority"`
-	Enabled     bool      `json:"enabled" yaml:"enabled"`
-	Content     string    `json:"content" yaml:"content"`
+	ID       string    `json:"id" yaml:"id"`
+	Intro    string    `json:"intro" yaml:"intro"`
+	Scope    RuleScope `json:"scope" yaml:"scope"`
+	Priority int       `json:"priority" yaml:"priority"`
+	Enabled  bool      `json:"enabled" yaml:"enabled"`
 }
 
 // RuleRegistry manages behavior rules for an agent.
