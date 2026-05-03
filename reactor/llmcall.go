@@ -504,7 +504,8 @@ func (c *LLMCaller) buildClient(messages []gochatcore.Message, tools []gochatcor
 	builder := c.client.
 		Model(c.modelName).
 		Temperature(c.temperature).
-		MaxTokens(c.maxTokens)
+		MaxTokens(c.maxTokens).
+		EnableThinking(true)
 
 	if c.topP > 0 {
 		builder = builder.TopP(c.topP)
