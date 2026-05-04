@@ -432,6 +432,8 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if setup.kvStore == nil {
 		if kv, err := core.NewFileSystemKVStore(""); err == nil {
 			r.kvStore = kv
+		} else {
+			logger.Warn("failed to initialize default KVStore, session data sharing disabled", "error", err)
 		}
 	} else {
 		r.kvStore = setup.kvStore
@@ -439,6 +441,8 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	if setup.fileStore == nil {
 		if fs, err := core.NewFileSystemFileStore(""); err == nil {
 			r.fileStore = fs
+		} else {
+			logger.Warn("failed to initialize default FileStore, session file sharing disabled", "error", err)
 		}
 	} else {
 		r.fileStore = setup.fileStore

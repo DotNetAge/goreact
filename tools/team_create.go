@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -105,13 +106,16 @@ func (t *TeamCreateTool) Execute(ctx context.Context, params map[string]any) (an
 				continue
 			}
 
+			memberIdx := len(taskIDs) % len(members)
+			memberName := members[memberIdx]
 			taskID := fmt.Sprintf("team-%s-task-%d", teamName, len(taskIDs)+1)
+
 			task := &Task{
 				ID:          taskID,
 				Type:        TaskTypeAgent,
 				Description: taskDesc,
 				Status:      TaskPending,
-				AgentName:   members[len(taskIDs)%len(members)],
+				AgentName:   memberName,
 				Prompt:      taskDesc,
 			}
 
@@ -119,25 +123,39 @@ func (t *TeamCreateTool) Execute(ctx context.Context, params map[string]any) (an
 				continue
 			}
 
-			go func(taskDesc, memberName string) {
-				result, err := t.spawn(ctx, memberName, taskDesc)
-				if err != nil {
-					task.Status = TaskFailed
-					task.Error = err.Error()
-				} else {
-					task.Status = TaskCompleted
-					task.Result = result
+			go func(desc, mName, tID string) {
+				localTask := &Task{
+					ID:          tID,
+					Type:        TaskTypeAgent,
+					Description: desc,
+					Status:      TaskRunning,
+					AgentName:   mName,
+					Prompt:      desc,
 				}
-				_ = UpdateTask(ctx, tc.SessionID, task)
+				now := time.Now()
+				localTask.StartedAt = &now
+				_ = UpdateTask(ctx, tc.SessionID, localTask)
+
+				result, err := t.spawn(ctx, mName, desc)
+				completedAt := time.Now()
+				localTask.CompletedAt = &completedAt
+				if err != nil {
+					localTask.Status = TaskFailed
+					localTask.Error = err.Error()
+				} else {
+					localTask.Status = TaskCompleted
+					localTask.Result = result
+				}
+				_ = UpdateTask(ctx, tc.SessionID, localTask)
 
 				if tc.ResultStore != nil {
-					tc.ResultStore.Store(task.ID, &core.TaskResult{
-						TaskID: task.ID,
+					tc.ResultStore.Store(tID, &core.TaskResult{
+						TaskID: tID,
 						Result: result,
 						Done:   true,
 					})
 				}
-			}(taskDesc, members[len(taskIDs)%len(members)])
+			}(taskDesc, memberName, taskID)
 
 			taskIDs = append(taskIDs, taskID)
 		}

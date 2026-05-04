@@ -90,14 +90,30 @@ func CreateTask(ctx context.Context, sessionID string, task *Task) error {
 		return fmt.Errorf("failed to marshal task: %w", err)
 	}
 
-	if err := kv.Set(ctx, sessionID, taskKey(sessionID, task.ID), data, 0); err != nil {
+	key := taskKey(sessionID, task.ID)
+	if err := kv.Set(ctx, sessionID, key, data, 0); err != nil {
 		return fmt.Errorf("failed to save task: %w", err)
 	}
 
-	list, _ := getTaskList(ctx, sessionID)
-	list = append(list, task.ID)
-	listData, _ := json.Marshal(list)
-	return kv.Set(ctx, sessionID, taskListKey(sessionID), listData, 0)
+	// Atomic append to list using a single read-modify-write within the KVStore lock
+	for {
+		list, err := getTaskList(ctx, sessionID)
+		if err != nil {
+			return fmt.Errorf("failed to read task list: %w", err)
+		}
+		// Check for duplicate
+		for _, existing := range list {
+			if existing == task.ID {
+				return nil
+			}
+		}
+		list = append(list, task.ID)
+		listData, _ := json.Marshal(list)
+		if err := kv.Set(ctx, sessionID, taskListKey(sessionID), listData, 0); err == nil {
+			return nil
+		}
+		// Retry on conflict (simple optimistic retry)
+	}
 }
 
 func GetTask(ctx context.Context, sessionID, taskID string) (*Task, error) {

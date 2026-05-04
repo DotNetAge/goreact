@@ -128,10 +128,7 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 	}
 	if metaVal, ok := meta["meta"]; ok {
 		if metaMap, ok := metaVal.(map[string]any); ok {
-			agent.Meta = make(map[string]any, len(metaMap))
-			for k, v := range metaMap {
-				agent.Meta[k] = v
-			}
+			agent.Meta = deepCopyMeta(metaMap)
 		} else if metaSlice, ok := metaVal.([]any); ok {
 			agent.Meta = make(map[string]any)
 			for _, item := range metaSlice {
@@ -161,6 +158,29 @@ func (r *AgentRegistry) List() []*core.AgentConfig {
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+func deepCopyMeta(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		switch val := v.(type) {
+		case map[string]any:
+			dst[k] = deepCopyMeta(val)
+		case []any:
+			newSlice := make([]any, len(val))
+			for i, item := range val {
+				if m, ok := item.(map[string]any); ok {
+					newSlice[i] = deepCopyMeta(m)
+				} else {
+					newSlice[i] = item
+				}
+			}
+			dst[k] = newSlice
+		default:
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 // It does not store the config in the registry.

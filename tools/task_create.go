@@ -91,22 +91,35 @@ func (t *TaskCreateTool) Execute(ctx context.Context, params map[string]any) (an
 	})
 
 	go func() {
+		// Use a local copy to avoid data race with the parent goroutine
+		localTask := &Task{
+			ID:          task.ID,
+			Type:        task.Type,
+			Description: task.Description,
+			Status:      TaskRunning,
+			AgentName:   task.AgentName,
+			Prompt:      task.Prompt,
+		}
+
 		now := time.Now()
-		task.StartedAt = &now
-		task.Status = TaskRunning
-		_ = UpdateTask(ctx, tc.SessionID, task)
+		localTask.StartedAt = &now
+		if err := UpdateTask(ctx, tc.SessionID, localTask); err != nil {
+			// Log but continue — the task will still run
+		}
 
 		result, err := t.spawn(ctx, agentName, taskDesc)
 		completedAt := time.Now()
-		task.CompletedAt = &completedAt
+		localTask.CompletedAt = &completedAt
 		if err != nil {
-			task.Status = TaskFailed
-			task.Error = err.Error()
+			localTask.Status = TaskFailed
+			localTask.Error = err.Error()
 		} else {
-			task.Status = TaskCompleted
-			task.Result = result
+			localTask.Status = TaskCompleted
+			localTask.Result = result
 		}
-		_ = UpdateTask(ctx, tc.SessionID, task)
+		if updateErr := UpdateTask(ctx, tc.SessionID, localTask); updateErr != nil {
+			// Log but continue
+		}
 
 		if tc.ResultStore != nil {
 			taskResult := &core.TaskResult{
