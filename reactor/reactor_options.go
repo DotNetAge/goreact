@@ -32,6 +32,16 @@ func WithoutTool(name string) ReactorOption {
 	}
 }
 
+// WithExcludeTools removes tools from the ToolRegistry by name after all
+// tools have been registered. Unlike WithoutTool (which prevents registration),
+// this removes already-registered tools — useful for excluding tools loaded
+// from skills, MCP servers, or extra tool lists.
+func WithExcludeTools(names ...string) ReactorOption {
+	return func(s *reactorSetup) {
+		s.excludeTools = append(s.excludeTools, names...)
+	}
+}
+
 // WithResultLimits configures tool result size thresholds (second layer defense).
 func WithResultLimits(limits core.ToolResultLimits) ReactorOption {
 	return func(s *reactorSetup) {
@@ -150,6 +160,26 @@ func WithSkillRegistry(reg core.SkillRegistry) ReactorOption {
 func WithSessionStore(store core.SessionStore) ReactorOption {
 	return func(s *reactorSetup) {
 		s.sessionStore = store
+	}
+}
+
+// WithKVStore sets a KVStore for session-scoped key-value data sharing.
+// Tools and skills can use KVStore to share small data (config, state, etc.)
+// within the same session while being isolated from other sessions.
+// If not set, a FileSystemKVStore is created automatically.
+func WithKVStore(store core.KVStore) ReactorOption {
+	return func(s *reactorSetup) {
+		s.kvStore = store
+	}
+}
+
+// WithFileStore sets a FileStore for session-scoped file storage.
+// Tools and skills can use FileStore to read/write files within the same session
+// while being isolated from other sessions. Useful for skill scripts and temp files.
+// If not set, a FileSystemFileStore is created automatically.
+func WithFileStore(store core.FileStore) ReactorOption {
+	return func(s *reactorSetup) {
+		s.fileStore = store
 	}
 }
 

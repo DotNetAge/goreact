@@ -9,6 +9,9 @@ type ToolRegistry interface {
 	Get(name string) (FuncTool, bool)
 	All() []FuncTool
 	FindAvailable(filter *ToolFilter) []FuncTool
+	// Remove deletes a tool from the registry by name. Returns an error if the
+	// tool is not found.
+	Remove(name string) error
 }
 
 type ToolFilter struct {

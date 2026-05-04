@@ -10,11 +10,11 @@ var toolCtxKey toolCtxKeyType
 // Tools that need special capabilities (e.g., delegate creating sub-agents)
 // extract it via GetToolContext(). Tools that don't need it ignore it entirely.
 type ToolContext struct {
-	// EmitEvent publishes a ReactEvent to the agent's event bus.
-	EmitEvent func(ReactEvent)
-
-	// ResultStore stores and retrieves async task results.
+	EmitEvent   func(ReactEvent)
 	ResultStore *ResultStore
+	KVStore     KVStore
+	FileStore   FileStore
+	SessionID   string
 }
 
 // WithToolContext injects a ToolContext into the given context.

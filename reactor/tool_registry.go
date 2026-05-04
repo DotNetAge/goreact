@@ -36,6 +36,16 @@ func (r *DefaultToolRegistry) Register(tool core.FuncTool) error {
 	return nil
 }
 
+func (r *DefaultToolRegistry) Remove(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.tools[name]; !ok {
+		return fmt.Errorf("tool %q not found", name)
+	}
+	delete(r.tools, name)
+	return nil
+}
+
 func (r *DefaultToolRegistry) Get(name string) (core.FuncTool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -67,14 +67,14 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ExecutionGuidelines))
 	}
 
-	// Section 4: Skills catalog + usage guidance
-	if p.SkillsCatalog != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.SkillsCatalog))
-	}
-
-	// Section 5: Tool usage guidelines
+	// Section 4: Tool usage guidelines
 	if p.ToolUsage != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToolUsage))
+	}
+
+	// Section 5: Skills catalog + usage guidance
+	if p.SkillsCatalog != "" {
+		msgs = append(msgs, gochatcore.NewSystemMessage(p.SkillsCatalog))
 	}
 
 	// Section 6: Agent coordination (agent discovery, delegation, ranking)
@@ -82,11 +82,12 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.AgentCoordination))
 	}
 
-	// Section 8: Tone and style
+	// Section 7: Tone and style
 	if p.ToneAndStyle != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToneAndStyle))
 	}
 
+	// Section 8: Environment info
 	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo()))
 
 	// Section 9: System reminders
@@ -130,7 +131,7 @@ func (p *Prompt) RenderToLLMInput(
 
 // BuildSystemReminders returns the core system explanation section.
 func BuildSystemReminders() string {
-	return `# System
+	return `## System
 - Tool results and user messages may include system hints or reminder tags.
   These contain guidance from the system about your current progress and next steps.
   They are part of the system's context management, not part of the tool output itself.
@@ -142,7 +143,7 @@ func BuildSystemReminders() string {
 
 // BuildExecutionGuidelines returns guidelines for cautious action execution.
 func BuildExecutionGuidelines() string {
-	return `# Executing actions with care
+	return `## Executing actions with care
 
 Carefully consider the reversibility and blast radius of actions before executing them.
 
@@ -157,7 +158,7 @@ When in doubt about an action's safety, break it into smaller steps and verify b
 
 // BuildToneAndStyle returns tone and style guidelines.
 func BuildToneAndStyle() string {
-	return `# Tone and style
+	return `## Tone and style
 - Only use emojis if the user explicitly requests it.
 - Your responses should be concise and to the point. Avoid unnecessary elaboration.
 - When referencing specific functions or pieces of code, include the pattern file_path:line_number.
@@ -167,7 +168,7 @@ func BuildToneAndStyle() string {
 // BuildOutputEfficiency returns guidelines for communicating with the user.
 // Adapted from Claude Code's "Communicating with the user" section.
 func BuildOutputEfficiency() string {
-	return `# Communicating with the user
+	return `## Communicating with the user
 When sending user-facing text, you are writing for a person, not logging to a console. Assume the user can only see your text output — not your tool calls or internal reasoning.
 
 Before your first action, briefly state what you are about to do. While working, give short updates at key moments: when you find something load-bearing, when changing direction, when you have made progress.
@@ -178,7 +179,7 @@ Write user-facing text in flowing prose. Avoid fragments, excessive symbols, or 
 
 What matters most is the reader understanding your output without mental overhead or follow-ups. Get straight to the point. Avoid filler or stating the obvious. If something about your reasoning is critical, save it for the end (inverted pyramid).
 
-## Task Briefing
+### Task Briefing
 Once you have completed all steps of the task, your final answer MUST include a detailed briefing at the beginning. The briefing must cover:
 1. What the user originally requested.
 2. What steps were taken and which tools were used at each step.
@@ -193,7 +194,7 @@ func BuildLanguage(language string) string {
 	if language == "" {
 		language = "English"
 	}
-	return fmt.Sprintf(`# Language
+	return fmt.Sprintf(`## Language
 Always respond in %s. Use %s in all explanations, comments, and communication with the user.
 Technical terms and code identifiers should keep their original form.`, language, language)
 }
@@ -205,7 +206,7 @@ func BuildEnvironmentInfo() string {
 	osVersion := runtime.GOARCH
 	shell, _ := os.LookupEnv("SHELL") // "/bin/zsh" / "/bin/bash"
 
-	return fmt.Sprintf(`# Environment
+	return fmt.Sprintf(`## Environment
 You have been invoked in the following environment:
 - Primary working directory: %s
 - Platform: %s
@@ -225,7 +226,7 @@ You have been invoked in the following environment:
 
 // BuildToolUsageGuidelines returns the standard tool usage guidelines section.
 func BuildToolUsageGuidelines() string {
-	return `# Using your tools
+	return `## Using your tools
 - Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work.
   - To read files use Read instead of cat, head, tail, or sed
   - To edit files use Edit instead of sed or awk

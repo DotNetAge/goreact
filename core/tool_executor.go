@@ -32,6 +32,9 @@ type toolExecutorConfig struct {
 	resultStore       *ResultStore
 	maxPersistChars   int
 	persistDir        string
+	kvStore           KVStore
+	fileStore         FileStore
+	sessionID         string
 }
 
 type ExecutorOption func(*toolExecutorConfig)
@@ -66,6 +69,18 @@ func WithMaxPersistChars(n int) ExecutorOption {
 
 func WithPersistDir(dir string) ExecutorOption {
 	return func(c *toolExecutorConfig) { c.persistDir = dir }
+}
+
+func WithKVStore(store KVStore) ExecutorOption {
+	return func(c *toolExecutorConfig) { c.kvStore = store }
+}
+
+func WithFileStore(store FileStore) ExecutorOption {
+	return func(c *toolExecutorConfig) { c.fileStore = store }
+}
+
+func WithSessionID(id string) ExecutorOption {
+	return func(c *toolExecutorConfig) { c.sessionID = id }
 }
 
 func NewToolExecutor(registry ToolRegistry, opts ...ExecutorOption) ToolExecutor {
@@ -173,7 +188,13 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 	}
 
 	// Inject ToolContext so bridge tools (delegate, etc.) can access event bus
-	toolCtx := &ToolContext{EmitEvent: e.cfg.eventEmitter, ResultStore: e.cfg.resultStore}
+	toolCtx := &ToolContext{
+		EmitEvent:   e.cfg.eventEmitter,
+		ResultStore: e.cfg.resultStore,
+		KVStore:     e.cfg.kvStore,
+		FileStore:   e.cfg.fileStore,
+		SessionID:   e.cfg.sessionID,
+	}
 	execCtx := WithToolContext(ctx, toolCtx)
 
 	start := time.Now()

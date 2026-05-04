@@ -106,6 +106,8 @@ type Reactor struct {
 	eventBus           EventBus
 
 	resultStore *core.ResultStore
+	kvStore     core.KVStore
+	fileStore   core.FileStore
 
 	// SpawnFunc creates sub-agents for the delegate tool.
 	// Set by Agent after Reactor creation to avoid circular deps.
@@ -188,6 +190,7 @@ type reactorSetup struct {
 	skipTools      map[string]bool
 	skipAllBundled bool
 	extraTools     []core.FuncTool
+	excludeTools   []string
 	resultLimits   core.ToolResultLimits
 	tokenEstimator core.TokenEstimator
 	eventBus       EventBus
@@ -197,6 +200,8 @@ type reactorSetup struct {
 	memory         core.Memory
 	mockLLM        MockLLMFunc
 	sessionStore   core.SessionStore
+	kvStore        core.KVStore
+	fileStore      core.FileStore
 	toolRegistry   core.ToolRegistry
 	skillRegistry  core.SkillRegistry
 	ruleRegistry   core.RuleRegistry
@@ -332,6 +337,8 @@ func (r *Reactor) initToolExecutor(setup *reactorSetup) {
 			}
 		}),
 		core.WithResultStore(r.resultStore),
+		core.WithKVStore(r.kvStore),
+		core.WithFileStore(r.fileStore),
 	)
 }
 
@@ -375,6 +382,22 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 		{"FindAgent", tools.NewFindAgentTool(r.runtimeDir)},
 		{"Rank", tools.NewRankTool(r.runtimeDir)},
 		{"CreateAgent", tools.NewCreateAgentTool(r.agentRegistry, r.runtimeDir)},
+		{"TaskCreate", tools.NewTaskCreateTool(func(ctx context.Context, agentName, task string) (string, error) {
+			if r.SpawnFunc != nil {
+				return r.SpawnFunc(ctx, agentName, task)
+			}
+			return "", fmt.Errorf("task_create: SpawnFunc not configured on reactor")
+		})},
+		{"TaskList", tools.NewTaskListTool()},
+		{"TaskGet", tools.NewTaskGetTool()},
+		{"TaskUpdate", tools.NewTaskUpdateTool()},
+		{"TaskStop", tools.NewTaskStopTool()},
+		{"TeamCreate", tools.NewTeamCreateTool(func(ctx context.Context, agentName, task string) (string, error) {
+			if r.SpawnFunc != nil {
+				return r.SpawnFunc(ctx, agentName, task)
+			}
+			return "", fmt.Errorf("team_create: SpawnFunc not configured on reactor")
+		})},
 	}
 	for _, bt := range bundledTools {
 		if !setup.skipTools[bt.name] {
@@ -406,6 +429,21 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	r.runtimeDir = setup.runtimeDir
 	r.modelRegistry = setup.modelRegistry
 
+	if setup.kvStore == nil {
+		if kv, err := core.NewFileSystemKVStore(""); err == nil {
+			r.kvStore = kv
+		}
+	} else {
+		r.kvStore = setup.kvStore
+	}
+	if setup.fileStore == nil {
+		if fs, err := core.NewFileSystemFileStore(""); err == nil {
+			r.fileStore = fs
+		}
+	} else {
+		r.fileStore = setup.fileStore
+	}
+
 	r.initRegistries(setup)
 	r.initLLMCaller(config, setup)
 	r.discoverAndLoadSkills(setup)
@@ -420,6 +458,19 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		}
 	}
 
+	// Apply exclusions: remove tools from registry after all registration is done
+	for _, name := range setup.excludeTools {
+		if err := r.toolRegistry.Remove(name); err != nil {
+			logger.Warn("failed to exclude tool", "name", name, "error", err)
+		}
+	}
+	// Invalidate cached LLM tool definitions after exclusions
+	if len(setup.excludeTools) > 0 {
+		r.cacheMu.Lock()
+		r.cachedLLMTools = nil
+		r.cacheMu.Unlock()
+	}
+
 	return r
 }
 
@@ -428,6 +479,8 @@ func (r *Reactor) ToolRegistry() core.ToolRegistry         { return r.toolRegist
 func (r *Reactor) ToolExecutor() core.ToolExecutor         { return r.toolExecutor }
 func (r *Reactor) RuleRegistry() core.RuleRegistry         { return r.ruleRegistry }
 func (r *Reactor) SessionStore() core.SessionStore         { return r.llmCaller.SessionStore() }
+func (r *Reactor) KVStore() core.KVStore                   { return r.kvStore }
+func (r *Reactor) FileStore() core.FileStore               { return r.fileStore }
 func (r *Reactor) ContextWindow() *core.ContextWindow      { return r.llmCaller.ContextWindow() }
 func (r *Reactor) SetContextWindow(cw *core.ContextWindow) { r.llmCaller.SetContextWindow(cw) }
 func (r *Reactor) SlideConfig() core.SlideConfig           { return r.llmCaller.SlideConfig() }
@@ -539,6 +592,8 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 		agentRegistry: r.agentRegistry,
 		runtimeDir:    r.runtimeDir,
 		modelRegistry: r.modelRegistry,
+		kvStore:       r.kvStore,
+		fileStore:     r.fileStore,
 	}
 
 	// Clone LLMCaller with parent's shared infrastructure but independent client/context

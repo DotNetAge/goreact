@@ -126,6 +126,26 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 			}
 		}
 	}
+	if metaVal, ok := meta["meta"]; ok {
+		if metaMap, ok := metaVal.(map[string]any); ok {
+			agent.Meta = make(map[string]any, len(metaMap))
+			for k, v := range metaMap {
+				agent.Meta[k] = v
+			}
+		} else if metaSlice, ok := metaVal.([]any); ok {
+			agent.Meta = make(map[string]any)
+			for _, item := range metaSlice {
+				if itemMap, ok := item.(map[string]any); ok {
+					for k, v := range itemMap {
+						agent.Meta[k] = v
+					}
+				}
+			}
+			if len(agent.Meta) == 0 {
+				agent.Meta = nil
+			}
+		}
+	}
 
 	agent.Introduction = body
 	return agent, nil
@@ -186,6 +206,9 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	}
 	if len(agent.Skills) > 0 {
 		meta["skills"] = agent.Skills
+	}
+	if len(agent.Meta) > 0 {
+		meta["meta"] = agent.Meta
 	}
 
 	yamlData, err := yaml.Marshal(meta)
