@@ -254,7 +254,7 @@ func (c *LLMCaller) Call(ctx context.Context, input CallInput) CallResult {
 	if c.mockLLM != nil {
 		resp, err := c.mockLLM(ctx, input)
 		if err != nil {
-			return c.buildErrorResult(err, preciseInput)
+			return c.buildErrorResult(ctx, input, err, preciseInput)
 		}
 		var toolCalls []gochatcore.ToolCall
 		if resp != nil && len(resp.Message.ToolCalls) > 0 {
@@ -267,7 +267,7 @@ func (c *LLMCaller) Call(ctx context.Context, input CallInput) CallResult {
 	builder := c.buildClient(messages, input.Tools)
 	resp, err := builder.GetResponseFor(c.clientType)
 	if err != nil {
-		return c.buildErrorResult(err, preciseInput)
+		return c.buildErrorResult(ctx, input, err, preciseInput)
 	}
 
 	content := ""
@@ -314,7 +314,7 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	if c.mockLLM != nil {
 		resp, err := c.mockLLM(ctx, input)
 		if err != nil {
-			return c.buildErrorResult(err, preciseInput)
+			return c.buildErrorResult(ctx, input, err, preciseInput)
 		}
 		if resp != nil {
 			onChunk(resp.Content)
@@ -329,7 +329,7 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	builder := c.buildClient(messages, input.Tools)
 	stream, err := builder.GetStreamFor(c.clientType)
 	if err != nil {
-		return c.buildErrorResult(fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
+		return c.buildErrorResult(ctx, input, fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
 	}
 	defer stream.Close()
 
@@ -588,8 +588,21 @@ func (c *LLMCaller) recordResult(ctx context.Context, input CallInput, content s
 	c.mu.Unlock()
 
 	// Persist to SessionStore
-	if c.sessionStore != nil && input.SessionID != "" {
-		_ = c.sessionStore.AppendTokenUsage(ctx, input.SessionID, usage)
+	sessionID := input.SessionID
+	if sessionID == "" {
+		c.mu.RLock()
+		if c.contextWindow != nil {
+			sessionID = c.contextWindow.SessionID
+		}
+		c.mu.RUnlock()
+	}
+	if c.sessionStore != nil && sessionID != "" {
+		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
+			logger.Warn("failed to persist token usage",
+				"session_id", sessionID,
+				"error", persistErr,
+			)
+		}
 	}
 
 	return CallResult{
@@ -605,15 +618,54 @@ func (c *LLMCaller) recordPartialResult(ctx context.Context, input CallInput, co
 	return result
 }
 
-// buildErrorResult creates a CallResult for failed calls with zero content and error info.
-func (c *LLMCaller) buildErrorResult(err error, inputTokens int) CallResult {
+// buildErrorResult creates a CallResult for failed calls, records the token usage,
+// persists it to SessionStore, and returns the result.
+func (c *LLMCaller) buildErrorResult(ctx context.Context, input CallInput, err error, inputTokens int) CallResult {
+	// Calculate remain tokens
+	remainTokens := c.maxTokens
+	c.mu.RLock()
+	if c.contextWindow != nil {
+		remainTokens = int(c.contextWindow.TokensRemaining())
+	}
+	c.mu.RUnlock()
+
+	usage := core.TokenUsage{
+		Timestamp:    time.Now(),
+		InputTokens:  inputTokens,
+		OutputTokens: 0,
+		RemainTokens: remainTokens,
+	}
+
+	// Update context window
+	c.mu.Lock()
+	if c.contextWindow != nil && inputTokens > 0 {
+		c.contextWindow.AddTokens(int64(inputTokens))
+	}
+	c.records = append(c.records, usage)
+	c.mu.Unlock()
+
+	// Persist to SessionStore
+	sessionID := input.SessionID
+	if sessionID == "" {
+		c.mu.RLock()
+		if c.contextWindow != nil {
+			sessionID = c.contextWindow.SessionID
+		}
+		c.mu.RUnlock()
+	}
+	if c.sessionStore != nil && sessionID != "" {
+		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
+			logger.Warn("failed to persist token usage on error",
+				"session_id", sessionID,
+				"error", persistErr,
+			)
+		}
+	}
+
 	return CallResult{
 		Content:   fmt.Sprintf("[llmcaller error] %v", err),
 		ToolCalls: nil,
-		TokenUsage: core.TokenUsage{
-			Timestamp:   time.Now(),
-			InputTokens: inputTokens,
-		},
+		TokenUsage: usage,
 	}
 }
 
