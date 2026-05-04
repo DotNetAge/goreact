@@ -63,7 +63,7 @@ func TestTaskCreateTool_Execute(t *testing.T) {
 		t.Errorf("Execute() status = %q, want 'running'", status)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	task, err := GetTask(ctx, "test-session-1", resultMap["task_id"].(string))
 	if err != nil {

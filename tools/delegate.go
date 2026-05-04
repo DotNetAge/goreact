@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -14,7 +15,7 @@ type SpawnFunc func(ctx context.Context, agentName, task string) (string, error)
 
 // DelegateTool lets the LLM delegate tasks to sub-agents.
 // It is async (IsAsync=true) — returns {task_id, status: "running"} immediately.
-// Results are stored in the ToolContext's ResultStore and retrieved via collect_results.
+// Now also persists task state in KVStore for unified tracking with Task tools.
 type DelegateTool struct {
 	spawn     SpawnFunc
 	counter   atomic.Int64
@@ -77,7 +78,21 @@ func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any,
 		return nil, fmt.Errorf("delegate tool: SpawnFunc not configured")
 	}
 
-	taskID := fmt.Sprintf("task-%s-%d", agentName, t.counter.Add(1))
+	// Use unified task ID format
+	taskID := fmt.Sprintf("task-%d", t.counter.Add(1))
+
+	// Persist task in KVStore for unified tracking with Task tools
+	if tc.SessionID != "" && tc.KVStore != nil {
+		taskRecord := &Task{
+			ID:          taskID,
+			Type:        TaskTypeAgent,
+			Description: task,
+			Status:      TaskPending,
+			AgentName:   agentName,
+			Prompt:      task,
+		}
+		_ = CreateTask(ctx, tc.SessionID, taskRecord)
+	}
 
 	// Emit event notification
 	tc.EmitEvent(core.ReactEvent{
@@ -88,7 +103,34 @@ func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any,
 
 	// Run sub-agent in background
 	go func() {
+		localTask := &Task{
+			ID:          taskID,
+			Type:        TaskTypeAgent,
+			Description: task,
+			Status:      TaskRunning,
+			AgentName:   agentName,
+			Prompt:      task,
+		}
+		now := time.Now()
+		localTask.StartedAt = &now
+		if tc.SessionID != "" && tc.KVStore != nil {
+			_ = UpdateTask(ctx, tc.SessionID, localTask)
+		}
+
 		result, err := t.spawn(ctx, agentName, task)
+		completedAt := time.Now()
+		localTask.CompletedAt = &completedAt
+		if err != nil {
+			localTask.Status = TaskFailed
+			localTask.Error = err.Error()
+		} else {
+			localTask.Status = TaskCompleted
+			localTask.Result = result
+		}
+		if tc.SessionID != "" && tc.KVStore != nil {
+			_ = UpdateTask(ctx, tc.SessionID, localTask)
+		}
+
 		var taskResult *core.TaskResult
 		if err != nil {
 			taskResult = &core.TaskResult{TaskID: taskID, Error: err.Error(), Done: true}

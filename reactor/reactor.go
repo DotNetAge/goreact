@@ -646,13 +646,11 @@ func (r *Reactor) cloneLLMCallerForChild(childConfig ReactorConfig) *LLMCaller {
 		if parentCaller.SessionStore() != nil {
 			llmOpts = append(llmOpts, WithLLMCallerSessionStore(parentCaller.SessionStore()))
 		}
-		if est := parentCaller.Estimator(); est != nil {
-			// Share the same estimator instance
-			_ = est
-		}
+		return NewLLMCaller(llmCfg, client, parentCaller.Estimator(), parentCaller.SessionStore(), llmOpts...)
 	}
 
-	return NewLLMCaller(llmCfg, client, parentCaller.Estimator(), parentCaller.SessionStore(), llmOpts...)
+	// Fallback: create standalone LLMCaller for child without parent infrastructure
+	return NewLLMCaller(llmCfg, client, nil, nil, llmOpts...)
 }
 
 func (r *Reactor) Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error) {
