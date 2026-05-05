@@ -254,6 +254,10 @@ func (s *FileSystemFileStore) ClearSession(_ context.Context, sessionID string) 
 	return os.RemoveAll(dir)
 }
 
+func (s *FileSystemFileStore) GetSessionPath(sessionID string) string {
+	return s.sessionDir(sessionID)
+}
+
 func sanitizeSessionID(id string) string {
 	return strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {

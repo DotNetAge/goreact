@@ -11,4 +11,5 @@ type FileStore interface {
 	DeleteFile(ctx context.Context, sessionID, path string) error
 	ListFiles(ctx context.Context, sessionID, prefix string) ([]string, error)
 	ClearSession(ctx context.Context, sessionID string) error
+	GetSessionPath(sessionID string) string
 }

@@ -46,7 +46,7 @@ func NewDefaultPrompt(name, role, description, introduction string) *Prompt {
 // ToSectionedMessages renders the Prompt into an ordered slice of SystemMessage.
 // Static sections come first (KV Cache anchor), followed by the dynamic boundary,
 // followed by dynamic sections.
-func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
+func (p *Prompt) ToSectionedMessages(sessionID string, sessionDir string) []gochatcore.Message {
 	var msgs []gochatcore.Message
 
 	// ===== Static sections (KV cache anchor) =====
@@ -88,7 +88,7 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 	}
 
 	// Section 8: Environment info
-	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo()))
+	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo(sessionID, sessionDir)))
 
 	// Section 9: System reminders
 	sysReminders := p.SystemReminders
@@ -118,7 +118,7 @@ func (p *Prompt) RenderToLLMInput(
 	tools []gochatcore.Tool,
 ) CallInput {
 	return CallInput{
-		SystemPromptSections: p.ToSectionedMessages(),
+		SystemPromptSections: p.ToSectionedMessages("", ""),
 		UserMessage:          input,
 		History:              history,
 		Tools:                tools,
@@ -200,11 +200,11 @@ Technical terms and code identifiers should keep their original form.`, language
 }
 
 // BuildEnvironmentInfo returns the runtime environment description.
-func BuildEnvironmentInfo() string {
-	cwd, _ := os.Getwd()     // 当前工作目录
-	platform := runtime.GOOS // "darwin" / "linux" / "windows"
+func BuildEnvironmentInfo(sessionID string, sessionDir string) string {
+	cwd, _ := os.Getwd()
+	platform := runtime.GOOS
 	osVersion := runtime.GOARCH
-	shell, _ := os.LookupEnv("SHELL") // "/bin/zsh" / "/bin/bash"
+	shell, _ := os.LookupEnv("SHELL")
 
 	return fmt.Sprintf(`## Environment
 You have been invoked in the following environment:
@@ -212,6 +212,8 @@ You have been invoked in the following environment:
 - Platform: %s
 - OS version: %s
 - Shell: %s
+- Session ID: %s
+- Pwd: %s
 - App name: %s
 - App version: %s
 %s`,
@@ -219,6 +221,8 @@ You have been invoked in the following environment:
 		platform,
 		osVersion,
 		shell,
+		sessionID,
+		sessionDir,
 		core.SYSTEM_INFO_NAME,
 		core.SYSTEM_INFO_VERSION,
 		core.SYSTEM_INFO_USERS)

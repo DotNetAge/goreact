@@ -58,8 +58,8 @@ func TestParseCommand_Python3Interpreter(t *testing.T) {
 func TestParseCommand_ShellScript(t *testing.T) {
 	language, scriptPath := parseCommand("./scripts/build.sh --target release", "/project")
 
-	if language != "sh" {
-		t.Errorf("expected language 'sh', got %q", language)
+	if language != "shell" {
+		t.Errorf("expected language 'shell', got %q", language)
 	}
 	expected := filepath.Join("/project", "scripts/build.sh")
 	if scriptPath != expected {
@@ -74,7 +74,7 @@ func TestParseCommand_ExtensionBased(t *testing.T) {
 		expFile string
 	}{
 		{"scripts/fetch_data.py arg1", "python", "scripts/fetch_data.py"},
-		{"scripts/deploy.sh", "sh", "scripts/deploy.sh"},
+		{"scripts/deploy.sh", "shell", "scripts/deploy.sh"},
 		{"scripts/bundle.js", "node", "scripts/bundle.js"},
 		{"scripts/convert.rb", "ruby", "scripts/convert.rb"},
 		{"scripts/main", "", "scripts/main"},

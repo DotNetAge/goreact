@@ -21,10 +21,16 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	// Use cached LLM tool definitions — rebuilt only when RegisterTool is called
 	llmTools := r.getLLMTools()
 
+	sessionID := r.resolveSessionID(ctx)
+	sessionDir := ""
+	if r.fileStore != nil {
+		sessionDir = r.fileStore.GetSessionPath(sessionID)
+	}
+
 	// Build system prompt sections using the centralized Prompt
 	var sections []gochatcore.Message
 	if r.prompt != nil {
-		sections = r.prompt.ToSectionedMessages()
+		sections = r.prompt.ToSectionedMessages(sessionID, sessionDir)
 	}
 
 	callInput := CallInput{

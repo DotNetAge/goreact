@@ -17,11 +17,12 @@ import (
 
 func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 	tests := []struct {
-		name        string
-		prompt      *Prompt
-		wantStatic  []string // expected static section texts (before boundary)
-		wantDynamic []string // expected dynamic section texts (after boundary)
-		wantTotal   int
+		name         string
+		prompt       *Prompt
+		wantPreEnv   []string // sections before Environment
+		wantDynamic  []string // dynamic sections (after boundary)
+		wantTotal    int
+		wantReminder string // expected system reminders content
 	}{
 		{
 			name: "all fields filled",
@@ -37,59 +38,65 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 				OutputEfficiency:    "Use prose.",
 				Language:            "Always respond in English.",
 			},
-			wantStatic: []string{
+			wantPreEnv: []string{
 				"You are a test agent.",
 				"## Behavioral Rules\n1. Be helpful.",
 				"Be cautious with writes.",
-				"- skill_a",
 				"Use tools wisely.",
+				"- skill_a",
 				"Find and delegate to expert agents.",
 				"Be concise.",
-				"Remember context limits.",
 			},
 			wantDynamic: []string{
 				"Use prose.",
-				"Always respond in English.",
 			},
-			wantTotal: 11, // 8 static + 1 boundary + 2 dynamic
+			wantTotal:    11,
+			wantReminder: "Remember context limits.",
 		},
 		{
 			name: "only identity",
 			prompt: &Prompt{
 				Identity: "Minimal agent.",
 			},
-			wantStatic: []string{
-				"Minimal agent.",
-				BuildSystemReminders(),
-			},
-			wantDynamic: nil,
-			wantTotal:   3, // 2 static (identity + default system reminders) + 1 boundary
+			wantPreEnv:   []string{"Minimal agent."},
+			wantDynamic:  nil,
+			wantTotal:    4,
+			wantReminder: BuildSystemReminders(),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msgs := tt.prompt.ToSectionedMessages()
+			msgs := tt.prompt.ToSectionedMessages("", "")
 
 			if len(msgs) != tt.wantTotal {
 				t.Fatalf("len(messages) = %d, want %d", len(msgs), tt.wantTotal)
 			}
 
-			// Verify static sections
-			for i, want := range tt.wantStatic {
+			for i, want := range tt.wantPreEnv {
 				got := msgs[i].Content[0].Text
 				if got != want {
-					t.Errorf("static section [%d] content = %q, want %q", i, got, want)
+					t.Errorf("section [%d] content = %q, want %q", i, got, want)
 				}
 			}
 
-			// Verify boundary
-			boundaryIdx := len(tt.wantStatic)
+			envIdx := len(tt.wantPreEnv)
+			envContent := msgs[envIdx].Content[0].Text
+			if !strings.Contains(envContent, "## Environment") {
+				t.Errorf("section [%d] expected environment section, got %q", envIdx, envContent)
+			}
+
+			reminderIdx := envIdx + 1
+			reminderContent := msgs[reminderIdx].Content[0].Text
+			if reminderContent != tt.wantReminder {
+				t.Errorf("section [%d] expected system reminders, got %q", reminderIdx, reminderContent)
+			}
+
+			boundaryIdx := reminderIdx + 1
 			if msgs[boundaryIdx].Content[0].Text != DynamicBoundary {
 				t.Errorf("message[%d] expected DynamicBoundary, got %q", boundaryIdx, msgs[boundaryIdx].Content[0].Text)
 			}
 
-			// Verify dynamic sections
 			dynStart := boundaryIdx + 1
 			for i, want := range tt.wantDynamic {
 				got := msgs[dynStart+i].Content[0].Text
@@ -106,11 +113,11 @@ func TestPrompt_ToSectionedMessages_EmptyFieldsSkipped(t *testing.T) {
 		Identity: "You are a minimal agent.",
 	}
 
-	msgs := p.ToSectionedMessages()
+	msgs := p.ToSectionedMessages("", "")
 
-	// Identity + default SystemReminders + DynamicBoundary
-	if len(msgs) != 3 {
-		t.Errorf("expected 3 messages (identity + system reminders + boundary), got %d", len(msgs))
+	// Identity + Environment + SystemReminders + DynamicBoundary
+	if len(msgs) != 4 {
+		t.Errorf("expected 4 messages (identity + environment + system reminders + boundary), got %d", len(msgs))
 	}
 }
 
