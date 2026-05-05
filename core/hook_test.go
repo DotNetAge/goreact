@@ -13,7 +13,7 @@ type testHook struct {
 }
 
 func (h *testHook) EventType() HookEventType { return h.eventType }
-func (h *testHook) Execute(ctx any) HookResult {
+func (h *testHook) Execute(ctx *HookContext) HookResult {
 	result := HookResult{Message: h.message}
 	if h.block {
 		result.PermissionResult = &PermissionResult{Behavior: PermissionDeny, Message: "blocked by test hook"}
@@ -49,9 +49,11 @@ func TestHook_PreToolUse_Block(t *testing.T) {
 		t.Errorf("expected %s, got %s", HookPreToolUse, hook.EventType())
 	}
 
-	result := hook.Execute(&ToolUseContext{
-		ToolName: "Bash",
-		Params:   map[string]any{"cmd": "rm -rf /"},
+	result := hook.Execute(&HookContext{
+		ToolUseContext: &ToolUseContext{
+			ToolName: "Bash",
+			Params:   map[string]any{"cmd": "rm -rf /"},
+		},
 	})
 	if result.PermissionResult == nil || result.PermissionResult.Behavior != PermissionDeny {
 		t.Error("pre-tool-use hook should block execution")
@@ -67,9 +69,11 @@ func TestHook_PreToolUse_Modify(t *testing.T) {
 		modify:    true,
 	}
 
-	result := hook.Execute(&ToolUseContext{
-		ToolName: "Write",
-		Params:   map[string]any{"path": "/tmp/file"},
+	result := hook.Execute(&HookContext{
+		ToolUseContext: &ToolUseContext{
+			ToolName: "Write",
+			Params:   map[string]any{"path": "/tmp/file"},
+		},
 	})
 	if result.UpdatedInput == nil {
 		t.Error("hook should modify input")
@@ -85,13 +89,15 @@ func TestHook_PostToolUse_Context(t *testing.T) {
 		message:   "logged",
 	}
 
-	ctx := &PostToolUseContext{
-		ToolUseContext: &ToolUseContext{
-			ToolName: "Read",
-			Params:   map[string]any{"path": "/tmp/f"},
+	ctx := &HookContext{
+		PostToolUseContext: &PostToolUseContext{
+			ToolUseContext: &ToolUseContext{
+				ToolName: "Read",
+				Params:   map[string]any{"path": "/tmp/f"},
+			},
+			Result:   "file content here",
+			Duration: 42,
 		},
-		Result:   "file content here",
-		Duration: 42,
 	}
 
 	result := hook.Execute(ctx)

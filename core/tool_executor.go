@@ -168,7 +168,10 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 	}
 
 	for _, hook := range e.cfg.preHooks {
-		hr := hook.Execute(useCtx)
+		hookCtx := &HookContext{
+			ToolUseContext: useCtx,
+		}
+		hr := hook.Execute(hookCtx)
 		if hr.PreventContinuation {
 			return &ToolExecutionResult{ToolName: name, Error: fmt.Errorf("tool %q blocked by pre-tool-use hook: %s", name, hr.Message)}, nil
 		}
@@ -201,7 +204,8 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 	result, err := tool.Execute(execCtx, params)
 	duration := time.Since(start)
 
-	if len(e.cfg.postHooks) > 0 {
+	// Run post-tool-use hooks
+	if e.cfg.postHooks != nil {
 		var resultStr string
 		if err == nil {
 			resultStr, _ = result.(string)
@@ -210,14 +214,19 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 				resultStr = string(b)
 			}
 		}
-		postCtx := &PostToolUseContext{
+		postToolCtx := &PostToolUseContext{
 			ToolUseContext: useCtx,
 			Result:         resultStr,
 			Err:            err,
 			Duration:       duration.Milliseconds(),
 		}
 		for _, hook := range e.cfg.postHooks {
-			hook.Execute(postCtx)
+			if hook.EventType() == HookPostToolUse {
+				hookCtx := &HookContext{
+					PostToolUseContext: postToolCtx,
+				}
+				hook.Execute(hookCtx)
+			}
 		}
 	}
 
