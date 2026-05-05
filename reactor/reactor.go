@@ -406,6 +406,12 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 			}
 		}
 	}
+
+	if tools.IsWindowsPlatform() && !setup.skipTools["PowerShell"] {
+		if err := r.RegisterTool(tools.NewPowerShellTool()); err != nil {
+			logger.Warn("failed to register PowerShell tool", "error", err)
+		}
+	}
 }
 
 func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
