@@ -184,7 +184,6 @@ func findWorkspace(t *testing.T) string {
 		}
 		dir = parent
 	}
-	return ""
 }
 
 func setupTestAgent(t *testing.T, server *httptest.Server) *goreact.Agent {

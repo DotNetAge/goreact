@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -274,7 +275,7 @@ func TestMemorySessionStore_CurrentContext_TokenBudget(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		store.Append(ctx, "s1", "budget-agent", Message{
 			Role:      "user",
-			Content:   makeString(500),
+			Content:   makeRealisticMessage(i),
 			Timestamp: int64(i),
 		})
 	}
@@ -287,13 +288,17 @@ func TestMemorySessionStore_CurrentContext_TokenBudget(t *testing.T) {
 		t.Fatal("CurrentContext returned no messages")
 	}
 	if len(msgs) >= 10 {
-		t.Errorf("CurrentContext with budget=800 returned %d messages, expected < 10 (each msg ~500 chars)", len(msgs))
+		t.Errorf("CurrentContext with budget=800 returned %d messages, expected < 10", len(msgs))
 	}
 	for i := 1; i < len(msgs); i++ {
 		if msgs[i-1].Timestamp > msgs[i].Timestamp {
 			t.Error("messages not in chronological order")
 		}
 	}
+}
+
+func makeRealisticMessage(idx int) string {
+	return fmt.Sprintf("This is test message number %d with enough natural language text to ensure the token count is realistic and each individual message consumes a significant portion of the available token budget. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump. The five boxing wizards jump quickly. Sphinx of black quartz, judge my vow. These pangrams help create varied token sequences. Additionally, we need to discuss the implementation details of the system architecture, including database optimization strategies, caching layer configuration, API gateway routing rules, authentication middleware, authorization policies, and deployment pipeline orchestration across multiple availability zones with automatic failover capabilities and health check monitoring.", idx)
 }
 
 func TestMemorySessionStore_CurrentContext_EmptySession(t *testing.T) {

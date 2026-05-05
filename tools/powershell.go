@@ -43,15 +43,43 @@ func IsWindowsPlatform() bool {
 
 // PowerShellTool implements the Windows PowerShell command execution tool.
 type PowerShellTool struct {
-	maxOutput   int
-	maxDuration time.Duration
+	maxOutput         int
+	maxDuration       time.Duration
+	sandboxConfig     *SandboxConfig
+	sessionSandboxMgr *SessionSandboxManager
 }
 
 func NewPowerShellTool() core.FuncTool {
 	return &PowerShellTool{
-		maxOutput:   powershellDefaultMaxOutputBytes,
-		maxDuration: powershellDefaultMaxDuration,
+		maxOutput:     powershellDefaultMaxOutputBytes,
+		maxDuration:   powershellDefaultMaxDuration,
+		sandboxConfig: DefaultSandboxConfig(),
 	}
+}
+
+func NewPowerShellToolWithSandbox(config *SandboxConfig) core.FuncTool {
+	return &PowerShellTool{
+		maxOutput:     powershellDefaultMaxOutputBytes,
+		maxDuration:   powershellDefaultMaxDuration,
+		sandboxConfig: config,
+	}
+}
+
+func NewPowerShellToolWithSessionSandbox(mgr *SessionSandboxManager) core.FuncTool {
+	return &PowerShellTool{
+		maxOutput:         powershellDefaultMaxOutputBytes,
+		maxDuration:       powershellDefaultMaxDuration,
+		sandboxConfig:     mgr.defaultConfig,
+		sessionSandboxMgr: mgr,
+	}
+}
+
+func (t *PowerShellTool) SetSandboxConfig(config *SandboxConfig) {
+	t.sandboxConfig = config
+}
+
+func (t *PowerShellTool) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	t.sessionSandboxMgr = mgr
 }
 
 func (t *PowerShellTool) Info() *core.ToolInfo {
@@ -78,10 +106,10 @@ func (t *PowerShellTool) Execute(ctx context.Context, params map[string]any) (an
 		return nil, fmt.Errorf("command is required")
 	}
 
-	return runPowerShellCommand(ctx, cmdStr, t.maxOutput, t.maxDuration)
+	return t.runPowerShellCommand(ctx, cmdStr)
 }
 
-func runPowerShellCommand(ctx context.Context, command string, maxOutput int, maxDuration time.Duration) (*PowerShellResult, error) {
+func (t *PowerShellTool) runPowerShellCommand(ctx context.Context, command string) (*PowerShellResult, error) {
 	powershellPath, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		powershellPath = "powershell.exe"
@@ -95,12 +123,19 @@ func runPowerShellCommand(ctx context.Context, command string, maxOutput int, ma
 	}
 
 	var cmd *exec.Cmd
-	if maxDuration > 0 {
-		timeoutCtx, cancel := context.WithTimeout(ctx, maxDuration)
+	if t.maxDuration > 0 {
+		timeoutCtx, cancel := context.WithTimeout(ctx, t.maxDuration)
 		defer cancel()
 		cmd = exec.CommandContext(timeoutCtx, powershellPath, args...)
 	} else {
 		cmd = exec.CommandContext(ctx, powershellPath, args...)
+	}
+
+	sessionID := ExtractSessionID(ctx)
+	if t.sessionSandboxMgr != nil && sessionID != "" {
+		cmd = t.sessionSandboxMgr.ApplyToCommand(cmd, sessionID)
+	} else {
+		cmd = ApplySandbox(cmd, t.sandboxConfig)
 	}
 
 	start := time.Now()
@@ -110,8 +145,8 @@ func runPowerShellCommand(ctx context.Context, command string, maxOutput int, ma
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		exitCode := exitErr.ExitCode()
 
-		stdoutStr := truncateOutput(string(stdout), maxOutput)
-		stderrStr := truncateOutput(string(exitErr.Stderr), maxOutput)
+		stdoutStr := truncateOutput(string(stdout), t.maxOutput)
+		stderrStr := truncateOutput(string(exitErr.Stderr), t.maxOutput)
 
 		stderrStr = applyPowerShellCommandSemantics(exitCode, stderrStr)
 
@@ -130,7 +165,7 @@ func runPowerShellCommand(ctx context.Context, command string, maxOutput int, ma
 
 	return &PowerShellResult{
 		ExitCode: 0,
-		Stdout:   truncateOutput(string(stdout), maxOutput),
+		Stdout:   truncateOutput(string(stdout), t.maxOutput),
 		Duration: duration,
 	}, nil
 }

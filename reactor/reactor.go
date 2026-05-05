@@ -913,7 +913,6 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		}
 
 		// Check lifecycle state
-		cs.LifecycleState = cs.LifecycleState // read (for potential future locking)
 		if cs.LifecycleState.IsTerminal() {
 			break
 		}
@@ -978,6 +977,10 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		case ctrl := <-cs.ControlChan:
 			// Lifecycle control command received
 			r.handleCoordinatorControl(cs, ctrl)
+		}
+
+		if cs.LifecycleState.IsTerminal() {
+			break
 		}
 	}
 

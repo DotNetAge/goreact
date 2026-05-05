@@ -19,8 +19,10 @@ const maxBashOutputSize = 30000
 
 // BashTool implements a tool for executing shell commands with whitelist security.
 type BashTool struct {
-	whitelistEnabled bool
-	customWhitelist  map[string]bool
+	whitelistEnabled     bool
+	customWhitelist      map[string]bool
+	sandboxConfig        *SandboxConfig
+	sessionSandboxMgr    *SessionSandboxManager
 }
 
 // NewBashTool creates a Bash tool with default whitelist enabled.
@@ -28,6 +30,7 @@ func NewBashTool() core.FuncTool {
 	return &BashTool{
 		whitelistEnabled: true,
 		customWhitelist:  make(map[string]bool),
+		sandboxConfig:    DefaultSandboxConfig(),
 	}
 }
 
@@ -40,6 +43,7 @@ func NewBashToolWithWhitelist(allowedCommands []string) core.FuncTool {
 	return &BashTool{
 		whitelistEnabled: true,
 		customWhitelist:  wl,
+		sandboxConfig:    DefaultSandboxConfig(),
 	}
 }
 
@@ -48,7 +52,37 @@ func NewBashToolUnrestricted() core.FuncTool {
 	return &BashTool{
 		whitelistEnabled: false,
 		customWhitelist:  make(map[string]bool),
+		sandboxConfig:    UnrestrictedSandboxConfig(),
 	}
+}
+
+// NewBashToolWithSandbox creates a Bash tool with sandbox configuration.
+func NewBashToolWithSandbox(config *SandboxConfig) core.FuncTool {
+	return &BashTool{
+		whitelistEnabled: true,
+		customWhitelist:  make(map[string]bool),
+		sandboxConfig:    config,
+	}
+}
+
+// NewBashToolWithSessionSandbox creates a Bash tool with session-level sandbox isolation.
+func NewBashToolWithSessionSandbox(mgr *SessionSandboxManager) core.FuncTool {
+	return &BashTool{
+		whitelistEnabled:  true,
+		customWhitelist:   make(map[string]bool),
+		sandboxConfig:     mgr.defaultConfig,
+		sessionSandboxMgr: mgr,
+	}
+}
+
+// SetSandboxConfig sets the sandbox configuration for this Bash tool.
+func (t *BashTool) SetSandboxConfig(config *SandboxConfig) {
+	t.sandboxConfig = config
+}
+
+// SetSessionSandboxManager sets the session-level sandbox manager.
+func (t *BashTool) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	t.sessionSandboxMgr = mgr
 }
 
 var baseCommandPattern = regexp.MustCompile(`^\s*([a-zA-Z][a-zA-Z0-9._\-]*)(\s|$)`)
@@ -105,6 +139,15 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		return nil, fmt.Errorf("missing command parameter")
 	}
 
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, fmt.Errorf("empty command parameter")
+	}
+
+	if len(command) > 100000 {
+		return nil, fmt.Errorf("command exceeds maximum length of 100000 characters")
+	}
+
 	if blocked := detectDangerousCommand(command); blocked != "" {
 		return map[string]any{
 			"stdout":      "",
@@ -133,6 +176,12 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 	timeoutMs := defaultBashTimeoutMs
 	if val, ok := params["timeout"].(float64); ok {
 		timeoutMs = int(val)
+		if timeoutMs < 1000 {
+			timeoutMs = 1000
+		}
+		if timeoutMs > 300000 {
+			timeoutMs = 300000
+		}
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
@@ -140,7 +189,15 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 
 	cmd := exec.CommandContext(timeoutCtx, "sh", "-c", command)
 
-	// Use strings.Builder to capture output
+	sessionID := ExtractSessionID(ctx)
+	if t.sessionSandboxMgr != nil && sessionID != "" {
+		cmd = t.sessionSandboxMgr.ApplyToCommand(cmd, sessionID)
+	} else {
+		cmd = ApplySandbox(cmd, t.sandboxConfig)
+	}
+
+	ensureTempDir(t.sandboxConfig.TempDir)
+
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -165,16 +222,15 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 			stderrStr += "\nCommand timed out."
 			result["stderr"] = stderrStr
 		} else {
-			return nil, err
+			result["stderr"] = stderrStr + "\n" + err.Error()
+			result["exit_code"] = -1
 		}
 	}
 
-	// Truncate output if too large
 	const maxOutputSize = maxBashOutputSize
 	result["stdout"] = truncateOutput(stdoutStr, maxOutputSize)
 	result["stderr"] = truncateOutput(stderrStr, maxOutputSize)
 
-	// Map exit_code == 0 to success for tests
 	result["success"] = result["exit_code"] == 0
 	if !result["success"].(bool) {
 		result["error"] = fmt.Sprintf("Command failed with exit code %v", result["exit_code"])

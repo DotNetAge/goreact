@@ -132,17 +132,44 @@ type platformScriptExecutor struct {
 	platform     Platform
 	mu           sync.Mutex
 	venvManagers map[string]*venvManager
+	sandboxConfig *SandboxConfig
+	sessionSandboxMgr *SessionSandboxManager
 }
 
 func newPlatformScriptExecutor() *platformScriptExecutor {
 	return &platformScriptExecutor{
 		platform:     CurrentPlatform(),
 		venvManagers: make(map[string]*venvManager),
+		sandboxConfig: DefaultSandboxConfig(),
 	}
+}
+
+func (e *platformScriptExecutor) SetSandboxConfig(config *SandboxConfig) {
+	e.sandboxConfig = config
+}
+
+func (e *platformScriptExecutor) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	e.sessionSandboxMgr = mgr
 }
 
 func (e *platformScriptExecutor) Execute(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
 	skillRoot = filepath.Clean(skillRoot)
+
+	absSkillRoot, err := filepath.Abs(skillRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve skill root path: %w", err)
+	}
+
+	absScript, err := filepath.Abs(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve script path: %w", err)
+	}
+
+	cleanScript := filepath.Clean(absScript)
+	if !strings.HasPrefix(cleanScript, absSkillRoot+string(filepath.Separator)) &&
+		cleanScript != absSkillRoot {
+		return nil, fmt.Errorf("script path %q is outside of skill root directory %q (path traversal blocked)", scriptPath, skillRoot)
+	}
 
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("script not found: %s", scriptPath)
@@ -206,6 +233,13 @@ func (e *platformScriptExecutor) executeShell(ctx context.Context, skillRoot, sc
 	cmd := exec.CommandContext(ctx, shell, scriptPath)
 	cmd.Args = append(cmd.Args, args...)
 	cmd.Dir = skillRoot
+
+	sessionID := ExtractSessionID(ctx)
+	if e.sessionSandboxMgr != nil && sessionID != "" {
+		cmd = e.sessionSandboxMgr.ApplyToCommand(cmd, sessionID)
+	} else {
+		cmd = ApplySandbox(cmd, e.sandboxConfig)
+	}
 
 	return runScriptCommand(cmd)
 }
@@ -427,15 +461,56 @@ func dirExists(path string) bool {
 // ---------------------------------------------------------------------------
 
 type RunScript struct {
-	info           *core.ToolInfo
-	scriptExecutor scriptExecutor
+	info              *core.ToolInfo
+	scriptExecutor    scriptExecutor
+	sandboxConfig     *SandboxConfig
+	sessionSandboxMgr *SessionSandboxManager
 }
 
 func NewRunScriptTool() core.FuncTool {
 	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
 	return &RunScript{
 		info:           buildRunScriptInfo(platform),
-		scriptExecutor: newPlatformScriptExecutor(),
+		scriptExecutor: executor,
+		sandboxConfig:  DefaultSandboxConfig(),
+	}
+}
+
+func NewRunScriptToolWithSandbox(config *SandboxConfig) core.FuncTool {
+	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
+	executor.SetSandboxConfig(config)
+	return &RunScript{
+		info:           buildRunScriptInfo(platform),
+		scriptExecutor: executor,
+		sandboxConfig:  config,
+	}
+}
+
+func NewRunScriptToolWithSessionSandbox(mgr *SessionSandboxManager) core.FuncTool {
+	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
+	executor.SetSessionSandboxManager(mgr)
+	return &RunScript{
+		info:              buildRunScriptInfo(platform),
+		scriptExecutor:    executor,
+		sandboxConfig:     mgr.defaultConfig,
+		sessionSandboxMgr: mgr,
+	}
+}
+
+func (t *RunScript) SetSandboxConfig(config *SandboxConfig) {
+	t.sandboxConfig = config
+	if exe, ok := t.scriptExecutor.(*platformScriptExecutor); ok {
+		exe.SetSandboxConfig(config)
+	}
+}
+
+func (t *RunScript) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	t.sessionSandboxMgr = mgr
+	if exe, ok := t.scriptExecutor.(*platformScriptExecutor); ok {
+		exe.SetSessionSandboxManager(mgr)
 	}
 }
 
