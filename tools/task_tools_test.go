@@ -402,3 +402,172 @@ func TestConcurrentTaskOperations(t *testing.T) {
 		t.Errorf("Expected 10 tasks, got %d", len(taskIDs))
 	}
 }
+
+func TestTaskCreateTool_SpawnError(t *testing.T) {
+	kv, cleanup := newTestKVStore(t)
+	defer cleanup()
+
+	spawnFunc := func(ctx context.Context, agentName, task string) (string, error) {
+		time.Sleep(50 * time.Millisecond)
+		return "", fmt.Errorf("agent execution failed")
+	}
+
+	tool := NewTaskCreateTool(spawnFunc)
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, kv, "test-session-error")
+
+	params := map[string]any{
+		"task_description": "Failing task",
+		"agent_name":       "broken-agent",
+	}
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute() error = %v (should return immediately with running status)", err)
+	}
+
+	resultMap := result.(map[string]any)
+	taskID := resultMap["task_id"].(string)
+
+	time.Sleep(200 * time.Millisecond)
+
+	task, err := GetTask(ctx, "test-session-error", taskID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if task.Status != TaskFailed {
+		t.Errorf("Task status = %v, want %v", task.Status, TaskFailed)
+	}
+	if task.Error == "" {
+		t.Error("Expected error message in task")
+	}
+}
+
+func TestTaskGetNotFound(t *testing.T) {
+	kv, cleanup := newTestKVStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, kv, "test-session-get")
+
+	tool := NewTaskGetTool()
+	params := map[string]any{"task_id": "nonexistent"}
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when task not found")
+	}
+}
+
+func TestTaskStopNotFound(t *testing.T) {
+	kv, cleanup := newTestKVStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, kv, "test-session-stop")
+
+	tool := NewTaskStopTool()
+	params := map[string]any{"task_id": "nonexistent"}
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when stopping nonexistent task")
+	}
+}
+
+func TestTaskUpdateNotFound(t *testing.T) {
+	kv, cleanup := newTestKVStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, kv, "test-session-update")
+
+	tool := NewTaskUpdateTool()
+	params := map[string]any{
+		"task_id":     "nonexistent",
+		"description": "new desc",
+	}
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when updating nonexistent task")
+	}
+}
+
+func TestTaskCreateDuplicateIDs(t *testing.T) {
+	kv, cleanup := newTestKVStore(t)
+	defer cleanup()
+
+	spawnFunc := func(ctx context.Context, agentName, task string) (string, error) {
+		time.Sleep(50 * time.Millisecond)
+		return "ok", nil
+	}
+
+	tool := NewTaskCreateTool(spawnFunc)
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, kv, "test-session-dup")
+
+	params := map[string]any{
+		"task_description": "Task A",
+		"agent_name":       "agent1",
+	}
+
+	result1, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("first create failed: %v", err)
+	}
+	taskID1 := result1.(map[string]any)["task_id"].(string)
+
+	params["task_description"] = "Task B"
+	result2, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("second create failed: %v", err)
+	}
+	taskID2 := result2.(map[string]any)["task_id"].(string)
+
+	if taskID1 == taskID2 {
+		t.Error("expected unique task IDs")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	taskIDs, err := ListTasks(ctx, "test-session-dup")
+	if err != nil {
+		t.Fatalf("ListTasks error = %v", err)
+	}
+	if len(taskIDs) != 2 {
+		t.Errorf("Expected 2 tasks, got %d", len(taskIDs))
+	}
+}
+
+func TestTaskCreateEmptyDescription(t *testing.T) {
+	tool := NewTaskCreateTool(nil)
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, nil, "test-session-empty")
+
+	params := map[string]any{
+		"task_description": "",
+		"agent_name":       "agent1",
+	}
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when task_description is empty")
+	}
+}
+
+func TestTaskCreateEmptyAgentName(t *testing.T) {
+	tool := NewTaskCreateTool(nil)
+	ctx := context.Background()
+	ctx = withKVStoreContext(ctx, nil, "test-session-empty")
+
+	params := map[string]any{
+		"task_description": "Test task",
+		"agent_name":       "",
+	}
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when agent_name is empty")
+	}
+}

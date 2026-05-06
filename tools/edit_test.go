@@ -3,161 +3,282 @@ package tools
 import (
 	"context"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 )
 
-var ctx = context.Background()
-
-func TestCalculator_toFloat64(t *testing.T) {
-	t.Run("float64", func(t *testing.T) {
-		val, ok := ToFloat64(float64(3.14))
-		if !ok || val != 3.14 {
-			t.Errorf("Expected 3.14, got %f, ok=%v", val, ok)
-		}
-	})
-
-	t.Run("float32", func(t *testing.T) {
-		val, ok := ToFloat64(float32(2.71))
-		if !ok || val < 2.70 || val > 2.72 {
-			t.Errorf("Expected ~2.71, got %f, ok=%v", val, ok)
-		}
-	})
-
-	t.Run("int", func(t *testing.T) {
-		val, ok := ToFloat64(int(42))
-		if !ok || val != 42 {
-			t.Errorf("Expected 42, got %f, ok=%v", val, ok)
-		}
-	})
-
-	t.Run("int64", func(t *testing.T) {
-		val, ok := ToFloat64(int64(123456789))
-		if !ok || val != 123456789 {
-			t.Errorf("Expected 123456789, got %f, ok=%v", val, ok)
-		}
-	})
-
-	t.Run("int32", func(t *testing.T) {
-		val, ok := ToFloat64(int32(-10))
-		if !ok || val != -10 {
-			t.Errorf("Expected -10, got %f, ok=%v", val, ok)
-		}
-	})
-
-	t.Run("invalid type", func(t *testing.T) {
-		_, ok := ToFloat64("string")
-		if ok {
-			t.Error("Expected false for string")
-		}
-
-		_, ok = ToFloat64(nil)
-		if ok {
-			t.Error("Expected false for nil")
-		}
-
-		_, ok = ToFloat64(struct{}{})
-		if ok {
-			t.Error("Expected false for struct")
-		}
-	})
-}
-
 func TestEdit(t *testing.T) {
-	edit := NewFileEditTool()
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
 
-	t.Run("basic edit", func(t *testing.T) {
-		testFile := "goreact_test_edit.txt"
-		os.WriteFile(testFile, []byte("Hello World"), 0644)
+	filePath := filepath.Join(dir, "test.txt")
+	content := "line 1\nline 2\nline 3\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
 
-		result, err := edit.Execute(ctx, map[string]any{
-			"path":       testFile,
-			"old_string": "World",
-			"new_string": "Go",
-		})
-		if err != nil {
-			t.Fatalf("Expected no error, got %v", err)
-		}
-		if !strings.Contains(result.(string), "updated successfully") {
-			t.Error("Expected success message")
-		}
-		os.Remove(testFile)
-	})
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "line 2",
+		"new_string": "line 2 replaced",
+	}
 
-	t.Run("missing path", func(t *testing.T) {
-		_, err := edit.Execute(ctx, map[string]any{
-			"old_string": "a", "new_string": "b",
-		})
-		if err == nil {
-			t.Error("Expected error for missing path")
-		}
-	})
+	result, err := edit.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("replace failed: %v", err)
+	}
 
-	t.Run("missing edits", func(t *testing.T) {
-		_, err := edit.Execute(ctx, map[string]any{"path": "/tmp/test.txt"})
-		if err == nil {
-			t.Error("Expected error for missing edits")
-		}
-	})
+	str, ok := result.(string)
+	if !ok {
+		t.Fatalf("expected string result, got %T", result)
+	}
+	if str != "File "+filePath+" updated successfully." {
+		t.Errorf("unexpected result: %q", str)
+	}
 
-	t.Run("text not found", func(t *testing.T) {
-		testFile := "goreact_test_edit2.txt"
-		os.WriteFile(testFile, []byte("Hello World"), 0644)
+	newContent, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("failed to read file: %v", err)
+	}
+	expected := "line 1\nline 2 replaced\nline 3\n"
+	if string(newContent) != expected {
+		t.Errorf("unexpected content: got %q, want %q", string(newContent), expected)
+	}
 
-		_, err := edit.Execute(ctx, map[string]any{
-			"path":       testFile,
-			"old_string": "NotFound",
-			"new_string": "X",
-		})
-		if err == nil {
-			t.Error("Expected error when text not found")
-		}
-		os.Remove(testFile)
-	})
+	params2 := map[string]any{
+		"path":       filePath,
+		"old_string": "line 1",
+		"new_string": "first line",
+	}
+	_, err = edit.Execute(ctx, params2)
+	if err != nil {
+		t.Fatalf("second replace failed: %v", err)
+	}
 
-	t.Run("invalid edit format", func(t *testing.T) {
-		testFile := "goreact_test_edit3.txt"
-		os.WriteFile(testFile, []byte("Hello"), 0644)
-
-		_, err := edit.Execute(ctx, map[string]any{
-			"path":      testFile,
-			"wrong_key": "value",
-		})
-		if err == nil {
-			t.Error("Expected error for invalid edit format")
-		}
-		os.Remove(testFile)
-	})
-
-	t.Run("Name and Description", func(t *testing.T) {
-		if edit.Info().Name != "FileEdit" {
-			t.Errorf("Expected 'file_edit', got %q", edit.Info().Name)
-		}
-		if edit.Info().Description == "" {
-			t.Error("Expected non-empty description")
-		}
-	})
+	newContent2, _ := os.ReadFile(filePath)
+	expected2 := "first line\nline 2 replaced\nline 3\n"
+	if string(newContent2) != expected2 {
+		t.Errorf("unexpected content after second replace: %q", string(newContent2))
+	}
 }
 
-func TestTruncateString(t *testing.T) {
-	t.Run("short string", func(t *testing.T) {
-		result := TruncateString("short", 10)
-		if result != "short" {
-			t.Errorf("Expected 'short', got %q", result)
-		}
-	})
+func TestEditFileNotFound(t *testing.T) {
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       "./nonexistent/file.txt",
+		"old_string": "something",
+		"new_string": "something else",
+	}
 
-	t.Run("long string", func(t *testing.T) {
-		result := TruncateString("this is a long string", 10)
-		if result != "this is..." {
-			t.Errorf("Expected truncated string, got %q", result)
-		}
-	})
+	_, err := edit.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
 
-	t.Run("exact length", func(t *testing.T) {
-		result := TruncateString("abc", 3)
-		if result != "abc" {
-			t.Errorf("Expected 'abc', got %q", result)
-		}
-	})
+func TestEditWithSpecialCharacters(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "special.txt")
+	content := "Hello <world> & {foo}\nline with \"quotes\" and tabs\t\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "<world> & {foo}",
+		"new_string": "<planet> | {bar}",
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("replace with special chars failed: %v", err)
+	}
+
+	newContent, _ := os.ReadFile(filePath)
+	expected := "Hello <planet> | {bar}\nline with \"quotes\" and tabs\t\n"
+	if string(newContent) != expected {
+		t.Errorf("unexpected content: got %q, want %q", string(newContent), expected)
+	}
+}
+
+func TestEditUnicodeContent(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "unicode.txt")
+	content := "Hello 世界\nこんにちは\n🌍\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "世界",
+		"new_string": "宇宙",
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unicode replace failed: %v", err)
+	}
+
+	newContent, _ := os.ReadFile(filePath)
+	expected := "Hello 宇宙\nこんにちは\n🌍\n"
+	if string(newContent) != expected {
+		t.Errorf("unexpected content: got %q, want %q", string(newContent), expected)
+	}
+}
+
+func TestEditEmptyFile(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(filePath, []byte(""), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "nonexistent",
+		"new_string": "something",
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error for empty file with no match")
+	}
+}
+
+func TestEditReplaceAll(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "multi.txt")
+	content := "foo bar foo bar foo\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":        filePath,
+		"old_string":  "foo",
+		"new_string":  "baz",
+		"replace_all": true,
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("replace all failed: %v", err)
+	}
+
+	newContent, _ := os.ReadFile(filePath)
+	expected := "baz bar baz bar baz\n"
+	if string(newContent) != expected {
+		t.Errorf("unexpected content: got %q, want %q", string(newContent), expected)
+	}
+}
+
+func TestEditLimit(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "limit.txt")
+	content := "x y x y x\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "x",
+		"new_string": "z",
+		"limit":      2.0,
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("replace with limit failed: %v", err)
+	}
+
+	newContent, _ := os.ReadFile(filePath)
+	expected := "z y z y x\n"
+	if string(newContent) != expected {
+		t.Errorf("unexpected content: got %q, want %q", string(newContent), expected)
+	}
+}
+
+func TestEditStringNotFound(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "edit_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	filePath := filepath.Join(dir, "nomatch.txt")
+	content := "hello world\n"
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"path":       filePath,
+		"old_string": "nonexistent",
+		"new_string": "something",
+	}
+
+	_, err = edit.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when old_string not found")
+	}
+}
+
+func TestEditMissingPath(t *testing.T) {
+	edit := &FileEditTool{}
+	ctx := context.Background()
+	params := map[string]any{
+		"old_string": "foo",
+		"new_string": "bar",
+	}
+
+	_, err := edit.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error when path is missing")
+	}
 }

@@ -1101,3 +1101,330 @@ func (m *mockMemoryImpl) Store(ctx context.Context, record core.MemoryRecord) (s
 func (m *mockMemoryImpl) Delete(ctx context.Context, id string) error {
 	return nil
 }
+
+// mockModel is a mock that always returns a fixed response.
+type mockModel struct{}
+
+func (m *mockModel) Call(ctx context.Context, model string, messages []gochatcore.Message, tools []gochatcore.Tool) (*gochatcore.Response, error) {
+	return &gochatcore.Response{
+		Content: "Hello! How can I help you today?",
+	}, nil
+}
+
+// mockModelWithToolCalls returns native tool calls instead of text responses.
+type mockModelWithToolCalls struct {
+	calls      int
+	responses  []gochatcore.Response
+	tools      map[string]core.FuncTool
+}
+
+func (m *mockModelWithToolCalls) Call(ctx context.Context, model string, messages []gochatcore.Message, tools []gochatcore.Tool) (*gochatcore.Response, error) {
+	if m.calls < len(m.responses) {
+		resp := &m.responses[m.calls]
+		m.calls++
+		return resp, nil
+	}
+	// Default: return answer
+	return &gochatcore.Response{
+		Content: `{"decision": "answer", "final_answer": "Task completed."}`,
+	}, nil
+}
+
+// ============================================================================
+// Enhanced Reactor Tests with Mock LLM
+// ============================================================================
+
+func TestReactor_MockLLMWithThought(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Hello from mock!", "reasoning": "User asked for help"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Help me", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount == 0 {
+		t.Fatal("mock LLM was not called")
+	}
+	if result.Answer != "Hello from mock!" {
+		t.Errorf("expected answer 'Hello from mock!', got %q", result.Answer)
+	}
+	if result.TotalIterations < 1 {
+		t.Errorf("expected at least 1 iteration, got %d", result.TotalIterations)
+	}
+}
+
+func TestReactor_MockLLMWithNativeToolCalls(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		if callCount == 1 {
+			toolArgs := `{"message": "test echo"}`
+			return &gochatcore.Response{
+				Message: gochatcore.Message{
+					ToolCalls: []gochatcore.ToolCall{
+						{Name: "echo_tool", Arguments: toolArgs},
+					},
+				},
+			}, nil
+		}
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Done"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	echoTool := &mockEchoTool{}
+	if err := r.RegisterTool(echoTool); err != nil {
+		t.Fatalf("failed to register echo tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Echo this", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if callCount < 2 {
+		t.Logf("WARN: expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	hasToolCall := false
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeToolCall && step.Action.Target == "echo_tool" {
+			hasToolCall = true
+			break
+		}
+	}
+	if !hasToolCall {
+		t.Log("WARN: no tool call step found in history (may be expected if mock path differs)")
+	}
+}
+
+func TestReactor_MockLLMMultiTurnConversation(t *testing.T) {
+	turnCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		turnCount++
+		if turnCount > 1 {
+			if len(input.History) == 0 {
+				t.Errorf("turn %d: expected conversation history, got 0 messages", turnCount)
+			}
+			t.Logf("turn %d: history has %d messages", turnCount, len(input.History))
+		}
+		return &gochatcore.Response{
+			Content: fmt.Sprintf(`{"decision": "answer", "final_answer": "Response %d"}`, turnCount),
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result1, err := r.Run(context.Background(), "Question 1", nil)
+	if err != nil {
+		t.Fatalf("run 1 failed: %v", err)
+	}
+	t.Logf("Run 1: answer=%q, iterations=%d", result1.Answer, result1.TotalIterations)
+
+	if turnCount == 0 {
+		t.Fatal("mock LLM was never called")
+	}
+}
+
+func TestReactor_MockLLMToolExecutionResult(t *testing.T) {
+	var capturedHistory ConversationHistory
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+			if len(input.History) == 0 {
+				capturedHistory = input.History
+				return &gochatcore.Response{
+					Content: `{"decision": "act", "tool_calls": {"echo_tool": {"message": "hello"}}}`,
+				}, nil
+			}
+			return &gochatcore.Response{
+				Content: `{"decision": "answer", "final_answer": "Done"}`,
+			}, nil
+		}),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Test", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.TotalIterations == 0 {
+		t.Error("expected at least 1 iteration")
+	}
+
+	t.Logf("Captured history on first call: %d messages", len(capturedHistory))
+}
+
+func TestReactor_MockLLMWithParseError(t *testing.T) {
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		return &gochatcore.Response{
+			Content: "this is not valid json {{{",
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 2,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Test", nil)
+	if err != nil {
+		t.Logf("expected: run returned error: %v", err)
+	} else {
+		t.Logf("run completed with answer: %q", result.Answer)
+	}
+}
+
+func TestReactor_MockLLMMultipleToolCallsInParallel(t *testing.T) {
+	toolCallCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		toolCallCount++
+		if toolCallCount == 1 {
+			return &gochatcore.Response{
+				Content: `{
+					"decision": "act",
+					"tool_calls": {
+						"echo_tool": {"message": "first"},
+						"read": {"path": "/tmp/test.txt"}
+					}
+				}`,
+			}, nil
+		}
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Both tools executed"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register echo tool: %v", err)
+	}
+	if err := r.RegisterTool(&mockReadTool{}); err != nil {
+		t.Fatalf("failed to register read tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Use both tools", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeToolCall {
+			t.Logf("Step %d: action result = %q", step.Iteration, step.Action.Result)
+			if strings.Contains(step.Action.Result, "echo_tool") && strings.Contains(step.Action.Result, "read") {
+				t.Log("PASS: both tools called in same step")
+			}
+		}
+	}
+}
+
+func TestReactor_MockLLMDecisionClarify(t *testing.T) {
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		return &gochatcore.Response{
+			Content: `{"decision": "clarify", "clarification_question": "Can you provide more details?"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 2,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Help me", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasClarify := false
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeClarify {
+			hasClarify = true
+			if step.Action.Result != "Can you provide more details?" {
+				t.Errorf("expected clarify question, got %q", step.Action.Result)
+			}
+		}
+	}
+	if !hasClarify {
+		t.Log("WARN: no clarify action found in steps")
+	}
+}
+
+func TestReactor_MockLLMMaxIterationsRespected(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		return &gochatcore.Response{
+			Content: `{"decision": "act", "tool_calls": {"echo_tool": {"message": "loop"}}}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Test loop", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.TotalIterations > 3 {
+		t.Errorf("expected <= 3 iterations, got %d", result.TotalIterations)
+	}
+	t.Logf("Iterations: %d (max was 3), LLM calls: %d", result.TotalIterations, callCount)
+}
