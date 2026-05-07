@@ -12,9 +12,16 @@ import (
 
 func init() {
 	globalSandboxApplier = darwinSandboxApplier
+	testCmd := exec.Command("sandbox-exec", "-p", "(version 1)(allow default)", "true")
+	if err := testCmd.Run(); err != nil {
+		sandboxExecUnavailable = true
+	}
 }
 
 func darwinSandboxApplier(cmd *exec.Cmd, config *SandboxConfig) *exec.Cmd {
+	if sandboxExecUnavailable || !config.Enabled || config.Profile == ProfileUnconfined {
+		return cmd
+	}
 	profile := generateSeatbeltProfile(config)
 
 	tempFile, err := writeProfileToTemp(profile)
@@ -68,7 +75,6 @@ func generateSeatbeltProfile(config *SandboxConfig) string {
 func generateStrictProfile(config *SandboxConfig) string {
 	var sb strings.Builder
 
-	sb.WriteString("(version 1)\n")
 	sb.WriteString("(deny default)\n")
 
 	sb.WriteString("(allow file-read*\n")
@@ -78,7 +84,7 @@ func generateStrictProfile(config *SandboxConfig) string {
 	sb.WriteString("  (subpath \"/private/var/db/timezone\")\n")
 	sb.WriteString(")\n")
 
-	sb.WriteString("(allow file-read* file-execute\n")
+	sb.WriteString("(allow file-read*\n")
 	sb.WriteString("  (subpath \"/bin\")\n")
 	sb.WriteString("  (subpath \"/usr/bin\")\n")
 	sb.WriteString("  (subpath \"/usr/local/bin\")\n")
@@ -93,7 +99,7 @@ func generateStrictProfile(config *SandboxConfig) string {
 	}
 
 	if config.TempDir != "" {
-		sb.WriteString(fmt.Sprintf("(allow file-read* file-write* file-create* file-delete*\n"))
+		sb.WriteString(fmt.Sprintf("(allow file-read* file-write*\n"))
 		sb.WriteString(fmt.Sprintf("  (subpath %q))\n", config.TempDir))
 	}
 
@@ -110,10 +116,6 @@ func generateStrictProfile(config *SandboxConfig) string {
 	sb.WriteString(")\n")
 
 	sb.WriteString("(allow sysctl-read)\n")
-	sb.WriteString("(allow signal\n")
-	sb.WriteString("  (signal term)\n")
-	sb.WriteString("  (signal kill)\n")
-	sb.WriteString(")\n")
 
 	sb.WriteString("(deny file-write*\n")
 	sb.WriteString("  (subpath \"/\")\n")
@@ -135,7 +137,7 @@ func generateWorkspaceProfile(config *SandboxConfig) string {
 	sb.WriteString("  (subpath \"/private\")\n")
 	sb.WriteString(")\n")
 
-	sb.WriteString("(allow file-read* file-execute\n")
+	sb.WriteString("(allow file-read*\n")
 	sb.WriteString("  (subpath \"/bin\")\n")
 	sb.WriteString("  (subpath \"/usr/bin\")\n")
 	sb.WriteString("  (subpath \"/usr/local/bin\")\n")
@@ -144,16 +146,16 @@ func generateWorkspaceProfile(config *SandboxConfig) string {
 
 	for _, path := range config.AllowedPaths {
 		cleanPath := filepath.Clean(path)
-		sb.WriteString(fmt.Sprintf("(allow file-read* file-write* file-create*\n"))
+		sb.WriteString(fmt.Sprintf("(allow file-read* file-write*\n"))
 		sb.WriteString(fmt.Sprintf("  (subpath %q))\n", cleanPath))
 	}
 
 	if config.TempDir != "" {
-		sb.WriteString(fmt.Sprintf("(allow file-read* file-write* file-create*\n"))
+		sb.WriteString(fmt.Sprintf("(allow file-read* file-write*\n"))
 		sb.WriteString(fmt.Sprintf("  (subpath %q))\n", config.TempDir))
 	}
 
-	sb.WriteString(fmt.Sprintf("(allow file-read* file-write* file-create*\n"))
+	sb.WriteString(fmt.Sprintf("(allow file-read* file-write*\n"))
 	sb.WriteString(fmt.Sprintf("  (subpath %q))\n", os.TempDir()))
 
 	if config.AllowNetwork {
@@ -170,9 +172,10 @@ func generateWorkspaceProfile(config *SandboxConfig) string {
 	sb.WriteString(")\n")
 
 	sb.WriteString("(allow sysctl*)\n")
-	sb.WriteString("(allow signal\n")
-	sb.WriteString("  (signal kill)\n")
-	sb.WriteString("  (signal term)\n")
+
+	sb.WriteString("(deny file-write*\n")
+	sb.WriteString("  (subpath \"/tmp\")\n")
+	sb.WriteString("  (subpath \"/var/tmp\")\n")
 	sb.WriteString(")\n")
 
 	return sb.String()

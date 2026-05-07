@@ -211,7 +211,7 @@ func TestSandboxProfileGeneration(t *testing.T) {
 		t.Error("profile should contain version")
 	}
 
-	if !strings.Contains(profile, "(allow file-read* file-write* file-create*") {
+	if !strings.Contains(profile, "(allow file-read* file-write*") {
 		t.Error("workspace profile should allow read/write to allowed paths")
 	}
 

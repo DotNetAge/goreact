@@ -132,6 +132,8 @@ type Reactor struct {
 	agentRegistry tools.AgentDefinitionRegistry
 	runtimeDir    *core.RuntimeDirectory
 	modelRegistry core.ModelRegistry
+
+	auditLogger core.AuditLogger
 }
 
 func (r *Reactor) EventBus() EventBus { return r.eventBus }
@@ -209,6 +211,7 @@ type reactorSetup struct {
 	agentRegistry  tools.AgentDefinitionRegistry
 	runtimeDir     *core.RuntimeDirectory
 	modelRegistry  core.ModelRegistry
+	auditLogger    core.AuditLogger
 }
 
 func (r *Reactor) applyDefaults(config *ReactorConfig) {
@@ -434,6 +437,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	r.agentRegistry = setup.agentRegistry
 	r.runtimeDir = setup.runtimeDir
 	r.modelRegistry = setup.modelRegistry
+	r.auditLogger = setup.auditLogger
 
 	if setup.kvStore == nil {
 		if kv, err := core.NewFileSystemKVStore(""); err == nil {
@@ -482,6 +486,17 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	}
 
 	return r
+}
+
+func (r *Reactor) AuditLogger() core.AuditLogger { return r.auditLogger }
+
+func (r *Reactor) logAudit(ctx context.Context, entry core.AuditEntry) {
+	if r.auditLogger == nil {
+		return
+	}
+	if err := r.auditLogger.Log(ctx, entry); err != nil {
+		logger.Warn("failed to write audit log", "error", err)
+	}
 }
 
 func (r *Reactor) SkillRegistry() core.SkillRegistry       { return r.skillRegistry }

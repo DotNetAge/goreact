@@ -96,7 +96,8 @@ func CreateTask(ctx context.Context, sessionID string, task *Task) error {
 	}
 
 	// Atomic append to list using a single read-modify-write within the KVStore lock
-	for {
+	const maxRetries = 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
 		list, err := getTaskList(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("failed to read task list: %w", err)
@@ -113,7 +114,9 @@ func CreateTask(ctx context.Context, sessionID string, task *Task) error {
 			return nil
 		}
 		// Retry on conflict (simple optimistic retry)
+		time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
 	}
+	return fmt.Errorf("failed to append task %s to list after %d attempts", task.ID, maxRetries)
 }
 
 func GetTask(ctx context.Context, sessionID, taskID string) (*Task, error) {

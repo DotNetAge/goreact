@@ -2,14 +2,12 @@ package tools
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
 func resetTodoStore() {
-	todoStoreMu.Lock()
-	defer todoStoreMu.Unlock()
-	todoStore = nil
-	todoCounter = 0
+	todoStores = sync.Map{}
 }
 
 func TestTodoWriteTool_Info(t *testing.T) {

@@ -26,15 +26,28 @@ type TodoItem struct {
 }
 
 // todoStore is a package-level in-memory store for todo items, safe for concurrent access.
-var (
-	todoStore   []TodoItem
-	todoStoreMu sync.RWMutex
-	todoCounter int
-)
+var todoStores sync.Map // map[string]*sessionTodoStore
 
-func nextTodoID() string {
-	todoCounter++
-	return fmt.Sprintf("todo_%d", todoCounter)
+type sessionTodoStore struct {
+	mu      sync.RWMutex
+	items   []TodoItem
+	counter int
+}
+
+func (s *sessionTodoStore) nextID() string {
+	s.counter++
+	return fmt.Sprintf("todo_%d", s.counter)
+}
+
+func getSessionStore(ctx context.Context) *sessionTodoStore {
+	sessionID := ExtractSessionID(ctx)
+	if sessionID == "" {
+		sessionID = "__default__"
+	}
+	store, _ := todoStores.LoadOrStore(sessionID, &sessionTodoStore{
+		items: make([]TodoItem, 0),
+	})
+	return store.(*sessionTodoStore)
 }
 
 // TodoWriteTool implements a tool for managing a task list.
@@ -97,13 +110,14 @@ func (t *TodoWriteTool) Execute(ctx context.Context, params map[string]any) (any
 	merge, _ := params["merge"].(bool)
 	now := time.Now().Unix()
 
-	todoStoreMu.Lock()
-	defer todoStoreMu.Unlock()
+	store := getSessionStore(ctx)
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
 	if merge {
 		for i := range newItems {
 			if newItems[i].ID == "" {
-				newItems[i].ID = nextTodoID()
+				newItems[i].ID = store.nextID()
 			}
 			if newItems[i].CreatedAt == 0 {
 				newItems[i].CreatedAt = now
@@ -111,35 +125,35 @@ func (t *TodoWriteTool) Execute(ctx context.Context, params map[string]any) (any
 			newItems[i].UpdatedAt = now
 
 			found := false
-			for j, existing := range todoStore {
+			for j, existing := range store.items {
 				if existing.ID == newItems[i].ID {
-					todoStore[j] = newItems[i]
+					store.items[j] = newItems[i]
 					found = true
 					break
 				}
 			}
 			if !found {
-				todoStore = append(todoStore, newItems[i])
+				store.items = append(store.items, newItems[i])
 			}
 		}
 	} else {
 		for i := range newItems {
 			if newItems[i].ID == "" {
-				newItems[i].ID = nextTodoID()
+				newItems[i].ID = store.nextID()
 			}
 			if newItems[i].CreatedAt == 0 {
 				newItems[i].CreatedAt = now
 			}
 			newItems[i].UpdatedAt = now
 		}
-		todoStore = newItems
+		store.items = newItems
 	}
 
 	return map[string]any{
 		"success": true,
-		"count":   len(todoStore),
-		"summary": formatTodoSummary(todoStore),
-		"message": fmt.Sprintf("Todo list updated. %d item(s) total.", len(todoStore)),
+		"count":   len(store.items),
+		"summary": formatTodoSummary(store.items),
+		"message": fmt.Sprintf("Todo list updated. %d item(s) total.", len(store.items)),
 	}, nil
 }
 
@@ -175,13 +189,14 @@ Usage:
 }
 
 func (t *todoReadTool) Execute(ctx context.Context, params map[string]any) (any, error) {
-	todoStoreMu.RLock()
-	defer todoStoreMu.RUnlock()
+	store := getSessionStore(ctx)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 
 	statusFilter, _ := params["status"].(string)
 
 	var filtered []TodoItem
-	for _, item := range todoStore {
+	for _, item := range store.items {
 		if statusFilter != "" && item.Status != statusFilter {
 			continue
 		}
@@ -240,12 +255,13 @@ func (t *TodoExecuteTool) Info() *core.ToolInfo {
 }
 
 func (t *TodoExecuteTool) Execute(ctx context.Context, params map[string]any) (any, error) {
-	todoStoreMu.RLock()
-	defer todoStoreMu.RUnlock()
+	store := getSessionStore(ctx)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 
 	// Separate pending items and completed dependency set
 	completedSet := make(map[string]bool)
-	for _, item := range todoStore {
+	for _, item := range store.items {
 		if item.Status == "completed" {
 			completedSet[item.ID] = true
 		}
@@ -254,7 +270,7 @@ func (t *TodoExecuteTool) Execute(ctx context.Context, params map[string]any) (a
 	// Filter pending items whose dependencies are all met
 	var ready []TodoItem
 	var blocked []TodoItem
-	for _, item := range todoStore {
+	for _, item := range store.items {
 		if item.Status != "pending" {
 			continue
 		}
@@ -302,7 +318,7 @@ func (t *TodoExecuteTool) Execute(ctx context.Context, params map[string]any) (a
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Execution Plan: %d ready, %d blocked, %d total\n", len(ready), len(blocked), len(todoStore))
+	fmt.Fprintf(&sb, "Execution Plan: %d ready, %d blocked, %d total\n", len(ready), len(blocked), len(store.items))
 	sb.WriteString("--- Ready to Execute (by priority) ---\n")
 	for i, step := range steps {
 		fmt.Fprintf(&sb, "  Step %d: [%s] %s (priority=%d)\n", i+1, step.TodoID, step.Content, step.Priority)

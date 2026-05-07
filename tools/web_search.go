@@ -216,9 +216,10 @@ func filterResults(results []SearchResult, opts SearchOptions) []SearchResult {
 //   - WebSearch: lightweight discovery → returns {title, url} only (small token cost)
 //   - WebFetch: deep reading → local HTTP fetch → HTML→Markdown → LLM summarization
 type WebSearchTool struct {
-	adapters []SearchAdapter
-	cache    sync.Map // map[string]cachedSearch
-	cacheTTL time.Duration
+	adapters   []SearchAdapter
+	adapterMu  sync.RWMutex
+	cache      sync.Map // map[string]cachedSearch
+	cacheTTL   time.Duration
 }
 
 type cachedSearch struct {
@@ -238,7 +239,10 @@ func NewWebSearchTool() core.FuncTool {
 
 // AddAdapter adds a search adapter to the fallback chain.
 // Adapters are tried in order; first successful result wins.
+// This method is safe for concurrent use.
 func (t *WebSearchTool) AddAdapter(adapter SearchAdapter) {
+	t.adapterMu.Lock()
+	defer t.adapterMu.Unlock()
 	t.adapters = append([]SearchAdapter{adapter}, t.adapters...)
 }
 
@@ -344,7 +348,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (any
 	// Try adapters in order (fallback chain)
 	var results []SearchResult
 	var lastErr error
-	for _, adapter := range t.adapters {
+	t.adapterMu.RLock()
+	adapters := make([]SearchAdapter, len(t.adapters))
+	copy(adapters, t.adapters)
+	t.adapterMu.RUnlock()
+	for _, adapter := range adapters {
 		searchResults, err := adapter.Search(ctx, query, opts)
 		if err != nil {
 			lastErr = err

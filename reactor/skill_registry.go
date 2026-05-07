@@ -68,9 +68,27 @@ func (r *DefaultSkillRegistry) ListSkills() []*core.Skill {
 // FindApplicableSkills finds skills whose description matches the given intent context.
 // The matching is done by checking if any keyword from the skill's description or name
 // appears in the intent's type, topic, summary, or entity blob.
-// The context parameter should be a *reactor.Intent; other types are silently ignored.
+// Accepts a string or fmt.Stringer as the context; other types are silently ignored.
 func (r *DefaultSkillRegistry) FindApplicableSkills(context any) ([]*core.Skill, error) {
-	return nil, nil
+	intentText := ""
+	switch v := context.(type) {
+	case string:
+		intentText = v
+	case fmt.Stringer:
+		intentText = v.String()
+	default:
+		return nil, nil
+	}
+	intentText = strings.ToLower(intentText)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var applicable []*core.Skill
+	for _, skill := range r.skills {
+		if matchSkill(skill, intentText) {
+			applicable = append(applicable, skill)
+		}
+	}
+	return applicable, nil
 }
 
 // matchSkill checks if a skill is relevant to the given intent text using

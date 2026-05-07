@@ -557,7 +557,23 @@ func (cs *CoordState) UnregisterSubTask(taskID string) {
 // ===========================================================================
 
 func (cs *CoordState) checkLifecycleTransition(target LifecycleState, reason string) {
-	// Log transition attempts — useful for debugging
+	from := cs.LifecycleState
+	if from == target {
+		return
+	}
+	if !from.CanTransitionTo(target) {
+		logger.Warn("invalid lifecycle state transition",
+			"from", from,
+			"to", target,
+			"reason", reason,
+		)
+		return
+	}
+	logger.Info("coordinator lifecycle transition",
+		"from", from,
+		"to", target,
+		"reason", reason,
+	)
 }
 
 func (cs *CoordState) cancelAllSubTasks() {

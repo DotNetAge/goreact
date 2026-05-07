@@ -212,3 +212,11 @@ func WithRuleRegistry(reg core.RuleRegistry) ReactorOption {
 		s.ruleRegistry = reg
 	}
 }
+
+// WithAuditLogger sets an audit logger for security-sensitive event tracking.
+// If not set, audit events are silently discarded.
+func WithAuditLogger(logger core.AuditLogger) ReactorOption {
+	return func(s *reactorSetup) {
+		s.auditLogger = logger
+	}
+}

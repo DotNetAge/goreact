@@ -110,6 +110,10 @@ type SandboxApplier func(cmd *exec.Cmd, config *SandboxConfig) *exec.Cmd
 
 var globalSandboxApplier SandboxApplier
 
+// sandboxExecUnavailable is set to true on macOS if sandbox-exec is broken.
+// On non-darwin platforms it defaults to false.
+var sandboxExecUnavailable bool
+
 func SetGlobalSandboxApplier(applier SandboxApplier) {
 	globalSandboxApplier = applier
 }
