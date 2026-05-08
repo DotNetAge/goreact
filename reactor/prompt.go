@@ -17,6 +17,7 @@ type Prompt struct {
 	// Static sections — rendered once, stable across rounds
 	Identity            string // Agent name, role, description
 	Rules               string // Behavioral rules
+	OutputFormat        string // Expected JSON output format (Thought schema)
 	ToolUsage           string // Tool usage guidelines
 	SkillsCatalog       string // Skills metadata matched to AgentConfig.Skills
 	ExecutionGuidelines string // Caution about risky operations
@@ -39,7 +40,8 @@ func NewDefaultPrompt(name, role, description, introduction string) *Prompt {
 	return &Prompt{
 		Identity: fmt.Sprintf("You are an %s.\n- Name: %s\n- Description: %s\n\n%s",
 			role, name, description, introduction),
-		Rules: DefaultBehavioralRules(),
+		Rules:        DefaultBehavioralRules(),
+		OutputFormat: BuildOutputFormat(),
 	}
 }
 
@@ -62,35 +64,40 @@ func (p *Prompt) ToSectionedMessages(sessionID string, sessionDir string) []goch
 			"## Behavioral Rules\n%s", p.Rules)))
 	}
 
-	// Section 3: Execution guidelines
+	// Section 3: Output format (Thought JSON schema)
+	if p.OutputFormat != "" {
+		msgs = append(msgs, gochatcore.NewSystemMessage(p.OutputFormat))
+	}
+
+	// Section 4: Execution guidelines
 	if p.ExecutionGuidelines != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ExecutionGuidelines))
 	}
 
-	// Section 4: Tool usage guidelines
+	// Section 5: Tool usage guidelines
 	if p.ToolUsage != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToolUsage))
 	}
 
-	// Section 5: Skills catalog + usage guidance
+	// Section 6: Skills catalog + usage guidance
 	if p.SkillsCatalog != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.SkillsCatalog))
 	}
 
-	// Section 6: Agent coordination (agent discovery, delegation, ranking)
+	// Section 7: Agent coordination (agent discovery, delegation, ranking)
 	if p.AgentCoordination != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.AgentCoordination))
 	}
 
-	// Section 7: Tone and style
+	// Section 8: Tone and style
 	if p.ToneAndStyle != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToneAndStyle))
 	}
 
-	// Section 8: Environment info
+	// Section 9: Environment info
 	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo(sessionID, sessionDir)))
 
-	// Section 9: System reminders
+	// Section 10: System reminders
 	sysReminders := p.SystemReminders
 	if sysReminders == "" {
 		sysReminders = BuildSystemReminders()
@@ -275,4 +282,37 @@ func BuildDefaultRules() string {
 - Do not execute destructive operations without user consent.
 - When referencing code, include file_path:line_number.
 - Prefer known facts from memory; when memory is available, use it to ground responses.`
+}
+
+// BuildOutputFormat returns the required JSON output format for the Think phase.
+// The LLM MUST wrap its first response in this JSON schema so the system can interpret
+// whether to answer directly, call tools, clarify, or delegate.
+func BuildOutputFormat() string {
+	return `## Response Format
+Your response MUST begin with a single JSON object following the schema below.
+You MAY wrap it in a markdown code fence (with or without "json" language tag).
+
+### Schema
+{
+  "decision": "<answer | clarify>",
+  "reasoning": "explain your reasoning briefly",
+  "final_answer": "... (only when decision is "answer")",
+  "clarification_question": "... (only when decision is "clarify")",
+  "is_final": true|false
+}
+
+### Decision rules
+- **answer**: You can answer directly without tools. Set "final_answer" to your response.
+- **clarify**: The user's request is ambiguous. Set "clarification_question" to ask for details.
+- **act** (tool calling): If you need to call a tool, use native function calling via the provided tools instead of setting "decision":"act" in JSON. The system will detect native tool calls automatically.
+
+### Examples
+{"decision": "answer", "reasoning": "I know this directly.", "final_answer": "The answer is 42.", "is_final": true}
+
+{"decision": "clarify", "reasoning": "The request is ambiguous.", "clarification_question": "Could you specify which file you want me to read?", "is_final": false}
+
+### Important
+- Your reasoning is for the system, NOT the user. Keep it brief and focused on what you're doing.
+- The "final_answer" is what the user will see — write it in natural language.
+- For tool calls, DO NOT put tool_calls in the JSON. Use the native function calling mechanism instead — call the tool directly through the function interface provided to you.`
 }

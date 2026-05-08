@@ -1,6 +1,7 @@
 package reactor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,13 +16,22 @@ import (
 // The System Prompt and Instructions remain stable across rounds;
 // direction is steered via tool result footers.
 func (r *Reactor) Think(ctx *ReactContext) (int, error) {
+	thinkStart := time.Now()
+	sessionID := r.resolveSessionID(ctx)
+	iter := ctx.CurrentIteration + 1
+	logger.Info("think start",
+		"session_id", sessionID,
+		"iteration", iter,
+		"model", r.config.Model,
+		"input_preview", truncate(ctx.Input, 80),
+	)
+
 	// Pre-Think: restore any previously offloaded results from disk
 	r.restoreOffloadedResults(ctx)
 
 	// Use cached LLM tool definitions — rebuilt only when RegisterTool is called
 	llmTools := r.getLLMTools()
 
-	sessionID := r.resolveSessionID(ctx)
 	sessionDir := ""
 	if r.fileStore != nil {
 		sessionDir = r.fileStore.GetSessionPath(sessionID)
@@ -54,12 +64,38 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	var thought *Thought
 	if len(result.ToolCalls) > 0 {
 		thought = nativeToolCallsToThought(result.ToolCalls)
+		logger.Info("think done",
+			"session_id", sessionID,
+			"iteration", iter,
+			"decision", thought.Decision,
+			"elapsed_ms", time.Since(thinkStart).Milliseconds(),
+			"input_tokens", result.TokenUsage.InputTokens,
+			"output_tokens", result.TokenUsage.OutputTokens,
+			"tool_calls", len(thought.ToolCalls),
+		)
 	} else {
 		var parseErr error
 		thought, parseErr = ParseThinkResponse(content)
 		if parseErr != nil {
+			logger.Error("think parse failed",
+				"session_id", sessionID,
+				"iteration", iter,
+				"elapsed_ms", time.Since(thinkStart).Milliseconds(),
+				"error", parseErr,
+				"raw_preview", truncate(content, 100),
+				"content_length", len(content),
+			)
 			return int(result.TokenUsage.InputTokens), fmt.Errorf("think parse failed: %w", parseErr)
 		}
+		logger.Info("think done",
+			"session_id", sessionID,
+			"iteration", iter,
+			"decision", thought.Decision,
+			"elapsed_ms", time.Since(thinkStart).Milliseconds(),
+			"input_tokens", result.TokenUsage.InputTokens,
+			"output_tokens", result.TokenUsage.OutputTokens,
+			"is_final_answer", thought.IsFinal && thought.Decision == DecisionAnswer,
+		)
 	}
 
 	ctx.LastThought = thought
@@ -103,9 +139,17 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 	}
 
 	start := time.Now()
+	sessionID := r.resolveSessionID(ctx)
+	iter := ctx.CurrentIteration + 1
 
 	switch thought.Decision {
 	case DecisionAnswer:
+		logger.Info("act answer",
+			"session_id", sessionID,
+			"iteration", iter,
+			"elapsed_ms", time.Since(start).Milliseconds(),
+			"answer_preview", truncate(thought.FinalAnswer, 80),
+		)
 		ctx.LastAction = &Action{
 			Type:   ActionTypeAnswer,
 			Result: coalesce(thought.FinalAnswer, thought.Reasoning),
@@ -117,13 +161,29 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 		if q == "" {
 			q = "Could you provide more details so I can better assist you?"
 		}
+		logger.Info("act clarify",
+			"session_id", sessionID,
+			"iteration", iter,
+			"elapsed_ms", time.Since(start).Milliseconds(),
+			"question_preview", truncate(q, 80),
+		)
 		ctx.LastAction = &Action{Type: ActionTypeClarify, Result: q}
 		return nil
 
 	case DecisionAct:
+		logger.Info("act toolcalls",
+			"session_id", sessionID,
+			"iteration", iter,
+			"tool_count", len(thought.ToolCalls),
+		)
 		return r.executeToolCalls(ctx, thought, start)
 
 	default:
+		logger.Info("act default",
+			"session_id", sessionID,
+			"iteration", iter,
+			"decision", thought.Decision,
+		)
 		ctx.LastAction = &Action{
 			Type:   ActionTypeAnswer,
 			Result: coalesce(thought.FinalAnswer, thought.Reasoning),
@@ -167,7 +227,6 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 
 	// Separate sync and async tool calls
 	var syncCalls, asyncCalls []toolCall
-	taskIDcounter := 0
 	for _, c := range calls {
 		isAsync := false
 		if tool, ok := r.toolRegistry.Get(c.name); ok {
@@ -186,13 +245,33 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 	var results []string
 
 	// Phase 1: Execute sync tools SERIALLY (one at a time)
+	sessionID := r.resolveSessionID(ctx)
 	for _, c := range syncCalls {
+		toolStart := time.Now()
+		logger.Info("tool start",
+			"session_id", sessionID,
+			"tool", c.name,
+			"params_preview", truncate(fmt.Sprintf("%v", c.params), 120),
+		)
+		ctx.EmitEvent(core.ActionProgress, fmt.Sprintf("正在执行: %s", c.name))
 		res, err := r.toolExecutor.Execute(ctx.Ctx(), c.name, c.params)
+		toolElapsed := time.Since(toolStart)
 		if err != nil {
+			logger.Error("tool error",
+				"session_id", sessionID,
+				"tool", c.name,
+				"elapsed_ms", toolElapsed.Milliseconds(),
+				"error", err,
+			)
 			action.Error = err
 			action.ErrorMsg = err.Error()
 			results = append(results, fmt.Sprintf("[%s] error: %s", c.name, err.Error()))
 		} else if res.Interaction != nil {
+			logger.Info("tool interaction",
+				"session_id", sessionID,
+				"tool", c.name,
+				"elapsed_ms", toolElapsed.Milliseconds(),
+			)
 			answer, interactErr := r.interactionHandler.HandleInteraction(ctx.Ctx(), res.Interaction)
 			if interactErr != nil {
 				results = append(results, fmt.Sprintf("[%s] interaction error: %s", c.name, interactErr.Error()))
@@ -203,11 +282,20 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 				action.Duration = res.Duration
 			}
 		} else {
+			resultSize := len(res.Result)
+			logger.Info("tool done",
+				"session_id", sessionID,
+				"tool", c.name,
+				"elapsed_ms", toolElapsed.Milliseconds(),
+				"result_size", resultSize,
+				"success", true,
+			)
 			results = append(results, fmt.Sprintf("[%s] %s", c.name, res.Result))
 			if res.Duration > action.Duration {
 				action.Duration = res.Duration
 			}
 		}
+		ctx.EmitEvent(core.ActionProgress, fmt.Sprintf("%s 已完成", c.name))
 	}
 
 	// Phase 2: Execute async tools in PARALLEL (all launched at once)
@@ -215,23 +303,51 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 		type asyncResult struct {
 			name string
 			id   string
+			err  error
 		}
 		asyncCh := make(chan asyncResult, len(asyncCalls))
 
 		for _, c := range asyncCalls {
 			c := c // capture
-			go func() {
-				go r.toolExecutor.Execute(ctx.Ctx(), c.name, c.params)
-				taskIDcounter++
-				taskID := fmt.Sprintf("async-%s-%d", c.name, taskIDcounter)
-				asyncCh <- asyncResult{name: c.name, id: taskID}
-			}()
+			go func(toolName string, params map[string]any) {
+				asyncCtx, cancel := context.WithTimeout(ctx.Ctx(), 5*time.Minute)
+				defer cancel()
+
+				resultCh := make(chan struct{}, 1)
+				var execErr error
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							execErr = fmt.Errorf("tool %q panicked: %v", toolName, r)
+						}
+						resultCh <- struct{}{}
+					}()
+					_, execErr = r.toolExecutor.Execute(asyncCtx, toolName, params)
+				}()
+
+				select {
+				case <-resultCh:
+					taskID := fmt.Sprintf("async-%s-%d", toolName, time.Now().UnixNano())
+					asyncCh <- asyncResult{name: toolName, id: taskID, err: execErr}
+				case <-asyncCtx.Done():
+					taskID := fmt.Sprintf("async-%s-%d", toolName, time.Now().UnixNano())
+					asyncCh <- asyncResult{
+						name: toolName,
+						id:   taskID,
+						err:  fmt.Errorf("async tool %q timed out after 5m", toolName),
+					}
+				}
+			}(c.name, c.params)
 		}
 
 		for i := 0; i < len(asyncCalls); i++ {
 			ar := <-asyncCh
-			results = append(results, fmt.Sprintf("[%s] %s", ar.name,
-				fmt.Sprintf(`{"task_id": "%s", "status": "running"}`, ar.id)))
+			if ar.err != nil {
+				results = append(results, fmt.Sprintf("[%s] error: %s", ar.name, ar.err.Error()))
+			} else {
+				results = append(results, fmt.Sprintf("[%s] %s", ar.name,
+					fmt.Sprintf(`{"task_id": "%s", "status": "running"}`, ar.id)))
+			}
 		}
 	}
 
@@ -251,10 +367,13 @@ func coalesce(s, fallback string) string {
 // In Executor mode: analyzes tool execution results (existing logic).
 // In Coordinator mode: analyzes sub-task completion status, checks if all done.
 func (r *Reactor) Observe(ctx *ReactContext) error {
+	observeStart := time.Now()
 	action := ctx.LastAction
 	if action == nil {
 		return fmt.Errorf("observe called without an action")
 	}
+	sessionID := r.resolveSessionID(ctx)
+	iter := ctx.CurrentIteration + 1
 
 	// ====== Coordinator Mode Branch ======
 	if ctx.Mode == ModeCoordinator && ctx.CoordState != nil {
@@ -268,19 +387,49 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 		if action.Error != nil {
 			obs = NewErrorObservation(action.Error, false)
 			obs.Insights = []string{fmt.Sprintf("Tool %q execution failed", action.Target)}
+			logger.Warn("observe tool error",
+				"session_id", sessionID,
+				"iteration", iter,
+				"tool", action.Target,
+				"elapsed_ms", time.Since(observeStart).Milliseconds(),
+				"error", action.Error,
+			)
 		} else {
 			insights := analyzeActionResult(action.Result)
 			obs = NewSuccessObservation(action.Result, insights...)
+			logger.Info("observe tool success",
+				"session_id", sessionID,
+				"iteration", iter,
+				"tool", action.Target,
+				"elapsed_ms", time.Since(observeStart).Milliseconds(),
+				"insights", len(insights),
+			)
 		}
 
 	case ActionTypeAnswer:
 		obs = NewSuccessObservation(action.Result, "direct answer generated")
+		logger.Info("observe answer",
+			"session_id", sessionID,
+			"iteration", iter,
+			"elapsed_ms", time.Since(observeStart).Milliseconds(),
+		)
 
 	case ActionTypeClarify:
 		obs = NewSuccessObservation(action.Result, "clarification question generated")
+		logger.Info("observe clarify",
+			"session_id", sessionID,
+			"iteration", iter,
+			"elapsed_ms", time.Since(observeStart).Milliseconds(),
+		)
 
 	default:
 		obs = NewSuccessObservation(action.Result)
+		logger.Info("observe default",
+			"session_id", sessionID,
+			"iteration", iter,
+			"action_type", action.Type,
+			"elapsed_ms", time.Since(observeStart).Milliseconds(),
+		)
 	}
 
 	ctx.LastObservation = obs

@@ -485,6 +485,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.cacheMu.Unlock()
 	}
 
+	// Start background cleanup for offloaded files
+	CleanupOffloadedFiles()
+
 	return r
 }
 
@@ -789,6 +792,26 @@ func (r *Reactor) buildResultFromContext(reactCtx *ReactContext, totalTokens int
 	}
 	reactCtx.EmitEvent(core.ExecutionSummary, summary)
 
+	// Emit TaskSummary for non-trivial tasks (more than 1 iteration or at least 1 tool call)
+	taskSummaryData := core.TaskSummaryData{
+		InputTokens:  totalTokens,
+		OutputTokens: 0,
+	}
+	if result.TotalIterations > 1 || summary.ToolCalls > 0 {
+		toolWord := "tool calls"
+		if summary.ToolCalls == 1 {
+			toolWord = "tool call"
+		}
+		taskSummaryData.Summary = fmt.Sprintf(
+			"Completed %d iteration(s) with %d %s in %s. Termination reason: %s.",
+			result.TotalIterations, summary.ToolCalls, toolWord,
+			totalDuration.Round(time.Millisecond), result.TerminationReason,
+		)
+	} else if result.Answer != "" {
+		taskSummaryData.Summary = fmt.Sprintf("Direct answer provided. %s", result.TerminationReason)
+	}
+	reactCtx.EmitEvent(core.TaskSummary, taskSummaryData)
+
 	return result
 }
 
@@ -807,22 +830,46 @@ func (r *Reactor) handlePauseSnapshot(reactCtx *ReactContext) {
 
 func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
 	totalTokens := initialTokens
+	sessionID := r.resolveSessionID(reactCtx)
+	logger.Info("run loop start",
+		"session_id", sessionID,
+		"max_iterations", reactCtx.MaxIterations,
+		"input_preview", truncate(reactCtx.Input, 80),
+	)
 
 	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
 		if terminated, reason := r.CheckTermination(reactCtx); terminated {
 			reactCtx.IsTerminated = true
 			reactCtx.TerminationReason = reason
+			logger.Info("run loop terminated",
+				"session_id", sessionID,
+				"iteration", reactCtx.CurrentIteration+1,
+				"reason", reason,
+			)
 			break
 		}
 
 		cycleStart := time.Now()
+		cycleNum := reactCtx.CurrentIteration + 1
+		logger.Info("cycle start",
+			"session_id", sessionID,
+			"iteration", cycleNum,
+		)
 		r.toolExecutor.ResetCycle()
 
 		tokens, err := r.Think(reactCtx)
 		totalTokens += tokens
+		reactCtx.CurrentInputTokens = tokens
 		if err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("think error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			logger.Error("cycle abort",
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "think",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+				"error", err,
+			)
 			break
 		}
 		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
@@ -836,6 +883,13 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Act(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			logger.Error("cycle abort",
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "act",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+				"error", err,
+			)
 			break
 		}
 
@@ -846,15 +900,36 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Observe(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("observe error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			logger.Error("cycle abort",
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "observe",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+				"error", err,
+			)
 			break
 		}
 		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
 
 		r.persistStep(reactCtx, cycleStart)
 		reactCtx.CurrentIteration++
+
+		logger.Info("cycle end",
+			"session_id", sessionID,
+			"iteration", cycleNum,
+			"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+			"input_tokens", tokens,
+		)
 	}
 
 	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
+	logger.Info("run loop done",
+		"session_id", sessionID,
+		"total_iterations", result.TotalIterations,
+		"total_tokens", totalTokens,
+		"total_elapsed_ms", time.Since(runStart).Milliseconds(),
+		"termination_reason", result.TerminationReason,
+	)
 	r.handlePauseSnapshot(reactCtx)
 
 	return result, nil
@@ -880,9 +955,16 @@ func (r *Reactor) persistStepToStore(ctx context.Context, role, content string) 
 
 // emitActionResult emits ActionStart and ActionResult events for a tool call action.
 func (r *Reactor) emitActionResult(reactCtx *ReactContext) {
+	predictedTokens := reactCtx.CurrentInputTokens
+	if predictedTokens > 0 {
+		predictedTokens = int(float64(predictedTokens) * 1.5)
+	}
+
 	reactCtx.EmitEvent(core.ActionStart, core.ActionStartData{
-		ToolName: reactCtx.LastAction.Target,
-		Params:   reactCtx.LastAction.Params,
+		ToolName:        reactCtx.LastAction.Target,
+		Params:          reactCtx.LastAction.Params,
+		PredictedTokens: predictedTokens,
+		Iteration:       reactCtx.CurrentIteration,
 	})
 	resultData := core.ActionResultData{
 		ToolName: reactCtx.LastAction.Target,
@@ -1042,4 +1124,12 @@ func (r *Reactor) handleCoordinatorControl(cs *CoordState, cmd *core.ControlComm
 	default:
 		logger.Info("unknown coordinator control command", "action", cmd.Action)
 	}
+}
+
+// wrapError wraps an error with context information.
+func wrapError(err error, format string, args ...any) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), err)
 }

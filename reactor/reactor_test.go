@@ -784,6 +784,120 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 }
 
+func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
+	t.Run("Chinese markdown answer should be parsed as DecisionAnswer", func(t *testing.T) {
+		chineseAnswer := `根据最新的搜索结果，OpenAI 近期在模型发布、基础设施合作以及商业化方面都有重大进展，以下是核心动态总结：
+
+### 1. 最新模型发布
+* **GPT-5.5 发布**：OpenAI 在 2026 年 4 月宣布了最新模型 **GPT-5.5**。
+
+### 2. 基础设施合作
+* 与 NVIDIA 达成战略合作`
+
+		thought, err := ParseThinkResponse(chineseAnswer)
+		if err != nil {
+			t.Fatalf("expected success for direct text answer, got error: %v", err)
+		}
+		if thought.Decision != DecisionAnswer {
+			t.Errorf("expected DecisionAnswer, got %s", thought.Decision)
+		}
+		if !thought.IsFinal {
+			t.Error("expected IsFinal to be true for direct answer")
+		}
+		if !strings.Contains(thought.FinalAnswer, "OpenAI") {
+			t.Errorf("expected FinalAnswer to contain 'OpenAI', got: %s", truncate(thought.FinalAnswer, 100))
+		}
+	})
+
+	t.Run("English plain text answer should be parsed as DecisionAnswer", func(t *testing.T) {
+		englishAnswer := `Based on the search results, here's a summary of OpenAI's latest developments:
+
+## 1. Model Releases
+- GPT-5.5 announced in April 2026
+
+## 2. Business Updates
+- Revenue reached $4.3B in H1 2025`
+
+		thought, err := ParseThinkResponse(englishAnswer)
+		if err != nil {
+			t.Fatalf("expected success for English answer, got error: %v", err)
+		}
+		if thought.Decision != DecisionAnswer {
+			t.Errorf("expected DecisionAnswer, got %s", thought.Decision)
+		}
+	})
+
+	t.Run("Short non-answer content should return error", func(t *testing.T) {
+		shortContent := "hello"
+		_, err := ParseThinkResponse(shortContent)
+		if err == nil {
+			t.Error("expected error for short non-JSON content")
+		}
+	})
+
+	t.Run("JSON-like but invalid should return error", func(t *testing.T) {
+		jsonLike := `{decision: answer, malformed`
+		_, err := ParseThinkResponse(jsonLike)
+		if err == nil {
+			t.Error("expected error for malformed JSON-like content")
+		}
+	})
+}
+
+func TestLooksLikeDirectAnswer(t *testing.T) {
+	testCases := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "Chinese summary with 根据关键词",
+			content:  "根据最新的搜索结果，以下是总结...",
+			expected: true,
+		},
+		{
+			name:     "English with based on",
+			content:  "Based on the search results, here is the answer...",
+			expected: true,
+		},
+		{
+			name:     "Markdown heading",
+			content:  "## Summary\n\nThis is a detailed response about the topic.",
+			expected: true,
+		},
+		{
+			name:     "Long text without keywords (>50 chars)",
+			content:  strings.Repeat("This is a long enough response that should be considered as an answer. ", 3),
+			expected: true,
+		},
+		{
+			name:     "Too short",
+			content:  "short",
+			expected: false,
+		},
+		{
+			name:     "Starts with brace (JSON-like)",
+			content:  `{not valid json but starts with brace`,
+			expected: false,
+		},
+		{
+			name:     "Only special characters",
+			content:  "!@#$%^&*()",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := looksLikeDirectAnswer(tc.content)
+			if result != tc.expected {
+				t.Errorf("looksLikeDirectAnswer() = %v, expected %v for content: %q",
+					result, tc.expected, truncate(tc.content, 50))
+			}
+		})
+	}
+}
+
 // ============================================================================
 // Snapshot — JSON Serialization Roundtrip
 // ============================================================================

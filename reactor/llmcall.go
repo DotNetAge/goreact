@@ -326,9 +326,22 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	}
 
 	// 5. Build request and stream
+	llmStart := time.Now()
+	logger.Info("llm call start",
+		"session_id", input.SessionID,
+		"model", c.modelName,
+		"input_tokens", preciseInput,
+		"tools", len(input.Tools),
+	)
 	builder := c.buildClient(messages, input.Tools)
 	stream, err := builder.GetStreamFor(c.clientType)
 	if err != nil {
+		logger.Error("llm call failed",
+			"session_id", input.SessionID,
+			"model", c.modelName,
+			"elapsed_ms", time.Since(llmStart).Milliseconds(),
+			"error", err,
+		)
 		return c.buildErrorResult(ctx, input, fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
 	}
 	defer stream.Close()
@@ -349,12 +362,34 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 		}
 	}
 
+	logger.Info("llm call end",
+		"session_id", input.SessionID,
+		"model", c.modelName,
+		"elapsed_ms", time.Since(llmStart).Milliseconds(),
+		"output_chars", contentBuf.Len(),
+	)
+
+	// Collect native tool calls accumulated from streaming deltas.
+	// The Stream accumulates tool call deltas internally during Next() iteration
+	// and finalizes them when EventDone is received (finish_reason="tool_calls").
+	streamToolCalls := stream.ToolCalls()
+	if len(streamToolCalls) > 0 {
+		toolCalls = make([]gochatcore.ToolCall, len(streamToolCalls))
+		for i, tc := range streamToolCalls {
+			toolCalls[i] = gochatcore.ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			}
+		}
+	}
+
 	outputTokens := 0
 	if usage := stream.Usage(); usage != nil && usage.TotalTokens > 0 {
 		outputTokens = usage.TotalTokens
 	}
 
-	return c.recordResult(ctx, input, contentBuf.String(), preciseInput, outputTokens, messages, nil)
+	return c.recordResult(ctx, input, contentBuf.String(), preciseInput, outputTokens, messages, toolCalls)
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +540,9 @@ func (c *LLMCaller) buildClient(messages []gochatcore.Message, tools []gochatcor
 		Model(c.modelName).
 		Temperature(c.temperature).
 		MaxTokens(c.maxTokens).
-		EnableThinking(true)
+		EnableThinking(true).
+		ParallelToolCalls(true).
+		ToolChoice("auto")
 
 	if c.topP > 0 {
 		builder = builder.TopP(c.topP)

@@ -61,11 +61,28 @@ func stripJSONWrappers(s string) string {
 }
 
 // ParseThinkResponse parses an LLM response string into a Thought struct.
+// If the content is not valid JSON (e.g., LLM returned a direct text answer),
+// it will be automatically wrapped as a DecisionAnswer Thought.
 func ParseThinkResponse(content string) (*Thought, error) {
 	content = stripJSONWrappers(content)
 
 	var thought Thought
 	if err := json.Unmarshal([]byte(content), &thought); err != nil {
+		// Check if content looks like a direct answer (non-empty, substantial text)
+		trimmed := strings.TrimSpace(content)
+		if len(trimmed) > 10 && looksLikeDirectAnswer(trimmed) {
+			logger.Info("parsing non-JSON response as direct answer",
+				"content_length", len(trimmed),
+				"preview", truncate(trimmed, 100),
+			)
+			return &Thought{
+				Decision:    DecisionAnswer,
+				Reasoning:   "LLM returned direct text answer (not JSON)",
+				FinalAnswer: trimmed,
+				IsFinal:     true,
+				Timestamp:   time.Now(),
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to parse thought JSON: %w\nraw: %s", err, truncate(content, 200))
 	}
 
@@ -92,4 +109,48 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+// looksLikeDirectAnswer checks if the content appears to be a direct text answer
+// rather than malformed JSON or an error message.
+// It uses heuristics: length > 10 chars, contains natural language patterns,
+// doesn't look like JSON or code.
+func looksLikeDirectAnswer(content string) bool {
+	// Must have substantial content
+	if len(content) <= 10 {
+		return false
+	}
+
+	// Should not start with JSON-like patterns
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+
+	// Should not be just whitespace or special characters
+	hasLetter := false
+	for _, r := range content {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= 0x4e00 && r <= 0x9fff) {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return false
+	}
+
+	// Should contain common answer patterns (optional heuristic)
+	answerPatterns := []string{
+		"根据", "以下是", "总结", "回答", "结果", "结论",
+		"based on", "here is", "in summary", "the answer", "result",
+		"## ", "### ", "**", "* ",
+	}
+	for _, pattern := range answerPatterns {
+		if strings.Contains(strings.ToLower(content), strings.ToLower(pattern)) {
+			return true
+		}
+	}
+
+	// If content is long enough (>50 chars) and has letters, likely an answer
+	return len(content) > 50
 }

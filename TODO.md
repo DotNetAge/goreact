@@ -8,15 +8,15 @@ GoReact = Agent Operating System。所有待办事项基于此定位组织。
 
 ## P0: 编译通过
 
-- [ ] 修复剩余编译错误（coordination.go 决策路径、RunResult.Intent 引用等）
-- [ ] 修复测试文件中的编译错误
-- [ ] go vet ./... 无错误
+- [x] 修复剩余编译错误（coordination.go 决策路径、RunResult.Intent 引用等）
+- [x] 修复测试文件中的编译错误
+- [x] go vet ./... 无错误
 
 ## P1: 核心功能
 
 ### Reactor 内核
 
-- [ ] **Think prompt 引导词** — think_prompt.tmpl 的 interaction_principles 中增加多 Agent 协作引导
+- [x] **Think prompt 引导词** — think_prompt.tmpl 的 interaction_principles 中增加多 Agent 协作引导
 - [x] **ToolContext 注入** — EventBus + ResultStore 通过 context 传递给工具
 - [x] **Act 批量并行** — 同步工具等结果，异步工具 go goroutine
 - [x] **ToolInfo.IsAsync** — 同步/异步标识
@@ -28,30 +28,30 @@ GoReact = Agent Operating System。所有待办事项基于此定位组织。
 
 - [x] **delegate 工具** — 异步创建子 Agent，共享 EventBus
 - [x] **collect_results 工具** — 阻塞等待异步结果
-- [ ] **find_agent 工具** — 按领域查找已注册的专家 Agent
-- [ ] **rank 工具** — 记录子 Agent 绩效评分
+- [x] **find_agent 工具** — 按领域查找已注册的专家 Agent
+- [x] **rank 工具** — 记录子 Agent 绩效评分
 
 ### Prompt 模板
 
-- [ ] 所有工具填充 ToolInfo.Prompt（从 Claude 抄写英文原文）
-- [ ] think_prompt.tmpl 引导词加入
-- [ ] default_system_prompt.tmpl 适配 v2 交互原则
+- [x] 所有工具填充 ToolInfo.Prompt（从 Claude 抄写英文原文）
+- [x] think_prompt.tmpl 引导词加入
+- [x] default_system_prompt.tmpl 适配 v2 交互原则
 
 ## P2: 完善优化
 
-- [ ] **子 Agent 流式事件透传** — 共享 EventBus 到达客户端
-- [ ] **create_agent 工具** — 显式创建具有特定职责的 Agent
-- [ ] **query_agents 工具** — 查询所有可用 Agent
-- [ ] **终止条件可扩展** — 通过 RuleRegistry 注册
-- [ ] **增量 NativeTools schema** — 记录已补 schema 的工具列表
-- [ ] **结果卸载实现** — Observe 检测超大输出自动写入文件
+- [x] **子 Agent 流式事件透传** — 共享 EventBus 到达客户端
+- [x] **create_agent 工具** — 显式创建具有特定职责的 Agent
+- [x] **query_agents 工具** — 查询所有可用 Agent
+- [x] **终止条件可扩展** — 通过 RuleRegistry 注册
+- [x] **增量 NativeTools schema** — 记录已补 schema 的工具列表
+- [x] **结果卸载实现** — Observe 检测超大输出自动写入文件
 
 ## P3: 迁移与清理
 
-- [ ] 旧 Task/Skill/SubAgent 工具迁移到 delegate/collect_results 模式
-- [ ] 废弃 core/orchestrator.go 中的 AgentOrchestrator 接口
-- [ ] 删除无用的 coordination.go 协调器代码
-- [ ] RunResult 移除 Intent、ClarificationNeeded 等遗留字段
+- [x] 旧 Task/Skill/SubAgent 工具迁移到 delegate/collect_results 模式
+- [x] 废弃 core/orchestrator.go 中的 AgentOrchestrator 接口
+- [x] 删除无用的 coordination.go 协调器代码
+- [x] RunResult 移除 Intent、ClarificationNeeded 等遗留字段
 
 ## 设计文档清单
 

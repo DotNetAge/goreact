@@ -368,7 +368,11 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (any
 		if lastErr != nil {
 			return nil, fmt.Errorf("all search adapters failed: %w", lastErr)
 		}
-		return fmt.Sprintf("No results found for query: %q", query), nil
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("search timed out after %v (query: %q). The search engine may be rate-limiting or experiencing issues. Try again later or simplify your query.",
+				15*time.Second, query)
+		}
+		return fmt.Sprintf("No results found for query: %q\n\nPossible reasons:\n- Query too specific or contains typos\n- Search engine rate limiting or temporary issues\n- Network connectivity problems\n\nSuggestion: Try simplifying the query or search again later.", query), nil
 	}
 
 	// Cache results
