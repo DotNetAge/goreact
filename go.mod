@@ -1,6 +1,6 @@
 module github.com/DotNetAge/goreact
 
-go 1.26
+go 1.25
 
 replace (
 	github.com/DotNetAge/gochat => ../gochat

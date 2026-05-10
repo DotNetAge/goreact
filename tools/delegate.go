@@ -70,6 +70,8 @@ func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any,
 		return nil, fmt.Errorf("task is required")
 	}
 
+	logger := getLogger(ctx)
+
 	tc := core.GetToolContext(ctx)
 	if tc == nil || tc.EmitEvent == nil {
 		return nil, fmt.Errorf("delegate tool requires ToolContext with EventBus")
@@ -77,6 +79,11 @@ func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any,
 	if t.spawn == nil {
 		return nil, fmt.Errorf("delegate tool: SpawnFunc not configured")
 	}
+
+	logger.Info("delegating task to sub-agent",
+		"agent_name", agentName,
+		"task", truncateForLog(task, 100),
+	)
 
 	// Use unified task ID format
 	taskID := fmt.Sprintf("task-%d", t.counter.Add(1))
@@ -123,9 +130,20 @@ func (t *DelegateTool) Execute(ctx context.Context, params map[string]any) (any,
 		if err != nil {
 			localTask.Status = TaskFailed
 			localTask.Error = err.Error()
+			logger.Error("sub-agent task failed", err,
+				"agent_name", agentName,
+				"task_id", taskID,
+				"elapsed_ms", completedAt.Sub(*localTask.StartedAt).Milliseconds(),
+			)
 		} else {
 			localTask.Status = TaskCompleted
 			localTask.Result = result
+			logger.Info("sub-agent task completed",
+				"agent_name", agentName,
+				"task_id", taskID,
+				"elapsed_ms", completedAt.Sub(*localTask.StartedAt).Milliseconds(),
+				"result_len", len(result),
+			)
 		}
 		if tc.SessionID != "" && tc.KVStore != nil {
 			_ = UpdateTask(ctx, tc.SessionID, localTask)

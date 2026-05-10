@@ -35,6 +35,7 @@ type toolExecutorConfig struct {
 	kvStore           KVStore
 	fileStore         FileStore
 	sessionID         string
+	logger            Logger // Unified logging interface
 }
 
 type ExecutorOption func(*toolExecutorConfig)
@@ -49,6 +50,10 @@ func WithPreHooks(hooks ...Hook) ExecutorOption {
 
 func WithPostHooks(hooks ...Hook) ExecutorOption {
 	return func(c *toolExecutorConfig) { c.postHooks = hooks }
+}
+
+func WithLogger(logger Logger) ExecutorOption {
+	return func(c *toolExecutorConfig) { c.logger = logger }
 }
 
 func WithResultLimits(limits ToolResultLimits) ExecutorOption {
@@ -197,6 +202,7 @@ func (e *defaultToolExecutor) Execute(ctx context.Context, name string, params m
 		KVStore:     e.cfg.kvStore,
 		FileStore:   e.cfg.fileStore,
 		SessionID:   e.cfg.sessionID,
+		Logger:      e.cfg.logger,
 	}
 	execCtx := WithToolContext(ctx, toolCtx)
 

@@ -2,7 +2,6 @@ package goreact
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +23,8 @@ func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	logger := core.DefaultLogger()
+
 	registry := &AgentRegistry{
 		path:   absPath,
 		agents: make(map[string]*core.AgentConfig),
@@ -42,7 +43,9 @@ func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
 			filePath := filepath.Join(absPath, entry.Name())
 			agent, err := parseAgentFile(filePath)
 			if err != nil {
-				slog.Warn("failed to parse agent file, skipping", "path", filePath, "error", err)
+				logger.Warn("failed to parse agent file, skipping",
+					"path", filePath,
+					"error", err)
 				continue
 			}
 			registry.agents[agent.Name] = agent

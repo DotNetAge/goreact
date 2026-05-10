@@ -362,6 +362,7 @@ type CoordState struct {
 	SubTaskResults map[string]*core.TaskResultEvent // Received results keyed by task ID
 	DispatchedAt time.Time          // When coordination started
 	GlobalTimer  *time.Timer        // Overall timeout timer
+	Logger       core.Logger        // Unified logging interface
 
 	// ====== Lifecycle control fields ======
 	mu              sync.Mutex       // Protects lifecycle state transitions
@@ -377,7 +378,7 @@ type CoordState struct {
 }
 
 // NewCoordState creates a new CoordState for coordinator mode.
-func NewCoordState(parentTaskID string, overallTimeout time.Duration) *CoordState {
+func NewCoordState(parentTaskID string, overallTimeout time.Duration, logger core.Logger) *CoordState {
 	ctx, cancel := context.WithCancel(context.Background())
 	cs := &CoordState{
 		ParentTaskID:    parentTaskID,
@@ -390,6 +391,7 @@ func NewCoordState(parentTaskID string, overallTimeout time.Duration) *CoordStat
 		SubTaskCancels:  make(map[string]context.CancelFunc),
 		LifecycleState:  LifecycleRunning,
 		ControlChan:     make(chan *core.ControlCommand, 8),
+		Logger:          logger,
 	}
 
 	if overallTimeout > 0 {
@@ -588,14 +590,14 @@ func (cs *CoordState) checkLifecycleTransition(target LifecycleState, reason str
 		return
 	}
 	if !from.CanTransitionTo(target) {
-		logger.Warn("invalid lifecycle state transition",
+		cs.Logger.Warn("invalid lifecycle state transition",
 			"from", from,
 			"to", target,
 			"reason", reason,
 		)
 		return
 	}
-	logger.Info("coordinator lifecycle transition",
+	cs.Logger.Info("coordinator lifecycle transition",
 		"from", from,
 		"to", target,
 		"reason", reason,

@@ -134,6 +134,9 @@ type agentSetup struct {
 	// Behavior rules
 	ruleRegistry core.RuleRegistry
 
+	// Unified logging interface (injected from external)
+	logger core.Logger
+
 	// Unified Prompt (if nil, built from config defaults)
 	prompt *reactor.Prompt
 
@@ -300,6 +303,27 @@ func WithRuleRegistry(reg core.RuleRegistry) AgentOption {
 	}
 }
 
+// WithLogger sets a unified logging interface for the Agent and all its internal components
+// (Reactor, ToolExecutor, Tools). This enables external log management (Zap, Logrus, etc.).
+//
+// Example (MindX integration):
+//
+//	import "github.com/DotNetAge/mindx/pkg/logging"
+//
+//	zapLogger := logging.DefaultZapLogger(&logging.ZapConfig{
+//	    Filename: "logs/app.log",
+//	    Console: true,
+//	})
+//	agent := goreact.NewAgent(
+//	    goreact.WithModel(model),
+//	    goreact.WithLogger(zapLogger),  // ← All logs go through Zap
+//	)
+func WithLogger(logger core.Logger) AgentOption {
+	return func(s *agentSetup) {
+		s.logger = logger
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Constructors
 // ---------------------------------------------------------------------------
@@ -430,6 +454,10 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 
 	// Build ReactorConfig from ModelConfig — align all generation parameters
 	reactorConfig := buildReactorConfig(model, config.Introduction)
+
+	if setup.logger != nil {
+		reactorConfig.Logger = setup.logger
+	}
 
 	// Build default Prompt if none provided
 	if setup.prompt == nil {

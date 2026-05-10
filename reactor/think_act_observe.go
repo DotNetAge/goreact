@@ -19,7 +19,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	thinkStart := time.Now()
 	sessionID := r.resolveSessionID(ctx)
 	iter := ctx.CurrentIteration + 1
-	logger.Info("think start",
+	r.getLogger().Info("think start",
 		"session_id", sessionID,
 		"iteration", iter,
 		"model", r.config.Model,
@@ -44,6 +44,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	}
 
 	callInput := CallInput{
+		SessionID:            sessionID,
 		SystemPromptSections: sections,
 		UserMessage:          ctx.Input,
 		History:              ctx.ConversationHistory,
@@ -56,6 +57,16 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		ctx.EmitEvent(core.ThinkingDelta, chunk)
 	})
 
+	// LLM 调用本身失败（网络、认证、超时等），直接返回错误，避免将错误文本送入 ParseThinkResponse。
+	if result.Error != nil {
+		r.getLogger().Error("llm call failed in think", result.Error,
+			"session_id", sessionID,
+			"iteration", iter,
+			"elapsed_ms", time.Since(thinkStart).Milliseconds(),
+		)
+		return int(result.TokenUsage.InputTokens), fmt.Errorf("llm call failed: %w", result.Error)
+	}
+
 	content := contentBuf.String()
 	if content == "" {
 		content = result.Content
@@ -64,7 +75,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	var thought *Thought
 	if len(result.ToolCalls) > 0 {
 		thought = nativeToolCallsToThought(result.ToolCalls)
-		logger.Info("think done",
+		r.getLogger().Info("think done",
 			"session_id", sessionID,
 			"iteration", iter,
 			"decision", thought.Decision,
@@ -77,17 +88,16 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		var parseErr error
 		thought, parseErr = ParseThinkResponse(content)
 		if parseErr != nil {
-			logger.Error("think parse failed",
+			r.getLogger().Error("think parse failed", parseErr,
 				"session_id", sessionID,
 				"iteration", iter,
 				"elapsed_ms", time.Since(thinkStart).Milliseconds(),
-				"error", parseErr,
 				"raw_preview", truncate(content, 100),
 				"content_length", len(content),
 			)
 			return int(result.TokenUsage.InputTokens), fmt.Errorf("think parse failed: %w", parseErr)
 		}
-		logger.Info("think done",
+		r.getLogger().Info("think done",
 			"session_id", sessionID,
 			"iteration", iter,
 			"decision", thought.Decision,
@@ -144,7 +154,7 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 
 	switch thought.Decision {
 	case DecisionAnswer:
-		logger.Info("act answer",
+		r.getLogger().Info("act answer",
 			"session_id", sessionID,
 			"iteration", iter,
 			"elapsed_ms", time.Since(start).Milliseconds(),
@@ -161,7 +171,7 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 		if q == "" {
 			q = "Could you provide more details so I can better assist you?"
 		}
-		logger.Info("act clarify",
+		r.getLogger().Info("act clarify",
 			"session_id", sessionID,
 			"iteration", iter,
 			"elapsed_ms", time.Since(start).Milliseconds(),
@@ -171,7 +181,7 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 		return nil
 
 	case DecisionAct:
-		logger.Info("act toolcalls",
+		r.getLogger().Info("act toolcalls",
 			"session_id", sessionID,
 			"iteration", iter,
 			"tool_count", len(thought.ToolCalls),
@@ -179,7 +189,7 @@ func (r *Reactor) Act(ctx *ReactContext) error {
 		return r.executeToolCalls(ctx, thought, start)
 
 	default:
-		logger.Info("act default",
+		r.getLogger().Info("act default",
 			"session_id", sessionID,
 			"iteration", iter,
 			"decision", thought.Decision,
@@ -248,7 +258,7 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 	sessionID := r.resolveSessionID(ctx)
 	for _, c := range syncCalls {
 		toolStart := time.Now()
-		logger.Info("tool start",
+		r.getLogger().Info("tool start",
 			"session_id", sessionID,
 			"tool", c.name,
 			"params_preview", truncate(fmt.Sprintf("%v", c.params), 120),
@@ -257,17 +267,16 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 		res, err := r.toolExecutor.Execute(ctx.Ctx(), c.name, c.params)
 		toolElapsed := time.Since(toolStart)
 		if err != nil {
-			logger.Error("tool error",
+			r.getLogger().Error("tool error", err,
 				"session_id", sessionID,
 				"tool", c.name,
 				"elapsed_ms", toolElapsed.Milliseconds(),
-				"error", err,
 			)
 			action.Error = err
 			action.ErrorMsg = err.Error()
 			results = append(results, fmt.Sprintf("[%s] error: %s", c.name, err.Error()))
 		} else if res.Interaction != nil {
-			logger.Info("tool interaction",
+			r.getLogger().Info("tool interaction",
 				"session_id", sessionID,
 				"tool", c.name,
 				"elapsed_ms", toolElapsed.Milliseconds(),
@@ -283,7 +292,7 @@ func (r *Reactor) executeToolCalls(ctx *ReactContext, thought *Thought, start ti
 			}
 		} else {
 			resultSize := len(res.Result)
-			logger.Info("tool done",
+			r.getLogger().Info("tool done",
 				"session_id", sessionID,
 				"tool", c.name,
 				"elapsed_ms", toolElapsed.Milliseconds(),
@@ -387,7 +396,7 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 		if action.Error != nil {
 			obs = NewErrorObservation(action.Error, false)
 			obs.Insights = []string{fmt.Sprintf("Tool %q execution failed", action.Target)}
-			logger.Warn("observe tool error",
+			r.getLogger().Warn("observe tool error",
 				"session_id", sessionID,
 				"iteration", iter,
 				"tool", action.Target,
@@ -397,7 +406,7 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 		} else {
 			insights := analyzeActionResult(action.Result)
 			obs = NewSuccessObservation(action.Result, insights...)
-			logger.Info("observe tool success",
+			r.getLogger().Info("observe tool success",
 				"session_id", sessionID,
 				"iteration", iter,
 				"tool", action.Target,
@@ -408,7 +417,7 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 
 	case ActionTypeAnswer:
 		obs = NewSuccessObservation(action.Result, "direct answer generated")
-		logger.Info("observe answer",
+		r.getLogger().Info("observe answer",
 			"session_id", sessionID,
 			"iteration", iter,
 			"elapsed_ms", time.Since(observeStart).Milliseconds(),
@@ -416,7 +425,7 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 
 	case ActionTypeClarify:
 		obs = NewSuccessObservation(action.Result, "clarification question generated")
-		logger.Info("observe clarify",
+		r.getLogger().Info("observe clarify",
 			"session_id", sessionID,
 			"iteration", iter,
 			"elapsed_ms", time.Since(observeStart).Milliseconds(),
@@ -424,7 +433,7 @@ func (r *Reactor) Observe(ctx *ReactContext) error {
 
 	default:
 		obs = NewSuccessObservation(action.Result)
-		logger.Info("observe default",
+		r.getLogger().Info("observe default",
 			"session_id", sessionID,
 			"iteration", iter,
 			"action_type", action.Type,
@@ -451,7 +460,7 @@ func (r *Reactor) observeCoordinator(ctx *ReactContext) error {
 	failed := tp.FailedCount()
 	pending := tp.PendingCount()
 
-	logger.Info("coordinator observe",
+	r.getLogger().Info("coordinator observe",
 		"total", total, "completed", completed, "failed", failed, "pending", pending)
 
 	var obs *Observation

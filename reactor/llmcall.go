@@ -33,6 +33,7 @@ type CallResult struct {
 	Content    string
 	ToolCalls  []gochatcore.ToolCall // native function call results (non-streaming) or nil
 	TokenUsage core.TokenUsage
+	Error      error // non-nil when the LLM call itself failed (network, auth, timeout, etc.)
 }
 
 // StreamChunkCallback is called for each content chunk during streaming.
@@ -69,6 +70,7 @@ type LLMCaller struct {
 	contextWindow  *core.ContextWindow
 	slideConfig    core.SlideConfig
 	sessionStore   core.SessionStore
+	logger           core.Logger // Unified logging interface
 
 	// Token usage records for this session
 	records []core.TokenUsage
@@ -91,6 +93,7 @@ type LLMCallerConfig struct {
 	FrequencyPenalty float64
 	MaxTokens        int
 	ClientType       gochat.ClientType
+	Logger           core.Logger // Unified logging interface
 }
 
 // NewLLMCaller creates an LLMCaller with the given configuration.
@@ -120,6 +123,7 @@ func NewLLMCaller(
 		tokenEstimator:   tokenEstimator,
 		slideConfig:      core.DefaultSlideConfig,
 		sessionStore:     sessionStore,
+		logger:           cfg.Logger,
 		records:          make([]core.TokenUsage, 0),
 	}
 	for _, opt := range opts {
@@ -327,7 +331,7 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 
 	// 5. Build request and stream
 	llmStart := time.Now()
-	logger.Info("llm call start",
+	c.logger.Info("llm call start",
 		"session_id", input.SessionID,
 		"model", c.modelName,
 		"input_tokens", preciseInput,
@@ -336,11 +340,10 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	builder := c.buildClient(messages, input.Tools)
 	stream, err := builder.GetStreamFor(c.clientType)
 	if err != nil {
-		logger.Error("llm call failed",
+		c.logger.Error("llm call failed", err,
 			"session_id", input.SessionID,
 			"model", c.modelName,
 			"elapsed_ms", time.Since(llmStart).Milliseconds(),
-			"error", err,
 		)
 		return c.buildErrorResult(ctx, input, fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
 	}
@@ -362,7 +365,7 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 		}
 	}
 
-	logger.Info("llm call end",
+	c.logger.Info("llm call end",
 		"session_id", input.SessionID,
 		"model", c.modelName,
 		"elapsed_ms", time.Since(llmStart).Milliseconds(),
@@ -490,7 +493,7 @@ func (c *LLMCaller) doSlide(input CallInput) {
 	slided := cw.Slide(sc, estimateFn)
 
 	if len(slided.Messages) > 0 {
-		logger.Warn("context window slid messages",
+		c.logger.Warn("context window slid messages",
 			"session_id", cw.SessionID,
 			"evicted", len(slided.Messages),
 			"tokens_freed", slided.TokenCount,
@@ -635,7 +638,7 @@ func (c *LLMCaller) recordResult(ctx context.Context, input CallInput, content s
 	}
 	if c.sessionStore != nil && sessionID != "" {
 		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
-			logger.Warn("failed to persist token usage",
+			c.logger.Warn("failed to persist token usage",
 				"session_id", sessionID,
 				"error", persistErr,
 			)
@@ -652,6 +655,7 @@ func (c *LLMCaller) recordResult(ctx context.Context, input CallInput, content s
 // recordPartialResult records a partial result (e.g., streaming error after partial content).
 func (c *LLMCaller) recordPartialResult(ctx context.Context, input CallInput, content string, inputTokens int, err error) CallResult {
 	result := c.recordResult(ctx, input, content, inputTokens, err, nil, nil)
+	result.Error = err
 	return result
 }
 
@@ -692,7 +696,7 @@ func (c *LLMCaller) buildErrorResult(ctx context.Context, input CallInput, err e
 	}
 	if c.sessionStore != nil && sessionID != "" {
 		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
-			logger.Warn("failed to persist token usage on error",
+			c.logger.Warn("failed to persist token usage on error",
 				"session_id", sessionID,
 				"error", persistErr,
 			)
@@ -700,9 +704,10 @@ func (c *LLMCaller) buildErrorResult(ctx context.Context, input CallInput, err e
 	}
 
 	return CallResult{
-		Content:   fmt.Sprintf("[llmcaller error] %v", err),
-		ToolCalls: nil,
+		Content:    fmt.Sprintf("[llmcaller error] %v", err),
+		ToolCalls:  nil,
 		TokenUsage: usage,
+		Error:      err,
 	}
 }
 

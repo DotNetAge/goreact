@@ -15,6 +15,7 @@ type ToolContext struct {
 	KVStore     KVStore
 	FileStore   FileStore
 	SessionID   string
+	Logger      Logger // Unified logging interface, injected from Agent/ReActor
 }
 
 // WithToolContext injects a ToolContext into the given context.

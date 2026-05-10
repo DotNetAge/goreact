@@ -144,7 +144,13 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 		return nil, fmt.Errorf("empty command parameter")
 	}
 
+	logger := getLogger(ctx)
+
 	if len(command) > 100000 {
+		logger.Warn("command exceeds maximum length",
+			"length", len(command),
+			"max", 100000,
+		)
 		return nil, fmt.Errorf("command exceeds maximum length of 100000 characters")
 	}
 
@@ -198,11 +204,19 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 
 	ensureTempDir(t.sandboxConfig.TempDir)
 
+	logger.Info("executing bash command",
+		"command", truncateForLog(command, 200),
+		"session_id", sessionID,
+		"timeout_ms", timeoutMs,
+	)
+
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	startTime := time.Now()
 	err := cmd.Run()
+	elapsed := time.Since(startTime)
 
 	stdoutStr := stdout.String()
 	stderrStr := stderr.String()
@@ -234,6 +248,19 @@ func (t *BashTool) Execute(ctx context.Context, params map[string]any) (any, err
 	result["success"] = result["exit_code"] == 0
 	if !result["success"].(bool) {
 		result["error"] = fmt.Sprintf("Command failed with exit code %v", result["exit_code"])
+		logger.Warn("bash command failed",
+			"exit_code", result["exit_code"],
+			"elapsed_ms", elapsed.Milliseconds(),
+			"stderr_len", len(stderrStr),
+			"session_id", sessionID,
+		)
+	} else {
+		logger.Debug("bash command completed",
+			"exit_code", 0,
+			"elapsed_ms", elapsed.Milliseconds(),
+			"stdout_len", len(stdoutStr),
+			"session_id", sessionID,
+		)
 	}
 
 	return result, nil
@@ -246,6 +273,14 @@ func truncateOutput(s string, maxRunes int) string {
 		return s
 	}
 	return string(runes[:maxRunes]) + "\n... [output truncated due to size] ..."
+}
+
+// truncateForLog truncates a string for safe logging (avoids logging huge commands).
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // dangerousPatterns defines commands that are too destructive to allow even with permission.

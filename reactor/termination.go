@@ -2,64 +2,63 @@ package reactor
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 )
 
 // CheckTermination evaluates whether the T-A-O loop should stop.
 func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 	if ctx.CurrentIteration >= ctx.MaxIterations {
-		slog.Debug("termination: max iterations reached",
+		r.getLogger().Debug("termination: max iterations reached",
 			"iteration", ctx.CurrentIteration,
 			"max", ctx.MaxIterations)
 		return true, "reached max iterations"
 	}
 
 	if ctx.Ctx().Err() != nil {
-		slog.Debug("termination: context cancelled",
+		r.getLogger().Debug("termination: context cancelled",
 			"error", ctx.Ctx().Err())
 		return true, "request cancelled"
 	}
 
 	if ctx.LastObservation != nil && ctx.LastObservation.Error != "" && !ctx.LastObservation.ShouldRetry {
 		if isToolErrorIrrecoverable(ctx.LastObservation) {
-			slog.Warn("termination: irrecoverable tool error",
+			r.getLogger().Warn("termination: irrecoverable tool error",
 				"error", ctx.LastObservation.Error)
 			return true, "tool error: irrecoverable"
 		}
 	}
 
 	if ctx.LastThought != nil && ctx.LastThought.IsFinal {
-		slog.Debug("termination: thinker produced final answer")
+		r.getLogger().Debug("termination: thinker produced final answer")
 		return true, "thinker produced final answer"
 	}
 
 	if ctx.LastAction != nil && ctx.LastAction.Type == ActionTypeAnswer {
-		slog.Debug("termination: direct answer produced")
+		r.getLogger().Debug("termination: direct answer produced")
 		return true, "direct answer produced"
 	}
 
 	if ctx.LastAction != nil && ctx.LastAction.Type == ActionTypeClarify {
 		if ctx.LastAction.Target == "" {
-			slog.Debug("termination: clarification needed")
+			r.getLogger().Debug("termination: clarification needed")
 			return true, "clarification needed"
 		}
 	}
 
 	if isDestructiveLoop(ctx.History) {
-		slog.Warn("termination: destructive loop detected",
+		r.getLogger().Warn("termination: destructive loop detected",
 			"history_len", len(ctx.History))
 		return true, "destructive loop detected: same tool call and error repeated"
 	}
 
 	if isAgentStuck(ctx.History) {
-		slog.Warn("termination: agent stuck detected",
+		r.getLogger().Warn("termination: agent stuck detected",
 			"history_len", len(ctx.History))
 		return true, "agent stuck: no tool progress in recent iterations"
 	}
 
 	if isResultConverged(ctx.History) {
-		slog.Info("termination: result converged",
+		r.getLogger().Info("termination: result converged",
 			"history_len", len(ctx.History))
 		return true, "result converged"
 	}
@@ -67,7 +66,7 @@ func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 	if isDuplicateAction(ctx.History) {
 		last := ctx.History[len(ctx.History)-1]
 		prev := ctx.History[len(ctx.History)-2]
-		slog.Warn("termination: duplicate action detected",
+		r.getLogger().Warn("termination: duplicate action detected",
 			"last_target", last.Action.Target,
 			"last_params", fmt.Sprintf("%v", last.Action.Params),
 			"last_result_len", len(last.Action.Result),

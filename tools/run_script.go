@@ -648,6 +648,8 @@ func (t *RunScript) Execute(ctx context.Context, params map[string]any) (any, er
 		return nil, fmt.Errorf("missing required parameter: command")
 	}
 
+	logger := getLogger(ctx)
+
 	workingDir, _ := params["working_dir"].(string)
 	if workingDir == "" {
 		workingDir = "."
@@ -658,6 +660,12 @@ func (t *RunScript) Execute(ctx context.Context, params map[string]any) (any, er
 	if scriptPath == "" {
 		return nil, fmt.Errorf("could not extract script path from command: %q", command)
 	}
+
+	logger.Info("executing script",
+		"language", language,
+		"script", scriptPath,
+		"working_dir", workingDir,
+	)
 
 	var args []string
 	if rawArgs, ok := params["args"].([]any); ok {

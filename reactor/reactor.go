@@ -3,7 +3,6 @@ package reactor
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -12,8 +11,6 @@ import (
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/tools"
 )
-
-var logger = slog.Default()
 
 const (
 	historyTokenBudgetRatio = 0.7
@@ -57,6 +54,8 @@ type ReactorConfig struct {
 
 	SystemPrompt  string
 	MaxIterations int
+
+	Logger core.Logger // Unified logging interface (optional, defaults to slog)
 
 	IsLocal bool
 }
@@ -187,6 +186,14 @@ func (r *Reactor) PeekSnapshot() *RunSnapshot {
 
 func (r *Reactor) SetAskPermission(p *tools.AskPermission) { r.askPermission = p }
 
+// getLogger returns the injected Logger or default slog-based logger.
+func (r *Reactor) getLogger() core.Logger {
+	if r.config.Logger != nil {
+		return r.config.Logger
+	}
+	return core.DefaultLogger()
+}
+
 type reactorSetup struct {
 	systemPrompt   string
 	skipTools      map[string]bool
@@ -288,7 +295,7 @@ func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
 		loader := core.NewFileSystemSkillLoader(dir)
 		skills, err := loader.Load()
 		if err != nil {
-			logger.Warn("failed to load skills", "dir", dir, "error", err)
+			r.getLogger().Warn("failed to load skills", "dir", dir, "error", err)
 			continue
 		}
 		for _, skill := range skills {
@@ -305,7 +312,7 @@ func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
 				}
 			}
 			if err := r.skillRegistry.RegisterSkill(skill); err != nil {
-				logger.Warn("failed to register skill", "name", skill.Name, "error", err)
+				r.getLogger().Warn("failed to register skill", "name", skill.Name, "error", err)
 			}
 		}
 	}
@@ -318,7 +325,7 @@ func (r *Reactor) initInteractionHandler() {
 		}
 	})
 	if err := r.RegisterTool(tools.NewAskUserTool()); err != nil {
-		logger.Warn("failed to register ask_user tool", "error", err)
+		r.getLogger().Warn("failed to register ask_user tool", "error", err)
 	}
 
 	r.askPermission = tools.NewAskPermission()
@@ -342,6 +349,7 @@ func (r *Reactor) initToolExecutor(setup *reactorSetup) {
 		core.WithResultStore(r.resultStore),
 		core.WithKVStore(r.kvStore),
 		core.WithFileStore(r.fileStore),
+		core.WithLogger(r.getLogger()),
 	)
 }
 
@@ -405,14 +413,14 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 	for _, bt := range bundledTools {
 		if !setup.skipTools[bt.name] {
 			if err := r.RegisterTool(bt.tool); err != nil {
-				logger.Warn("failed to register bundled tool", "name", bt.name, "error", err)
+				r.getLogger().Warn("failed to register bundled tool", "name", bt.name, "error", err)
 			}
 		}
 	}
 
 	if tools.IsWindowsPlatform() && !setup.skipTools["PowerShell"] {
 		if err := r.RegisterTool(tools.NewPowerShellTool()); err != nil {
-			logger.Warn("failed to register PowerShell tool", "error", err)
+			r.getLogger().Warn("failed to register PowerShell tool", "error", err)
 		}
 	}
 }
@@ -443,7 +451,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		if kv, err := core.NewFileSystemKVStore(""); err == nil {
 			r.kvStore = kv
 		} else {
-			logger.Warn("failed to initialize default KVStore, session data sharing disabled", "error", err)
+			r.getLogger().Warn("failed to initialize default KVStore, session data sharing disabled", "error", err)
 		}
 	} else {
 		r.kvStore = setup.kvStore
@@ -452,7 +460,7 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		if fs, err := core.NewFileSystemFileStore(""); err == nil {
 			r.fileStore = fs
 		} else {
-			logger.Warn("failed to initialize default FileStore, session file sharing disabled", "error", err)
+			r.getLogger().Warn("failed to initialize default FileStore, session file sharing disabled", "error", err)
 		}
 	} else {
 		r.fileStore = setup.fileStore
@@ -468,14 +476,14 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	for _, tool := range setup.extraTools {
 		if err := r.RegisterTool(tool); err != nil {
-			logger.Warn("failed to register extra tool", "error", err)
+			r.getLogger().Warn("failed to register extra tool", "error", err)
 		}
 	}
 
 	// Apply exclusions: remove tools from registry after all registration is done
 	for _, name := range setup.excludeTools {
 		if err := r.toolRegistry.Remove(name); err != nil {
-			logger.Warn("failed to exclude tool", "name", name, "error", err)
+			r.getLogger().Warn("failed to exclude tool", "name", name, "error", err)
 		}
 	}
 	// Invalidate cached LLM tool definitions after exclusions
@@ -498,7 +506,7 @@ func (r *Reactor) logAudit(ctx context.Context, entry core.AuditEntry) {
 		return
 	}
 	if err := r.auditLogger.Log(ctx, entry); err != nil {
-		logger.Warn("failed to write audit log", "error", err)
+		r.getLogger().Warn("failed to write audit log", "error", err)
 	}
 }
 
@@ -831,7 +839,7 @@ func (r *Reactor) handlePauseSnapshot(reactCtx *ReactContext) {
 func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
 	totalTokens := initialTokens
 	sessionID := r.resolveSessionID(reactCtx)
-	logger.Info("run loop start",
+	r.getLogger().Info("run loop start",
 		"session_id", sessionID,
 		"max_iterations", reactCtx.MaxIterations,
 		"input_preview", truncate(reactCtx.Input, 80),
@@ -841,7 +849,7 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if terminated, reason := r.CheckTermination(reactCtx); terminated {
 			reactCtx.IsTerminated = true
 			reactCtx.TerminationReason = reason
-			logger.Info("run loop terminated",
+			r.getLogger().Info("run loop terminated",
 				"session_id", sessionID,
 				"iteration", reactCtx.CurrentIteration+1,
 				"reason", reason,
@@ -851,7 +859,7 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 
 		cycleStart := time.Now()
 		cycleNum := reactCtx.CurrentIteration + 1
-		logger.Info("cycle start",
+		r.getLogger().Info("cycle start",
 			"session_id", sessionID,
 			"iteration", cycleNum,
 		)
@@ -863,12 +871,11 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("think error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			logger.Error("cycle abort",
+			r.getLogger().Error("cycle abort", err,
 				"session_id", sessionID,
 				"iteration", cycleNum,
 				"phase", "think",
 				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
-				"error", err,
 			)
 			break
 		}
@@ -883,12 +890,11 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Act(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			logger.Error("cycle abort",
+			r.getLogger().Error("cycle abort", err,
 				"session_id", sessionID,
 				"iteration", cycleNum,
 				"phase", "act",
 				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
-				"error", err,
 			)
 			break
 		}
@@ -900,12 +906,11 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Observe(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("observe error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
-			logger.Error("cycle abort",
+			r.getLogger().Error("cycle abort", err,
 				"session_id", sessionID,
 				"iteration", cycleNum,
 				"phase", "observe",
 				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
-				"error", err,
 			)
 			break
 		}
@@ -914,7 +919,7 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		r.persistStep(reactCtx, cycleStart)
 		reactCtx.CurrentIteration++
 
-		logger.Info("cycle end",
+		r.getLogger().Info("cycle end",
 			"session_id", sessionID,
 			"iteration", cycleNum,
 			"elapsed_ms", time.Since(cycleStart).Milliseconds(),
@@ -923,7 +928,7 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 	}
 
 	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
-	logger.Info("run loop done",
+	r.getLogger().Info("run loop done",
 		"session_id", sessionID,
 		"total_iterations", result.TotalIterations,
 		"total_tokens", totalTokens,
@@ -949,7 +954,7 @@ func (r *Reactor) persistStepToStore(ctx context.Context, role, content string) 
 	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
 	r.llmCaller.AddContextMessage(role, content)
 	if err := ss.Append(ctx, cw.SessionID, agentName, msg); err != nil {
-		logger.Warn("failed to persist step to session store", "session_id", cw.SessionID, "role", role, "error", err)
+		r.getLogger().Warn("failed to persist step to session store", "session_id", cw.SessionID, "role", role, "error", err)
 	}
 }
 
@@ -994,7 +999,7 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		return nil, fmt.Errorf("coordinator mode but no CoordState")
 	}
 
-	logger.Info("entering coordinator wait loop", "parent", cs.ParentTaskID,
+	r.getLogger().Info("entering coordinator wait loop", "parent", cs.ParentTaskID,
 		"tasks", cs.TaskProgress.Count())
 
 	// Poll interval: start at 500ms, adaptive up to 5s
@@ -1024,13 +1029,13 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 
 		// Act (coordination status report)
 		if err := r.Act(reactCtx); err != nil {
-			logger.Warn("coordinator act error", "error", err)
+			r.getLogger().Warn("coordinator act error", "error", err)
 		}
 		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
 
 		// Observe (check task completion)
 		if err := r.Observe(reactCtx); err != nil {
-			logger.Warn("coordinator observe error", "error", err)
+			r.getLogger().Warn("coordinator observe error", "error", err)
 			break
 		}
 		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
@@ -1050,7 +1055,7 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		// If Observe produced a final answer (all tasks done), exit loop
 		if reactCtx.LastThought != nil && reactCtx.LastThought.Decision == DecisionAnswer &&
 			reactCtx.LastThought.IsFinal {
-			logger.Info("coordinator loop complete", "iterations", reactCtx.CurrentIteration)
+			r.getLogger().Info("coordinator loop complete", "iterations", reactCtx.CurrentIteration)
 			break
 		}
 
@@ -1115,14 +1120,14 @@ func (r *Reactor) handleCoordinatorControl(cs *CoordState, cmd *core.ControlComm
 	switch cmd.Action {
 	case core.CmdInterrupt:
 		if err := cs.Interrupt(cmd.Reason); err != nil {
-			logger.Warn("coordinator interrupt failed", "error", err)
+			r.getLogger().Warn("coordinator interrupt failed", "error", err)
 		}
 	case core.CmdCancel:
 		if err := cs.Cancel(cmd.Reason); err != nil {
-			logger.Warn("coordinator cancel failed", "error", err)
+			r.getLogger().Warn("coordinator cancel failed", "error", err)
 		}
 	default:
-		logger.Info("unknown coordinator control command", "action", cmd.Action)
+		r.getLogger().Info("unknown coordinator control command", "action", cmd.Action)
 	}
 }
 

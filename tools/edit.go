@@ -79,6 +79,12 @@ func (t *FileEditTool) Execute(ctx context.Context, params map[string]any) (any,
 		return nil, err
 	}
 
+	logger := getLogger(ctx)
+
+	logger.Info("editing file",
+		"path", filePath,
+	)
+
 	// Security check
 	if err := ValidateFileSafety(filePath); err != nil {
 		return nil, err

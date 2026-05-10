@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DotNetAge/goreact/core"
 )
 
 // offloadThreshold is the maximum result size (in bytes) kept in context.
@@ -167,7 +169,7 @@ func cleanupExpiredOffloads() {
 		if os.IsNotExist(err) {
 			return
 		}
-		logger.Warn("failed to read offload directory", "dir", rootDir, "error", err)
+		core.DefaultLogger().Warn("failed to read offload directory", "dir", rootDir, "error", err)
 		return
 	}
 
@@ -194,7 +196,7 @@ func cleanupExpiredOffloads() {
 			if now.Sub(info.ModTime()) > offloadTTL {
 				filePath := filepath.Join(sessionDir, file.Name())
 				if err := os.Remove(filePath); err != nil {
-					logger.Warn("failed to clean up offloaded file",
+					core.DefaultLogger().Warn("failed to clean up offloaded file",
 						"file", filePath,
 						"error", err,
 					)
@@ -211,7 +213,7 @@ func cleanupExpiredOffloads() {
 	}
 
 	if totalCleaned > 0 {
-		logger.Info("offload cleanup completed",
+		core.DefaultLogger().Info("offload cleanup completed",
 			"files_removed", totalCleaned,
 		)
 	}
@@ -233,7 +235,7 @@ func CleanupSessionOffloads(sessionID string) error {
 	for _, entry := range entries {
 		filePath := filepath.Join(sessionDir, entry.Name())
 		if err := os.Remove(filePath); err != nil {
-			logger.Warn("failed to remove session offload file",
+			core.DefaultLogger().Warn("failed to remove session offload file",
 				"file", filePath,
 				"error", err,
 			)
@@ -244,7 +246,7 @@ func CleanupSessionOffloads(sessionID string) error {
 		return fmt.Errorf("failed to remove session offload directory: %w", err)
 	}
 
-	logger.Info("session offload cleanup completed",
+	core.DefaultLogger().Info("session offload cleanup completed",
 		"session_id", sessionID,
 		"files_removed", len(entries),
 	)

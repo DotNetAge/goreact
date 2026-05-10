@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/DotNetAge/goreact/core"
 )
 
 // Decision constants for Thought.Decision
@@ -71,7 +73,7 @@ func ParseThinkResponse(content string) (*Thought, error) {
 		// Check if content looks like a direct answer (non-empty, substantial text)
 		trimmed := strings.TrimSpace(content)
 		if len(trimmed) > 10 && looksLikeDirectAnswer(trimmed) {
-			logger.Info("parsing non-JSON response as direct answer",
+			core.DefaultLogger().Info("parsing non-JSON response as direct answer",
 				"content_length", len(trimmed),
 				"preview", truncate(trimmed, 100),
 			)
