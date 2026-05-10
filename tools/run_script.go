@@ -7,12 +7,103 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/DotNetAge/goreact/core"
 )
+
+// ---------------------------------------------------------------------------
+// Platform runtime
+// ---------------------------------------------------------------------------
+
+// Platform represents the detected OS platform.
+type Platform string
+
+const (
+	PlatformWindows Platform = "windows"
+	PlatformLinux   Platform = "linux"
+	PlatformMacOS   Platform = "darwin"
+)
+
+// CurrentPlatform returns the runtime OS.
+func CurrentPlatform() Platform {
+	return Platform(runtime.GOOS)
+}
+
+// IsWindows, IsMacOS, IsLinux helpers.
+func (p Platform) IsWindows() bool { return p == PlatformWindows }
+func (p Platform) IsMacOS() bool   { return p == PlatformMacOS }
+func (p Platform) IsLinux() bool   { return p == PlatformLinux }
+
+// Shell returns the default shell executable for this platform.
+func (p Platform) Shell() string {
+	switch p {
+	case PlatformWindows:
+		return "cmd.exe"
+	case PlatformMacOS:
+		return "/bin/zsh"
+	default:
+		return "/bin/bash"
+	}
+}
+
+// ScriptExtensions returns all script file extensions supported on this platform.
+func (p Platform) ScriptExtensions() map[string]string {
+	exts := map[string]string{
+		".py":  "python",
+		".sh":  "shell",
+		".bash": "shell",
+		".zsh": "shell",
+		".js":  "node",
+		".rb":  "ruby",
+		".pl":  "perl",
+		".php": "php",
+	}
+	if p.IsWindows() {
+		exts[".bat"] = "batch"
+		exts[".cmd"] = "batch"
+		exts[".ps1"] = "powershell"
+		exts[".vbs"] = "vbscript"
+		exts[".exe"] = "executable"
+	}
+	if p.IsMacOS() {
+		exts[".scpt"] = "applescript"
+		exts[".applescript"] = "applescript"
+	}
+	return exts
+}
+
+// SupportedInterpreters returns interpreter names recognized on this platform.
+func (p Platform) SupportedInterpreters() map[string]bool {
+	interpreters := map[string]bool{
+		"python": true, "python3": true, "pypy": true,
+		"node": true, "nodejs": true,
+		"ruby": true,
+		"perl": true,
+		"php": true,
+	}
+	switch p {
+	case PlatformWindows:
+		interpreters["cmd"] = true
+		interpreters["powershell"] = true
+		interpreters["pwsh"] = true
+		interpreters["cscript"] = true
+		interpreters["wscript"] = true
+	case PlatformMacOS:
+		interpreters["osascript"] = true
+		interpreters["bash"] = true
+		interpreters["sh"] = true
+		interpreters["zsh"] = true
+	case PlatformLinux:
+		interpreters["bash"] = true
+		interpreters["sh"] = true
+		interpreters["zsh"] = true
+	}
+	return interpreters
+}
 
 // ---------------------------------------------------------------------------
 // scriptResult — internal execution result
@@ -34,22 +125,51 @@ type scriptExecutor interface {
 }
 
 // ---------------------------------------------------------------------------
-// defaultScriptExecutor — Python venv + Shell execution
+// platformScriptExecutor — dispatches execution based on platform + file type
 // ---------------------------------------------------------------------------
 
-type defaultScriptExecutor struct {
+type platformScriptExecutor struct {
+	platform     Platform
 	mu           sync.Mutex
 	venvManagers map[string]*venvManager
+	sandboxConfig *SandboxConfig
+	sessionSandboxMgr *SessionSandboxManager
 }
 
-func newDefaultScriptExecutor() *defaultScriptExecutor {
-	return &defaultScriptExecutor{
+func newPlatformScriptExecutor() *platformScriptExecutor {
+	return &platformScriptExecutor{
+		platform:     CurrentPlatform(),
 		venvManagers: make(map[string]*venvManager),
+		sandboxConfig: DefaultSandboxConfig(),
 	}
 }
 
-func (e *defaultScriptExecutor) Execute(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+func (e *platformScriptExecutor) SetSandboxConfig(config *SandboxConfig) {
+	e.sandboxConfig = config
+}
+
+func (e *platformScriptExecutor) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	e.sessionSandboxMgr = mgr
+}
+
+func (e *platformScriptExecutor) Execute(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
 	skillRoot = filepath.Clean(skillRoot)
+
+	absSkillRoot, err := filepath.Abs(skillRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve skill root path: %w", err)
+	}
+
+	absScript, err := filepath.Abs(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve script path: %w", err)
+	}
+
+	cleanScript := filepath.Clean(absScript)
+	if !strings.HasPrefix(cleanScript, absSkillRoot+string(filepath.Separator)) &&
+		cleanScript != absSkillRoot {
+		return nil, fmt.Errorf("script path %q is outside of skill root directory %q (path traversal blocked)", scriptPath, skillRoot)
+	}
 
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("script not found: %s", scriptPath)
@@ -61,12 +181,26 @@ func (e *defaultScriptExecutor) Execute(ctx context.Context, skillRoot, scriptPa
 		return e.executePython(ctx, skillRoot, scriptPath, args)
 	case ".sh", ".bash", ".zsh":
 		return e.executeShell(ctx, skillRoot, scriptPath, args)
+	case ".rb":
+		return e.executeRuby(ctx, skillRoot, scriptPath, args)
+	case ".js":
+		return e.executeNode(ctx, skillRoot, scriptPath, args)
+	case ".bat", ".cmd":
+		return e.executeBatch(ctx, skillRoot, scriptPath, args)
+	case ".ps1":
+		return e.executePowerShell(ctx, skillRoot, scriptPath, args)
+	case ".vbs":
+		return e.executeVBScript(ctx, skillRoot, scriptPath, args)
+	case ".scpt", ".applescript":
+		return e.executeAppleScript(ctx, skillRoot, scriptPath, args)
+	case ".exe":
+		return e.executeExecutable(ctx, skillRoot, scriptPath, args)
 	default:
 		return e.executeGeneric(ctx, skillRoot, scriptPath, args)
 	}
 }
 
-func (e *defaultScriptExecutor) executePython(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+func (e *platformScriptExecutor) executePython(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
 	key := venvKey(skillRoot)
 
 	e.mu.Lock()
@@ -91,6 +225,115 @@ func (e *defaultScriptExecutor) executePython(ctx context.Context, skillRoot, sc
 	cmd := exec.CommandContext(ctx, pythonBin, fullArgs...)
 	cmd.Dir = skillRoot
 
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeShell(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	shell := e.platform.Shell()
+	cmd := exec.CommandContext(ctx, shell, scriptPath)
+	cmd.Args = append(cmd.Args, args...)
+	cmd.Dir = skillRoot
+
+	sessionID := ExtractSessionID(ctx)
+	if e.sessionSandboxMgr != nil && sessionID != "" {
+		cmd = e.sessionSandboxMgr.ApplyToCommand(cmd, sessionID)
+	} else {
+		cmd = ApplySandbox(cmd, e.sandboxConfig)
+	}
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeRuby(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	rubyBin := "ruby"
+	if _, err := exec.LookPath("ruby"); err != nil {
+		return nil, fmt.Errorf("ruby interpreter not found in PATH")
+	}
+
+	absScript, _ := filepath.Abs(scriptPath)
+	fullArgs := append([]string{absScript}, args...)
+	cmd := exec.CommandContext(ctx, rubyBin, fullArgs...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeNode(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	nodeBin := "node"
+	if _, err := exec.LookPath("node"); err != nil {
+		return nil, fmt.Errorf("node interpreter not found in PATH")
+	}
+
+	absScript, _ := filepath.Abs(scriptPath)
+	fullArgs := append([]string{absScript}, args...)
+	cmd := exec.CommandContext(ctx, nodeBin, fullArgs...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeBatch(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	cmd := exec.CommandContext(ctx, "cmd.exe", "/c", scriptPath)
+	cmd.Args = append(cmd.Args, args...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executePowerShell(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	psBin := "pwsh"
+	if _, err := exec.LookPath("pwsh"); err != nil {
+		psBin = "powershell"
+	}
+
+	cmd := exec.CommandContext(ctx, psBin, "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	cmd.Args = append(cmd.Args, args...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeVBScript(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	wscriptBin := "cscript"
+	if _, err := exec.LookPath("cscript"); err != nil {
+		wscriptBin = "wscript"
+	}
+
+	absScript, _ := filepath.Abs(scriptPath)
+	fullArgs := append([]string{"//Nologo", absScript}, args...)
+	cmd := exec.CommandContext(ctx, wscriptBin, fullArgs...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeAppleScript(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	absScript, _ := filepath.Abs(scriptPath)
+	fullArgs := append([]string{absScript}, args...)
+	cmd := exec.CommandContext(ctx, "osascript", fullArgs...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeExecutable(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	absScript, _ := filepath.Abs(scriptPath)
+	cmd := exec.CommandContext(ctx, absScript, args...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+func (e *platformScriptExecutor) executeGeneric(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
+	absScript, _ := filepath.Abs(scriptPath)
+	cmd := exec.CommandContext(ctx, absScript, args...)
+	cmd.Dir = skillRoot
+
+	return runScriptCommand(cmd)
+}
+
+// runScriptCommand is a shared helper that runs an exec.Cmd and captures output.
+func runScriptCommand(cmd *exec.Cmd) (*scriptResult, error) {
 	start := time.Now()
 	stdout, err := cmd.Output()
 	duration := time.Since(start).String()
@@ -98,9 +341,9 @@ func (e *defaultScriptExecutor) executePython(ctx context.Context, skillRoot, sc
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		return &scriptResult{
 			ExitCode: exitErr.ExitCode(),
-			Stdout:    string(stdout),
-			Stderr:    string(exitErr.Stderr),
-			Duration:  duration,
+			Stdout:   string(stdout),
+			Stderr:   string(exitErr.Stderr),
+			Duration: duration,
 		}, nil
 	} else if err != nil {
 		return nil, err
@@ -111,51 +354,6 @@ func (e *defaultScriptExecutor) executePython(ctx context.Context, skillRoot, sc
 		Stdout:   string(stdout),
 		Duration: duration,
 	}, nil
-}
-
-func (e *defaultScriptExecutor) executeShell(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
-	cmd := exec.CommandContext(ctx, "/bin/bash", scriptPath)
-	cmd.Args = append(cmd.Args, args...)
-	cmd.Dir = skillRoot
-
-	start := time.Now()
-	stdout, err := cmd.Output()
-	duration := time.Since(start).String()
-
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return &scriptResult{
-			ExitCode: exitErr.ExitCode(),
-			Stdout:    string(stdout),
-			Stderr:    string(exitErr.Stderr),
-			Duration:  duration,
-		}, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	return &scriptResult{ExitCode: 0, Stdout: string(stdout), Duration: duration}, nil
-}
-
-func (e *defaultScriptExecutor) executeGeneric(ctx context.Context, skillRoot, scriptPath string, args []string) (*scriptResult, error) {
-	cmd := exec.CommandContext(ctx, scriptPath, args...)
-	cmd.Dir = skillRoot
-
-	start := time.Now()
-	stdout, err := cmd.Output()
-	duration := time.Since(start).String()
-
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return &scriptResult{
-			ExitCode: exitErr.ExitCode(),
-			Stdout:    string(stdout),
-			Stderr:    string(exitErr.Stderr),
-			Duration:  duration,
-		}, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	return &scriptResult{ExitCode: 0, Stdout: string(stdout), Duration: duration}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -263,46 +461,180 @@ func dirExists(path string) bool {
 // ---------------------------------------------------------------------------
 
 type RunScript struct {
-	info           *core.ToolInfo
-	scriptExecutor scriptExecutor
+	info              *core.ToolInfo
+	scriptExecutor    scriptExecutor
+	sandboxConfig     *SandboxConfig
+	sessionSandboxMgr *SessionSandboxManager
 }
 
 func NewRunScriptTool() core.FuncTool {
+	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
 	return &RunScript{
-		info: &core.ToolInfo{
-			Name:        "RunScript",
-			Description: "Execute a script file from a skill's scripts/ directory. Supports Python, Shell, Node, Ruby, and other interpreters.",
-			Prompt: `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the command and routes to the appropriate executor. For Python scripts, automatically manages virtual environments and dependencies from requirements.txt.
+		info:           buildRunScriptInfo(platform),
+		scriptExecutor: executor,
+		sandboxConfig:  DefaultSandboxConfig(),
+	}
+}
+
+func NewRunScriptToolWithSandbox(config *SandboxConfig) core.FuncTool {
+	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
+	executor.SetSandboxConfig(config)
+	return &RunScript{
+		info:           buildRunScriptInfo(platform),
+		scriptExecutor: executor,
+		sandboxConfig:  config,
+	}
+}
+
+func NewRunScriptToolWithSessionSandbox(mgr *SessionSandboxManager) core.FuncTool {
+	platform := CurrentPlatform()
+	executor := newPlatformScriptExecutor()
+	executor.SetSessionSandboxManager(mgr)
+	return &RunScript{
+		info:              buildRunScriptInfo(platform),
+		scriptExecutor:    executor,
+		sandboxConfig:     mgr.defaultConfig,
+		sessionSandboxMgr: mgr,
+	}
+}
+
+func (t *RunScript) SetSandboxConfig(config *SandboxConfig) {
+	t.sandboxConfig = config
+	if exe, ok := t.scriptExecutor.(*platformScriptExecutor); ok {
+		exe.SetSandboxConfig(config)
+	}
+}
+
+func (t *RunScript) SetSessionSandboxManager(mgr *SessionSandboxManager) {
+	t.sessionSandboxMgr = mgr
+	if exe, ok := t.scriptExecutor.(*platformScriptExecutor); ok {
+		exe.SetSessionSandboxManager(mgr)
+	}
+}
+
+func buildRunScriptInfo(platform Platform) *core.ToolInfo {
+	var description string
+	switch platform {
+	case PlatformWindows:
+		description = "Execute a script file from a skill's scripts/ directory. Supports Python (.py), Batch (.bat/.cmd), PowerShell (.ps1), VBScript (.vbs), Shell (.sh), Ruby (.rb), Node.js (.js), and executables (.exe) on Windows."
+	case PlatformMacOS:
+		description = "Execute a script file from a skill's scripts/ directory. Supports Python (.py), Shell (.sh/.zsh), AppleScript (.scpt), Ruby (.rb), Node.js (.js), and Bash on macOS."
+	case PlatformLinux:
+		description = "Execute a script file from a skill's scripts/ directory. Supports Python (.py), Shell (.sh/.bash), Ruby (.rb), Node.js (.js), Perl (.pl), PHP (.php), and Bash on Linux."
+	default:
+		description = "Execute a script file from a skill's scripts/ directory. Supports Python, Shell, Node, Ruby, and other interpreters."
+	}
+
+	var prompt string
+	switch platform {
+	case PlatformWindows:
+		prompt = `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the file extension and routes to the appropriate executor.
+
+Supported script types on Windows:
+- Python (.py) — auto-manages virtual environments and requirements.txt
+- Batch (.bat, .cmd) — runs via cmd.exe /c
+- PowerShell (.ps1) — runs via pwsh or powershell.exe with Bypass policy
+- VBScript (.vbs) — runs via cscript //Nologo
+- Shell (.sh) — runs via bash or sh if available
+- Ruby (.rb) — runs via ruby interpreter
+- Node.js (.js) — runs via node
+- Executables (.exe) — runs directly
+
+Usage:
+- Pass the command exactly as specified in the skill's instructions.
+- Include the interpreter if needed (e.g. "python scripts/analyze.py").
+- For batch files, you can just pass the .bat path directly.
+- For PowerShell scripts, include "powershell" or "pwsh" prefix.
+- For VBScript, include "cscript" or "wscript" prefix.
+- The working_dir defaults to the skill's base directory.
+- Use the args parameter for additional arguments.
+
+Notes:
+- Python virtual environments are created automatically in .venv/ under the skill root.
+- Output is truncated at 2KB to save context.`
+	case PlatformMacOS:
+		prompt = `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the file extension and routes to the appropriate executor.
+
+Supported script types on macOS:
+- Python (.py) — auto-manages virtual environments and requirements.txt
+- Shell (.sh, .zsh, .bash) — runs via /bin/zsh (default macOS shell)
+- AppleScript (.scpt, .applescript) — runs via osascript
+- Ruby (.rb) — runs via ruby interpreter
+- Node.js (.js) — runs via node
+- Perl (.pl) — runs via perl
+- PHP (.php) — runs via php
+
+Usage:
+- Pass the command exactly as specified in the skill's instructions.
+- Include the interpreter if needed (e.g. "python scripts/analyze.py").
+- For AppleScript, use "osascript scripts/myscript.scpt" or just the .scpt path.
+- Shell scripts run in zsh by default (macOS standard).
+- The working_dir defaults to the skill's base directory.
+- Use the args parameter for additional arguments.
+
+Notes:
+- Python virtual environments are created automatically in .venv/ under the skill root.
+- AppleScript can interact with macOS apps (Finder, Safari, Mail, etc.).
+- Output is truncated at 2KB to save context.`
+	case PlatformLinux:
+		prompt = `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the file extension and routes to the appropriate executor.
+
+Supported script types on Linux:
+- Python (.py) — auto-manages virtual environments and requirements.txt
+- Shell (.sh, .bash, .zsh) — runs via /bin/bash (or detected shell)
+- Ruby (.rb) — runs via ruby interpreter
+- Node.js (.js) — runs via node
+- Perl (.pl) — runs via perl
+- PHP (.php) — runs via php
+
+Usage:
+- Pass the command exactly as specified in the skill's instructions.
+- Include the interpreter if needed (e.g. "python scripts/analyze.py").
+- Shell scripts run in bash by default.
+- The working_dir defaults to the skill's base directory.
+- Use the args parameter for additional arguments.
+
+Notes:
+- Python virtual environments are created automatically in .venv/ under the skill root.
+- Output is truncated at 2KB to save context.`
+	default:
+		prompt = `Execute a script file, typically from an active skill's scripts/ directory. The tool auto-detects the language from the command and routes to the appropriate executor. For Python scripts, automatically manages virtual environments and dependencies from requirements.txt.
 
 Usage:
 - Pass the command exactly as specified in the skill's instructions.
 - Include the interpreter if needed (e.g. "python scripts/analyze.py --input data.json").
 - The working_dir defaults to the skill's base directory.
-- Use the args parameter for additional arguments.`,
-			Tags:          []string{"script", "execute", "python", "shell", "skill"},
-			SecurityLevel: core.LevelSensitive,
-			Parameters: []core.Parameter{
-				{
-					Name:        "command",
-					Type:        "string",
-					Description: "The script invocation command exactly as specified in Skill instructions. Include interpreter name if needed (e.g., 'python scripts/foo.py').",
-					Required:    true,
-				},
-				{
-					Name:        "working_dir",
-					Type:        "string",
-					Description: "Working directory for script execution. Defaults to the current directory. Usually the {base_dir} of the active skill.",
-					Required:    false,
-				},
-				{
-					Name:        "args",
-					Type:        "array",
-					Description: "Additional arguments to pass to the script.",
-					Required:    false,
-				},
+- Use the args parameter for additional arguments.`
+	}
+
+	return &core.ToolInfo{
+		Name:        "RunScript",
+		Description: description,
+		Prompt:      prompt,
+		Tags:        []string{"script", "execute", "python", "shell", "skill"},
+		SecurityLevel: core.LevelSensitive,
+		Parameters: []core.Parameter{
+			{
+				Name:        "command",
+				Type:        "string",
+				Description: "The script invocation command exactly as specified in Skill instructions. Include interpreter name if needed (e.g., 'python scripts/foo.py' or 'osascript scripts/myscript.scpt').",
+				Required:    true,
+			},
+			{
+				Name:        "working_dir",
+				Type:        "string",
+				Description: "Working directory for script execution. Defaults to the current directory. Usually the {base_dir} of the active skill.",
+				Required:    false,
+			},
+			{
+				Name:        "args",
+				Type:        "array",
+				Description: "Additional arguments to pass to the script.",
+				Required:    false,
 			},
 		},
-		scriptExecutor: newDefaultScriptExecutor(),
 	}
 }
 
@@ -316,6 +648,8 @@ func (t *RunScript) Execute(ctx context.Context, params map[string]any) (any, er
 		return nil, fmt.Errorf("missing required parameter: command")
 	}
 
+	logger := getLogger(ctx)
+
 	workingDir, _ := params["working_dir"].(string)
 	if workingDir == "" {
 		workingDir = "."
@@ -326,6 +660,12 @@ func (t *RunScript) Execute(ctx context.Context, params map[string]any) (any, er
 	if scriptPath == "" {
 		return nil, fmt.Errorf("could not extract script path from command: %q", command)
 	}
+
+	logger.Info("executing script",
+		"language", language,
+		"script", scriptPath,
+		"working_dir", workingDir,
+	)
 
 	var args []string
 	if rawArgs, ok := params["args"].([]any); ok {
@@ -364,6 +704,12 @@ func parseCommand(command, baseDir string) (language, scriptPath string) {
 		"bash": true, "sh": true, "zsh": true,
 	}
 
+	// Add platform-specific interpreters
+	platform := CurrentPlatform()
+	for k := range platform.SupportedInterpreters() {
+		interpreters[k] = true
+	}
+
 	if len(parts) > 1 && interpreters[parts[0]] {
 		language = parts[0]
 		candidate := parts[1]
@@ -382,16 +728,8 @@ func parseCommand(command, baseDir string) (language, scriptPath string) {
 		scriptPath = filepath.Join(baseDir, candidate)
 	}
 
-	switch strings.ToLower(filepath.Ext(scriptPath)) {
-	case ".py":
-		language = "python"
-	case ".sh", ".bash", ".zsh":
-		language = "sh"
-	case ".js":
-		language = "node"
-	case ".rb":
-		language = "ruby"
-	}
+	exts := platform.ScriptExtensions()
+	language = exts[strings.ToLower(filepath.Ext(scriptPath))]
 
 	return
 }
@@ -410,13 +748,13 @@ func formatScriptResult(language, scriptPath string, result *scriptResult) map[s
 	}
 
 	return map[string]any{
-		"status":       "completed",
-		"language":     language,
-		"script":       filepath.Base(scriptPath),
-		"exit_code":    result.ExitCode,
-		"output":       truncateScriptOutput(output, 2000),
-		"duration":     result.Duration,
-		"truncated":    len(result.Stdout) > 2000 || len(result.Stderr) > 2000,
+		"status":    "completed",
+		"language":  language,
+		"script":    filepath.Base(scriptPath),
+		"exit_code": result.ExitCode,
+		"output":    truncateScriptOutput(output, 2000),
+		"duration":  result.Duration,
+		"truncated": len(result.Stdout) > 2000 || len(result.Stderr) > 2000,
 	}
 }
 

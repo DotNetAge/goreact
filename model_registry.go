@@ -54,6 +54,16 @@ func (m *ModelRegistry) List() []*core.ModelConfig {
 	return result
 }
 
+func (m *ModelRegistry) Register(name string, model *core.ModelConfig) {
+	if m.models == nil {
+		m.models = make(map[string]*core.ModelConfig)
+	}
+	if model.Name == "" {
+		model.Name = name
+	}
+	m.models[name] = model
+}
+
 func (m *ModelRegistry) Save(model *core.ModelConfig) error {
 	if model.Name == "" {
 		return fmt.Errorf("model name cannot be empty")

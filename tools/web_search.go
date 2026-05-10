@@ -54,7 +54,7 @@ type DuckDuckGoAdapter struct {
 // NewDuckDuckGoAdapter creates a new DuckDuckGo search adapter.
 func NewDuckDuckGoAdapter() *DuckDuckGoAdapter {
 	return &DuckDuckGoAdapter{
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{Timeout: 8 * time.Second},
 	}
 }
 
@@ -216,9 +216,10 @@ func filterResults(results []SearchResult, opts SearchOptions) []SearchResult {
 //   - WebSearch: lightweight discovery → returns {title, url} only (small token cost)
 //   - WebFetch: deep reading → local HTTP fetch → HTML→Markdown → LLM summarization
 type WebSearchTool struct {
-	adapters []SearchAdapter
-	cache    sync.Map // map[string]cachedSearch
-	cacheTTL time.Duration
+	adapters   []SearchAdapter
+	adapterMu  sync.RWMutex
+	cache      sync.Map // map[string]cachedSearch
+	cacheTTL   time.Duration
 }
 
 type cachedSearch struct {
@@ -226,19 +227,28 @@ type cachedSearch struct {
 	timestamp time.Time
 }
 
-// NewWebSearchTool creates a WebSearchTool with DuckDuckGo as default adapter.
+// NewWebSearchTool creates a WebSearchTool with multiple search adapters for hybrid search.
+// Uses parallel execution: Baidu + 360 (Haosou) + Sogou + DuckDuckGo.
+// Each adapter returns top 5 results, which are then merged and deduplicated.
 func NewWebSearchTool() core.FuncTool {
 	t := &WebSearchTool{
 		cacheTTL: 15 * time.Minute,
 	}
-	// Register default adapter (always available, no API key needed)
-	t.adapters = append(t.adapters, NewDuckDuckGoAdapter())
+	t.adapters = []SearchAdapter{
+		NewBaiduAdapter(),
+		NewHaosouAdapter(),
+		NewSogouAdapter(),
+		NewDuckDuckGoAdapter(),
+	}
 	return t
 }
 
 // AddAdapter adds a search adapter to the fallback chain.
 // Adapters are tried in order; first successful result wins.
+// This method is safe for concurrent use.
 func (t *WebSearchTool) AddAdapter(adapter SearchAdapter) {
+	t.adapterMu.Lock()
+	defer t.adapterMu.Unlock()
 	t.adapters = append([]SearchAdapter{adapter}, t.adapters...)
 }
 
@@ -325,12 +335,6 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (any
 		}
 	}
 
-	opts := SearchOptions{
-		MaxResults:     maxResults,
-		AllowedDomains: allowedDomains,
-		BlockedDomains: blockedDomains,
-	}
-
 	// Check cache
 	cacheKey := query + "|" + strings.Join(allowedDomains, ",") + "|" + strings.Join(blockedDomains, ",")
 	if cached, ok := t.cache.Load(cacheKey); ok {
@@ -341,26 +345,102 @@ func (t *WebSearchTool) Execute(ctx context.Context, params map[string]any) (any
 		t.cache.Delete(cacheKey)
 	}
 
-	// Try adapters in order (fallback chain)
-	var results []SearchResult
-	var lastErr error
-	for _, adapter := range t.adapters {
-		searchResults, err := adapter.Search(ctx, query, opts)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if len(searchResults) > 0 {
-			results = searchResults
-			break
+	// Hybrid parallel search: run all adapters concurrently, merge results
+	// Each adapter returns top 5 results, then we merge and deduplicate
+	t.adapterMu.RLock()
+	adapters := make([]SearchAdapter, len(t.adapters))
+	copy(adapters, t.adapters)
+	t.adapterMu.RUnlock()
+
+	logger := getLogger(ctx)
+
+	hybridOpts := SearchOptions{
+		MaxResults:     5,
+		AllowedDomains: allowedDomains,
+		BlockedDomains: blockedDomains,
+	}
+
+	type adapterResult struct {
+		results []SearchResult
+		err     error
+		adapter string
+	}
+
+	resultCh := make(chan adapterResult, len(adapters))
+	var wg sync.WaitGroup
+
+	for _, adapter := range adapters {
+		wg.Add(1)
+		go func(a SearchAdapter) {
+			defer wg.Done()
+
+			if ctx.Err() != nil {
+				resultCh <- adapterResult{err: fmt.Errorf("context cancelled"), adapter: a.Name()}
+				return
+			}
+
+			searchResults, err := a.Search(ctx, query, hybridOpts)
+			if err != nil {
+				logger.Warn("search adapter failed in hybrid mode",
+					"adapter", a.Name(),
+					"error", err,
+				)
+				resultCh <- adapterResult{err: err, adapter: a.Name()}
+				return
+			}
+
+			if len(searchResults) == 0 {
+				logger.Info("search adapter returned empty results in hybrid mode",
+					"adapter", a.Name(),
+					"query", truncateStr(query, 50),
+				)
+				resultCh <- adapterResult{results: []SearchResult{}, adapter: a.Name()}
+				return
+			}
+
+			resultCh <- adapterResult{results: searchResults, adapter: a.Name()}
+		}(adapter)
+	}
+
+	wg.Wait()
+	close(resultCh)
+
+	var allResults []SearchResult
+	successCount := 0
+	for result := range resultCh {
+		if result.err == nil && len(result.results) > 0 {
+			allResults = append(allResults, result.results...)
+			successCount++
+			logger.Info("search adapter succeeded in hybrid mode",
+				"adapter", result.adapter,
+				"result_count", len(result.results),
+			)
 		}
 	}
 
-	if len(results) == 0 {
-		if lastErr != nil {
-			return nil, fmt.Errorf("all search adapters failed: %w", lastErr)
+	// Deduplicate results by URL (keep first occurrence)
+	seenURLs := make(map[string]bool)
+	var dedupedResults []SearchResult
+	for _, r := range allResults {
+		if !seenURLs[r.URL] {
+			seenURLs[r.URL] = true
+			dedupedResults = append(dedupedResults, r)
 		}
-		return fmt.Sprintf("No results found for query: %q", query), nil
+	}
+
+	// Apply max_results limit to final merged results
+	if maxResults > 0 && len(dedupedResults) > maxResults {
+		dedupedResults = dedupedResults[:maxResults]
+	}
+
+	results := dedupedResults
+
+	if len(results) == 0 {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("search timed out after %v (query: %q). The search engine may be rate-limiting or experiencing issues. Try again later or simplify your query.",
+				15*time.Second, query)
+		}
+		return fmt.Sprintf("No results found for query: %q\n\nPossible reasons:\n- Query too specific or contains typos\n- All search engines may be blocked (GFW) or rate-limiting\n- Network connectivity problems\n\nSuggestion: Try simplifying the query or search again later.\n\nNote: %d search engines were tried.", query, len(adapters)), nil
 	}
 
 	// Cache results
@@ -693,4 +773,21 @@ func (r SearchResult) MarshalJSON() ([]byte, error) {
 		URL:     r.URL,
 		Snippet: r.Snippet,
 	})
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// getLogger extracts Logger from ToolContext or returns default slog-based logger.
+// This enables dependency injection while maintaining backward compatibility.
+func getLogger(ctx context.Context) core.Logger {
+	tc := core.GetToolContext(ctx)
+	if tc != nil && tc.Logger != nil {
+		return tc.Logger
+	}
+	return core.DefaultLogger()
 }

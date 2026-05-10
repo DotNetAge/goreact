@@ -278,9 +278,8 @@ func TestFileSystemSkillLoader_InvalidSkillName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Invalid: uppercase name
 	skillMd := `---
-name: Invalid-Name
+name: -starts-with-hyphen
 description: Test.
 ---
 Instructions.`

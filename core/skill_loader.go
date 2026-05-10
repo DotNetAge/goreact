@@ -129,7 +129,12 @@ func parseSkillMd(data []byte, rootDir string, source string) (*Skill, error) {
 	}
 
 	if err := ValidateSkillName(fm.Name); err != nil {
-		return nil, err
+		// Sanitize: replace spaces and uppercase with hyphens and lowercase
+		sanitized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(fm.Name), " ", "-"))
+		if err := ValidateSkillName(sanitized); err != nil {
+			return nil, err
+		}
+		fm.Name = sanitized
 	}
 	if err := ValidateSkillDescription(fm.Description); err != nil {
 		return nil, err

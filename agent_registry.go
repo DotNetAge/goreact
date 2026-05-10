@@ -2,7 +2,6 @@ package goreact
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,22 +10,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AgentRegistry holds parsed agent configurations indexed by name.
 type AgentRegistry struct {
 	path   string
 	agents map[string]*core.AgentConfig
+	logger core.Logger
+}
+
+// agentRegistryOption holds configuration options for LoadAgentsFrom.
+type agentRegistryOption struct {
+	logger core.Logger
+}
+
+// AgentRegistryOption is a function that configures agent registry loading.
+type AgentRegistryOption func(*agentRegistryOption)
+
+// WithRegistryLogger returns an Option that sets the logger for agent registry operations.
+func WithRegistryLogger(logger core.Logger) AgentRegistryOption {
+	return func(o *agentRegistryOption) { o.logger = logger }
 }
 
 // LoadFrom loads all agent definition files (.md) from the specified directory,
 // parses their YAML frontmatter and system prompt body, and returns an AgentRegistry.
-func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
+//
+// Options:
+//   - WithRegistryLogger: custom logger for parsing warnings (defaults to core.DefaultLogger)
+func LoadAgentsFrom(dir string, opts ...AgentRegistryOption) (*AgentRegistry, error) {
 	absPath, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	cfg := &agentRegistryOption{logger: core.DefaultLogger()}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	registry := &AgentRegistry{
 		path:   absPath,
 		agents: make(map[string]*core.AgentConfig),
+		logger: cfg.logger,
 	}
 
 	entries, err := os.ReadDir(absPath)
@@ -42,7 +65,9 @@ func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
 			filePath := filepath.Join(absPath, entry.Name())
 			agent, err := parseAgentFile(filePath)
 			if err != nil {
-				slog.Warn("failed to parse agent file, skipping", "path", filePath, "error", err)
+				registry.logger.Warn("failed to parse agent file, skipping",
+					"path", filePath,
+					"error", err)
 				continue
 			}
 			registry.agents[agent.Name] = agent
@@ -126,6 +151,23 @@ func parseAgentFile(filePath string) (*core.AgentConfig, error) {
 			}
 		}
 	}
+	if metaVal, ok := meta["meta"]; ok {
+		if metaMap, ok := metaVal.(map[string]any); ok {
+			agent.Meta = deepCopyMeta(metaMap)
+		} else if metaSlice, ok := metaVal.([]any); ok {
+			agent.Meta = make(map[string]any)
+			for _, item := range metaSlice {
+				if itemMap, ok := item.(map[string]any); ok {
+					for k, v := range itemMap {
+						agent.Meta[k] = v
+					}
+				}
+			}
+			if len(agent.Meta) == 0 {
+				agent.Meta = nil
+			}
+		}
+	}
 
 	agent.Introduction = body
 	return agent, nil
@@ -141,6 +183,29 @@ func (r *AgentRegistry) List() []*core.AgentConfig {
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+func deepCopyMeta(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		switch val := v.(type) {
+		case map[string]any:
+			dst[k] = deepCopyMeta(val)
+		case []any:
+			newSlice := make([]any, len(val))
+			for i, item := range val {
+				if m, ok := item.(map[string]any); ok {
+					newSlice[i] = deepCopyMeta(m)
+				} else {
+					newSlice[i] = item
+				}
+			}
+			dst[k] = newSlice
+		default:
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 // It does not store the config in the registry.
@@ -186,6 +251,9 @@ func (r *AgentRegistry) SaveTo(agent *core.AgentConfig) error {
 	}
 	if len(agent.Skills) > 0 {
 		meta["skills"] = agent.Skills
+	}
+	if len(agent.Meta) > 0 {
+		meta["meta"] = agent.Meta
 	}
 
 	yamlData, err := yaml.Marshal(meta)

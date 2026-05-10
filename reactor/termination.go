@@ -8,46 +8,73 @@ import (
 // CheckTermination evaluates whether the T-A-O loop should stop.
 func (r *Reactor) CheckTermination(ctx *ReactContext) (bool, string) {
 	if ctx.CurrentIteration >= ctx.MaxIterations {
+		r.getLogger().Debug("termination: max iterations reached",
+			"iteration", ctx.CurrentIteration,
+			"max", ctx.MaxIterations)
 		return true, "reached max iterations"
 	}
 
 	if ctx.Ctx().Err() != nil {
+		r.getLogger().Debug("termination: context cancelled",
+			"error", ctx.Ctx().Err())
 		return true, "request cancelled"
 	}
 
 	if ctx.LastObservation != nil && ctx.LastObservation.Error != "" && !ctx.LastObservation.ShouldRetry {
 		if isToolErrorIrrecoverable(ctx.LastObservation) {
+			r.getLogger().Warn("termination: irrecoverable tool error",
+				"error", ctx.LastObservation.Error)
 			return true, "tool error: irrecoverable"
 		}
 	}
 
 	if ctx.LastThought != nil && ctx.LastThought.IsFinal {
+		r.getLogger().Debug("termination: thinker produced final answer")
 		return true, "thinker produced final answer"
 	}
 
 	if ctx.LastAction != nil && ctx.LastAction.Type == ActionTypeAnswer {
+		r.getLogger().Debug("termination: direct answer produced")
 		return true, "direct answer produced"
 	}
 
 	if ctx.LastAction != nil && ctx.LastAction.Type == ActionTypeClarify {
 		if ctx.LastAction.Target == "" {
+			r.getLogger().Debug("termination: clarification needed")
 			return true, "clarification needed"
 		}
 	}
 
 	if isDestructiveLoop(ctx.History) {
+		r.getLogger().Warn("termination: destructive loop detected",
+			"history_len", len(ctx.History))
 		return true, "destructive loop detected: same tool call and error repeated"
 	}
 
 	if isAgentStuck(ctx.History) {
+		r.getLogger().Warn("termination: agent stuck detected",
+			"history_len", len(ctx.History))
 		return true, "agent stuck: no tool progress in recent iterations"
 	}
 
 	if isResultConverged(ctx.History) {
+		r.getLogger().Info("termination: result converged",
+			"history_len", len(ctx.History))
 		return true, "result converged"
 	}
 
 	if isDuplicateAction(ctx.History) {
+		last := ctx.History[len(ctx.History)-1]
+		prev := ctx.History[len(ctx.History)-2]
+		r.getLogger().Warn("termination: duplicate action detected",
+			"last_target", last.Action.Target,
+			"last_params", fmt.Sprintf("%v", last.Action.Params),
+			"last_result_len", len(last.Action.Result),
+			"prev_target", prev.Action.Target,
+			"prev_params", fmt.Sprintf("%v", prev.Action.Params),
+			"prev_result_len", len(prev.Action.Result),
+			"history_len", len(ctx.History),
+			"iteration", ctx.CurrentIteration)
 		return true, "duplicate action detected"
 	}
 
@@ -140,7 +167,15 @@ func isDuplicateAction(history []Step) bool {
 	if last.Action.Type != ActionTypeToolCall || prev.Action.Type != ActionTypeToolCall {
 		return false
 	}
-	return last.Action.Target == prev.Action.Target && last.Action.Result == prev.Action.Result
+	if last.Action.Target != prev.Action.Target || last.Action.Result != prev.Action.Result {
+		return false
+	}
+	lastParams := fmt.Sprintf("%v", last.Action.Params)
+	prevParams := fmt.Sprintf("%v", prev.Action.Params)
+	if lastParams != prevParams {
+		return false
+	}
+	return true
 }
 
 func analyzeActionResult(result string) []string {

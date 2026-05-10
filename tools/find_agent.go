@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/DotNetAge/goreact/core"
 )
@@ -28,6 +29,12 @@ When to use:
 - You need a specialist capability that you do not have.
 - You are looking for an agent whose role matches the task domain.
 
+CRITICAL — Do NOT call this tool when:
+- The user simply mentions the word "agent" or "agents" in casual conversation.
+- The user's message is just a single word or vague phrase like "Agent", "agents", "find".
+- The user is asking about YOUR capabilities or identity — answer yourself.
+- You can handle the request directly without delegation.
+
 How it works:
 - Describe what capability you need — e.g. "data analysis", "security audit", "legal review"
 - Search checks agent name, role, and description (case-insensitive)
@@ -47,6 +54,10 @@ func (t *FindAgentTool) Execute(ctx context.Context, params map[string]any) (any
 	query, _ := params["query"].(string)
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
+	}
+	// Reject overly generic queries that would match all agents
+	if isGenericAgentQuery(query) {
+		return nil, fmt.Errorf("query is too generic — please describe the specific capability or domain you need (e.g. 'data analysis', 'security audit', 'code review')")
 	}
 
 	if t.runtimeDir == nil {
@@ -89,5 +100,17 @@ func (t *FindAgentTool) Execute(ctx context.Context, params map[string]any) (any
 		"count":      len(filtered),
 		"total_found": len(results),
 	}, nil
+}
+
+// isGenericAgentQuery rejects queries that are too generic and would match all agents.
+func isGenericAgentQuery(query string) bool {
+	q := strings.ToLower(strings.TrimSpace(query))
+	genericQueries := []string{"agent", "agents", "find", "search", "find agent", "search agent", "list", "list agents", "all", "any", "help"}
+	for _, g := range genericQueries {
+		if q == g {
+			return true
+		}
+	}
+	return false
 }
 

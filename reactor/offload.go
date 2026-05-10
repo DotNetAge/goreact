@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/DotNetAge/goreact/core"
 )
 
 // offloadThreshold is the maximum result size (in bytes) kept in context.
@@ -19,8 +22,29 @@ const offloadDirName = ".goreact" + string(os.PathSeparator) + "offload"
 // offloadPrefix is the marker prefix for offload reference text in message content.
 const offloadPrefix = "[offload:"
 
-// offloadSuffix is the marker suffix for offload reference text.
+// offloadSuffix is the marker suffix for offload reference text in message content.
 const offloadSuffix = "]"
+
+// offloadTTL defines how long offloaded files are kept before cleanup (24 hours).
+const offloadTTL = 24 * time.Hour
+
+// offloadLogger allows dependency injection for TUI/testing environments.
+// Must be set via SetOffloadLogger before any offload operation if custom logging is needed.
+var offloadLogger core.Logger = core.DefaultLogger()
+
+// SetOffloadLogger sets the logger for all offload operations.
+// This enables proper logging control in TUI and test environments.
+func SetOffloadLogger(logger core.Logger) {
+	offloadLogger = logger
+}
+
+// offloadCleanupInterval defines how often to check for expired files (1 hour).
+const offloadCleanupInterval = 1 * time.Hour
+
+var (
+	offloadCleanupOnce sync.Once
+	offloadCleanupMu   sync.Mutex
+)
 
 // resultExceedsThreshold checks if a tool result string exceeds the offload threshold.
 func resultExceedsThreshold(result string) bool {
@@ -123,4 +147,119 @@ func (r *Reactor) resolveSessionID(ctx *ReactContext) string {
 		return cw.SessionID
 	}
 	return ctx.TaskID
+}
+
+// CleanupOffloadedFiles removes expired offload files older than offloadTTL.
+// Should be called periodically (e.g., on Reactor startup or shutdown).
+func CleanupOffloadedFiles() error {
+	offloadCleanupOnce.Do(func() {
+		go periodicOffloadCleanup()
+	})
+	return nil
+}
+
+// periodicOffloadCleanup runs cleanup in the background at regular intervals.
+func periodicOffloadCleanup() {
+	ticker := time.NewTicker(offloadCleanupInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cleanupExpiredOffloads()
+	}
+}
+
+// cleanupExpiredOffloads scans all session directories and removes expired files.
+func cleanupExpiredOffloads() {
+	offloadCleanupMu.Lock()
+	defer offloadCleanupMu.Unlock()
+
+	rootDir := offloadDirName
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		offloadLogger.Warn("failed to read offload directory", "dir", rootDir, "error", err)
+		return
+	}
+
+	now := time.Now()
+	var totalCleaned int64
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		sessionDir := filepath.Join(rootDir, entry.Name())
+		files, err := os.ReadDir(sessionDir)
+		if err != nil {
+			continue
+		}
+
+		for _, file := range files {
+			info, err := file.Info()
+			if err != nil {
+				continue
+			}
+
+			if now.Sub(info.ModTime()) > offloadTTL {
+				filePath := filepath.Join(sessionDir, file.Name())
+				if err := os.Remove(filePath); err != nil {
+					offloadLogger.Warn("failed to clean up offloaded file",
+						"file", filePath,
+						"error", err,
+					)
+					continue
+				}
+				totalCleaned++
+			}
+		}
+
+		// Remove empty session directories
+		if remaining, err := os.ReadDir(sessionDir); err == nil && len(remaining) == 0 {
+			os.Remove(sessionDir)
+		}
+	}
+
+	if totalCleaned > 0 {
+		offloadLogger.Info("offload cleanup completed",
+			"files_removed", totalCleaned,
+		)
+	}
+}
+
+// CleanupSessionOffloads removes all offloaded files for a specific session.
+// Called when a session is explicitly closed or deleted.
+func CleanupSessionOffloads(sessionID string) error {
+	sessionDir := offloadPath(sessionID)
+
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read session offload directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		filePath := filepath.Join(sessionDir, entry.Name())
+		if err := os.Remove(filePath); err != nil {
+			offloadLogger.Warn("failed to remove session offload file",
+				"file", filePath,
+				"error", err,
+			)
+		}
+	}
+
+	if err := os.Remove(sessionDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove session offload directory: %w", err)
+	}
+
+	offloadLogger.Info("session offload cleanup completed",
+		"session_id", sessionID,
+		"files_removed", len(entries),
+	)
+
+	return nil
 }

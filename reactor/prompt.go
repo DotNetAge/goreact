@@ -17,6 +17,7 @@ type Prompt struct {
 	// Static sections — rendered once, stable across rounds
 	Identity            string // Agent name, role, description
 	Rules               string // Behavioral rules
+	OutputFormat        string // Expected JSON output format (Thought schema)
 	ToolUsage           string // Tool usage guidelines
 	SkillsCatalog       string // Skills metadata matched to AgentConfig.Skills
 	ExecutionGuidelines string // Caution about risky operations
@@ -39,14 +40,15 @@ func NewDefaultPrompt(name, role, description, introduction string) *Prompt {
 	return &Prompt{
 		Identity: fmt.Sprintf("You are an %s.\n- Name: %s\n- Description: %s\n\n%s",
 			role, name, description, introduction),
-		Rules: DefaultBehavioralRules(),
+		Rules:        DefaultBehavioralRules(),
+		OutputFormat: BuildOutputFormat(),
 	}
 }
 
 // ToSectionedMessages renders the Prompt into an ordered slice of SystemMessage.
 // Static sections come first (KV Cache anchor), followed by the dynamic boundary,
 // followed by dynamic sections.
-func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
+func (p *Prompt) ToSectionedMessages(sessionID string, sessionDir string) []gochatcore.Message {
 	var msgs []gochatcore.Message
 
 	// ===== Static sections (KV cache anchor) =====
@@ -62,14 +64,14 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 			"## Behavioral Rules\n%s", p.Rules)))
 	}
 
-	// Section 3: Execution guidelines
-	if p.ExecutionGuidelines != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.ExecutionGuidelines))
+	// Section 3: Output format (Thought JSON schema)
+	if p.OutputFormat != "" {
+		msgs = append(msgs, gochatcore.NewSystemMessage(p.OutputFormat))
 	}
 
-	// Section 4: Skills catalog + usage guidance
-	if p.SkillsCatalog != "" {
-		msgs = append(msgs, gochatcore.NewSystemMessage(p.SkillsCatalog))
+	// Section 4: Execution guidelines
+	if p.ExecutionGuidelines != "" {
+		msgs = append(msgs, gochatcore.NewSystemMessage(p.ExecutionGuidelines))
 	}
 
 	// Section 5: Tool usage guidelines
@@ -77,7 +79,12 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToolUsage))
 	}
 
-	// Section 6: Agent coordination (agent discovery, delegation, ranking)
+	// Section 6: Skills catalog + usage guidance
+	if p.SkillsCatalog != "" {
+		msgs = append(msgs, gochatcore.NewSystemMessage(p.SkillsCatalog))
+	}
+
+	// Section 7: Agent coordination (agent discovery, delegation, ranking)
 	if p.AgentCoordination != "" {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.AgentCoordination))
 	}
@@ -87,9 +94,10 @@ func (p *Prompt) ToSectionedMessages() []gochatcore.Message {
 		msgs = append(msgs, gochatcore.NewSystemMessage(p.ToneAndStyle))
 	}
 
-	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo()))
+	// Section 9: Environment info
+	msgs = append(msgs, gochatcore.NewSystemMessage(BuildEnvironmentInfo(sessionID, sessionDir)))
 
-	// Section 9: System reminders
+	// Section 10: System reminders
 	sysReminders := p.SystemReminders
 	if sysReminders == "" {
 		sysReminders = BuildSystemReminders()
@@ -117,7 +125,7 @@ func (p *Prompt) RenderToLLMInput(
 	tools []gochatcore.Tool,
 ) CallInput {
 	return CallInput{
-		SystemPromptSections: p.ToSectionedMessages(),
+		SystemPromptSections: p.ToSectionedMessages("", ""),
 		UserMessage:          input,
 		History:              history,
 		Tools:                tools,
@@ -130,7 +138,7 @@ func (p *Prompt) RenderToLLMInput(
 
 // BuildSystemReminders returns the core system explanation section.
 func BuildSystemReminders() string {
-	return `# System
+	return `## System
 - Tool results and user messages may include system hints or reminder tags.
   These contain guidance from the system about your current progress and next steps.
   They are part of the system's context management, not part of the tool output itself.
@@ -142,7 +150,7 @@ func BuildSystemReminders() string {
 
 // BuildExecutionGuidelines returns guidelines for cautious action execution.
 func BuildExecutionGuidelines() string {
-	return `# Executing actions with care
+	return `## Executing actions with care
 
 Carefully consider the reversibility and blast radius of actions before executing them.
 
@@ -157,7 +165,7 @@ When in doubt about an action's safety, break it into smaller steps and verify b
 
 // BuildToneAndStyle returns tone and style guidelines.
 func BuildToneAndStyle() string {
-	return `# Tone and style
+	return `## Tone and style
 - Only use emojis if the user explicitly requests it.
 - Your responses should be concise and to the point. Avoid unnecessary elaboration.
 - When referencing specific functions or pieces of code, include the pattern file_path:line_number.
@@ -167,7 +175,7 @@ func BuildToneAndStyle() string {
 // BuildOutputEfficiency returns guidelines for communicating with the user.
 // Adapted from Claude Code's "Communicating with the user" section.
 func BuildOutputEfficiency() string {
-	return `# Communicating with the user
+	return `## Communicating with the user
 When sending user-facing text, you are writing for a person, not logging to a console. Assume the user can only see your text output — not your tool calls or internal reasoning.
 
 Before your first action, briefly state what you are about to do. While working, give short updates at key moments: when you find something load-bearing, when changing direction, when you have made progress.
@@ -178,7 +186,7 @@ Write user-facing text in flowing prose. Avoid fragments, excessive symbols, or 
 
 What matters most is the reader understanding your output without mental overhead or follow-ups. Get straight to the point. Avoid filler or stating the obvious. If something about your reasoning is critical, save it for the end (inverted pyramid).
 
-## Task Briefing
+### Task Briefing
 Once you have completed all steps of the task, your final answer MUST include a detailed briefing at the beginning. The briefing must cover:
 1. What the user originally requested.
 2. What steps were taken and which tools were used at each step.
@@ -193,24 +201,26 @@ func BuildLanguage(language string) string {
 	if language == "" {
 		language = "English"
 	}
-	return fmt.Sprintf(`# Language
+	return fmt.Sprintf(`## Language
 Always respond in %s. Use %s in all explanations, comments, and communication with the user.
 Technical terms and code identifiers should keep their original form.`, language, language)
 }
 
 // BuildEnvironmentInfo returns the runtime environment description.
-func BuildEnvironmentInfo() string {
-	cwd, _ := os.Getwd()     // 当前工作目录
-	platform := runtime.GOOS // "darwin" / "linux" / "windows"
+func BuildEnvironmentInfo(sessionID string, sessionDir string) string {
+	cwd, _ := os.Getwd()
+	platform := runtime.GOOS
 	osVersion := runtime.GOARCH
-	shell, _ := os.LookupEnv("SHELL") // "/bin/zsh" / "/bin/bash"
+	shell, _ := os.LookupEnv("SHELL")
 
-	return fmt.Sprintf(`# Environment
+	return fmt.Sprintf(`## Environment
 You have been invoked in the following environment:
 - Primary working directory: %s
 - Platform: %s
 - OS version: %s
 - Shell: %s
+- Session ID: %s
+- Pwd: %s
 - App name: %s
 - App version: %s
 %s`,
@@ -218,6 +228,8 @@ You have been invoked in the following environment:
 		platform,
 		osVersion,
 		shell,
+		sessionID,
+		sessionDir,
 		core.SYSTEM_INFO_NAME,
 		core.SYSTEM_INFO_VERSION,
 		core.SYSTEM_INFO_USERS)
@@ -225,7 +237,7 @@ You have been invoked in the following environment:
 
 // BuildToolUsageGuidelines returns the standard tool usage guidelines section.
 func BuildToolUsageGuidelines() string {
-	return `# Using your tools
+	return `## Using your tools
 - Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work.
   - To read files use Read instead of cat, head, tail, or sed
   - To edit files use Edit instead of sed or awk
@@ -270,4 +282,37 @@ func BuildDefaultRules() string {
 - Do not execute destructive operations without user consent.
 - When referencing code, include file_path:line_number.
 - Prefer known facts from memory; when memory is available, use it to ground responses.`
+}
+
+// BuildOutputFormat returns the required JSON output format for the Think phase.
+// The LLM MUST wrap its first response in this JSON schema so the system can interpret
+// whether to answer directly, call tools, clarify, or delegate.
+func BuildOutputFormat() string {
+	return `## Response Format
+Your response MUST begin with a single JSON object following the schema below.
+You MAY wrap it in a markdown code fence (with or without "json" language tag).
+
+### Schema
+{
+  "decision": "<answer | clarify>",
+  "reasoning": "explain your reasoning briefly",
+  "final_answer": "... (only when decision is "answer")",
+  "clarification_question": "... (only when decision is "clarify")",
+  "is_final": true|false
+}
+
+### Decision rules
+- **answer**: You can answer directly without tools. Set "final_answer" to your response.
+- **clarify**: The user's request is ambiguous. Set "clarification_question" to ask for details.
+- **act** (tool calling): If you need to call a tool, use native function calling via the provided tools instead of setting "decision":"act" in JSON. The system will detect native tool calls automatically.
+
+### Examples
+{"decision": "answer", "reasoning": "I know this directly.", "final_answer": "The answer is 42.", "is_final": true}
+
+{"decision": "clarify", "reasoning": "The request is ambiguous.", "clarification_question": "Could you specify which file you want me to read?", "is_final": false}
+
+### Important
+- Your reasoning is for the system, NOT the user. Keep it brief and focused on what you're doing.
+- The "final_answer" is what the user will see — write it in natural language.
+- For tool calls, DO NOT put tool_calls in the JSON. Use the native function calling mechanism instead — call the tool directly through the function interface provided to you.`
 }

@@ -58,6 +58,9 @@ type ReactContext struct {
 	LastObservation *Observation
 	History         []Step
 
+	// Token tracking for current iteration
+	CurrentInputTokens int
+
 	// Termination
 	IsTerminated      bool
 	TerminationReason string
@@ -139,6 +142,8 @@ func (c *ReactContext) AppendHistory(step Step) {
 
 // AddMessage appends a message to the conversation history.
 func (c *ReactContext) AddMessage(role, content string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.ConversationHistory = append(c.ConversationHistory, core.Message{
 		Role:      role,
 		Content:   content,

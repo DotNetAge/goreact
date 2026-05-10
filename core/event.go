@@ -102,8 +102,10 @@ type ReactEvent struct {
 
 // ActionStartData is the payload for ActionStart events.
 type ActionStartData struct {
-	ToolName string         `json:"tool_name"`
-	Params   map[string]any `json:"params,omitempty"`
+	ToolName      string         `json:"tool_name"`
+	Params        map[string]any `json:"params,omitempty"`
+	PredictedTokens int           `json:"predicted_tokens,omitempty"`
+	Iteration     int            `json:"iteration,omitempty"`
 }
 
 // ActionResultData is the payload for ActionResult events.

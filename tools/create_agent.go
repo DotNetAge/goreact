@@ -9,8 +9,8 @@ import (
 
 // CreateAgentTool creates a new agent definition and registers it in the agent directory.
 type CreateAgentTool struct {
-	registry    AgentDefinitionRegistry
-	runtimeDir  *core.RuntimeDirectory
+	registry   AgentDefinitionRegistry
+	runtimeDir *core.RuntimeDirectory
 }
 
 // AgentDefinitionRegistry is the interface for saving agent definitions.
@@ -37,21 +37,29 @@ When to use:
 - The user asks you to define a dedicated expert role with its own system prompt.
 - You identified a gap in the agent registry that would benefit from a custom specialist.
 
-Before creating, call SkillList to query all available skills, and call ModelList to see all available models.
-
 How to create a good agent:
+
+Before defining the fields below, call SkillList to query all available skills and ModelList to see all available models — you need this information to make informed choices.
+
 - Name: short, descriptive, kebab-case (e.g. "code-reviewer", "data-analyst", "security-auditor")
-- Role: the agent's function (e.g. "code reviewer", "data analyst", "security auditor")
+- Role: the agent's function (e.g. "code reviewer", "data analyst", "security auditor"), write a clear job title that immediately conveys the Agent's area of expertise.
 - Description: concise capability summary (max 1024 chars) — this is what FindAgent searches against
+	- **Third-person perspective** — describe what this position does, not "You are..."
+	- **Job posting style** — use "Responsible for..." framing
+	- **Concise** — keep it brief and impactful
+	- Brief position summary in third-person perspective
 - Introduction: the agent's full system prompt — define its behavior, tools, rules, and output format
-- Skills: array of skill names the agent should have — call SkillList first to see what's available (e.g. ["code-review", "security"])
+- Skills: array of skill names the agent should have.
+	- **Prerequisite**: call SkillList to learn what skills are available.
+	- **Selection rule**: choose only skills whose domain aligns with the agent's Role, Description, and Introduction. Each skill must serve the agent's stated area of expertise, its responsibilities, and the specific scope of work defined in its instructions. Do not assign skills that are irrelevant to the agent's purpose or outside the boundaries of its role.
+	- Example: a "security-auditor" agent responsible for code vulnerability scanning should receive skills like ["code-review", "security"], not ["data-visualization", "marketing"].
 - Model: pick the model from ModelList results — set this to the model name that best fits the agent's role
 
 Once created, the agent appears in FindAgent results and can receive tasks via Delegate.`,
 		Tags: []string{"agent", "create", "definition", "orchestration"},
 		Parameters: []core.Parameter{
 			{Name: "name", Type: "string", Description: "Agent name (kebab-case, e.g. 'code-reviewer')", Required: true},
-			{Name: "role", Type: "string", Description: "Agent role (e.g. 'code reviewer', 'data analyst')", Required: true},
+			{Name: "role", Type: "string", Description: "Agent role (e.g. 'code reviewer', 'data analyst') ", Required: true},
 			{Name: "description", Type: "string", Description: "Capability summary (max 1024 chars) — used by FindAgent for search matching", Required: true},
 			{Name: "introduction", Type: "string", Description: "Full system prompt / instructions defining the agent's behavior, rules, and output format", Required: true},
 			{Name: "skills", Type: "array", Description: "Array of skill names the agent should have. Check SkillList for available skills first.", Required: false},

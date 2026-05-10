@@ -33,6 +33,7 @@ type CallResult struct {
 	Content    string
 	ToolCalls  []gochatcore.ToolCall // native function call results (non-streaming) or nil
 	TokenUsage core.TokenUsage
+	Error      error // non-nil when the LLM call itself failed (network, auth, timeout, etc.)
 }
 
 // StreamChunkCallback is called for each content chunk during streaming.
@@ -69,6 +70,7 @@ type LLMCaller struct {
 	contextWindow  *core.ContextWindow
 	slideConfig    core.SlideConfig
 	sessionStore   core.SessionStore
+	logger           core.Logger // Unified logging interface
 
 	// Token usage records for this session
 	records []core.TokenUsage
@@ -91,6 +93,7 @@ type LLMCallerConfig struct {
 	FrequencyPenalty float64
 	MaxTokens        int
 	ClientType       gochat.ClientType
+	Logger           core.Logger // Unified logging interface
 }
 
 // NewLLMCaller creates an LLMCaller with the given configuration.
@@ -120,6 +123,7 @@ func NewLLMCaller(
 		tokenEstimator:   tokenEstimator,
 		slideConfig:      core.DefaultSlideConfig,
 		sessionStore:     sessionStore,
+		logger:           cfg.Logger,
 		records:          make([]core.TokenUsage, 0),
 	}
 	for _, opt := range opts {
@@ -254,7 +258,7 @@ func (c *LLMCaller) Call(ctx context.Context, input CallInput) CallResult {
 	if c.mockLLM != nil {
 		resp, err := c.mockLLM(ctx, input)
 		if err != nil {
-			return c.buildErrorResult(err, preciseInput)
+			return c.buildErrorResult(ctx, input, err, preciseInput)
 		}
 		var toolCalls []gochatcore.ToolCall
 		if resp != nil && len(resp.Message.ToolCalls) > 0 {
@@ -267,7 +271,7 @@ func (c *LLMCaller) Call(ctx context.Context, input CallInput) CallResult {
 	builder := c.buildClient(messages, input.Tools)
 	resp, err := builder.GetResponseFor(c.clientType)
 	if err != nil {
-		return c.buildErrorResult(err, preciseInput)
+		return c.buildErrorResult(ctx, input, err, preciseInput)
 	}
 
 	content := ""
@@ -314,7 +318,7 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	if c.mockLLM != nil {
 		resp, err := c.mockLLM(ctx, input)
 		if err != nil {
-			return c.buildErrorResult(err, preciseInput)
+			return c.buildErrorResult(ctx, input, err, preciseInput)
 		}
 		if resp != nil {
 			onChunk(resp.Content)
@@ -326,10 +330,22 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 	}
 
 	// 5. Build request and stream
+	llmStart := time.Now()
+	c.logger.Info("llm call start",
+		"session_id", input.SessionID,
+		"model", c.modelName,
+		"input_tokens", preciseInput,
+		"tools", len(input.Tools),
+	)
 	builder := c.buildClient(messages, input.Tools)
 	stream, err := builder.GetStreamFor(c.clientType)
 	if err != nil {
-		return c.buildErrorResult(fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
+		c.logger.Error("llm call failed", err,
+			"session_id", input.SessionID,
+			"model", c.modelName,
+			"elapsed_ms", time.Since(llmStart).Milliseconds(),
+		)
+		return c.buildErrorResult(ctx, input, fmt.Errorf("stream LLM call failed: %w", err), preciseInput)
 	}
 	defer stream.Close()
 
@@ -349,12 +365,34 @@ func (c *LLMCaller) CallStream(ctx context.Context, input CallInput, onChunk Str
 		}
 	}
 
+	c.logger.Info("llm call end",
+		"session_id", input.SessionID,
+		"model", c.modelName,
+		"elapsed_ms", time.Since(llmStart).Milliseconds(),
+		"output_chars", contentBuf.Len(),
+	)
+
+	// Collect native tool calls accumulated from streaming deltas.
+	// The Stream accumulates tool call deltas internally during Next() iteration
+	// and finalizes them when EventDone is received (finish_reason="tool_calls").
+	streamToolCalls := stream.ToolCalls()
+	if len(streamToolCalls) > 0 {
+		toolCalls = make([]gochatcore.ToolCall, len(streamToolCalls))
+		for i, tc := range streamToolCalls {
+			toolCalls[i] = gochatcore.ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: tc.Arguments,
+			}
+		}
+	}
+
 	outputTokens := 0
 	if usage := stream.Usage(); usage != nil && usage.TotalTokens > 0 {
 		outputTokens = usage.TotalTokens
 	}
 
-	return c.recordResult(ctx, input, contentBuf.String(), preciseInput, outputTokens, messages, nil)
+	return c.recordResult(ctx, input, contentBuf.String(), preciseInput, outputTokens, messages, toolCalls)
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +493,7 @@ func (c *LLMCaller) doSlide(input CallInput) {
 	slided := cw.Slide(sc, estimateFn)
 
 	if len(slided.Messages) > 0 {
-		logger.Warn("context window slid messages",
+		c.logger.Warn("context window slid messages",
 			"session_id", cw.SessionID,
 			"evicted", len(slided.Messages),
 			"tokens_freed", slided.TokenCount,
@@ -505,7 +543,9 @@ func (c *LLMCaller) buildClient(messages []gochatcore.Message, tools []gochatcor
 		Model(c.modelName).
 		Temperature(c.temperature).
 		MaxTokens(c.maxTokens).
-		EnableThinking(true)
+		EnableThinking(true).
+		ParallelToolCalls(true).
+		ToolChoice("auto")
 
 	if c.topP > 0 {
 		builder = builder.TopP(c.topP)
@@ -588,8 +628,21 @@ func (c *LLMCaller) recordResult(ctx context.Context, input CallInput, content s
 	c.mu.Unlock()
 
 	// Persist to SessionStore
-	if c.sessionStore != nil && input.SessionID != "" {
-		_ = c.sessionStore.AppendTokenUsage(ctx, input.SessionID, usage)
+	sessionID := input.SessionID
+	if sessionID == "" {
+		c.mu.RLock()
+		if c.contextWindow != nil {
+			sessionID = c.contextWindow.SessionID
+		}
+		c.mu.RUnlock()
+	}
+	if c.sessionStore != nil && sessionID != "" {
+		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
+			c.logger.Warn("failed to persist token usage",
+				"session_id", sessionID,
+				"error", persistErr,
+			)
+		}
 	}
 
 	return CallResult{
@@ -602,18 +655,59 @@ func (c *LLMCaller) recordResult(ctx context.Context, input CallInput, content s
 // recordPartialResult records a partial result (e.g., streaming error after partial content).
 func (c *LLMCaller) recordPartialResult(ctx context.Context, input CallInput, content string, inputTokens int, err error) CallResult {
 	result := c.recordResult(ctx, input, content, inputTokens, err, nil, nil)
+	result.Error = err
 	return result
 }
 
-// buildErrorResult creates a CallResult for failed calls with zero content and error info.
-func (c *LLMCaller) buildErrorResult(err error, inputTokens int) CallResult {
+// buildErrorResult creates a CallResult for failed calls, records the token usage,
+// persists it to SessionStore, and returns the result.
+func (c *LLMCaller) buildErrorResult(ctx context.Context, input CallInput, err error, inputTokens int) CallResult {
+	// Calculate remain tokens
+	remainTokens := c.maxTokens
+	c.mu.RLock()
+	if c.contextWindow != nil {
+		remainTokens = int(c.contextWindow.TokensRemaining())
+	}
+	c.mu.RUnlock()
+
+	usage := core.TokenUsage{
+		Timestamp:    time.Now(),
+		InputTokens:  inputTokens,
+		OutputTokens: 0,
+		RemainTokens: remainTokens,
+	}
+
+	// Update context window
+	c.mu.Lock()
+	if c.contextWindow != nil && inputTokens > 0 {
+		c.contextWindow.AddTokens(int64(inputTokens))
+	}
+	c.records = append(c.records, usage)
+	c.mu.Unlock()
+
+	// Persist to SessionStore
+	sessionID := input.SessionID
+	if sessionID == "" {
+		c.mu.RLock()
+		if c.contextWindow != nil {
+			sessionID = c.contextWindow.SessionID
+		}
+		c.mu.RUnlock()
+	}
+	if c.sessionStore != nil && sessionID != "" {
+		if persistErr := c.sessionStore.AppendTokenUsage(ctx, sessionID, usage); persistErr != nil {
+			c.logger.Warn("failed to persist token usage on error",
+				"session_id", sessionID,
+				"error", persistErr,
+			)
+		}
+	}
+
 	return CallResult{
-		Content:   fmt.Sprintf("[llmcaller error] %v", err),
-		ToolCalls: nil,
-		TokenUsage: core.TokenUsage{
-			Timestamp:   time.Now(),
-			InputTokens: inputTokens,
-		},
+		Content:    fmt.Sprintf("[llmcaller error] %v", err),
+		ToolCalls:  nil,
+		TokenUsage: usage,
+		Error:      err,
 	}
 }
 

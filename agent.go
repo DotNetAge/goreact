@@ -31,6 +31,21 @@ func DefaultModel() *core.ModelConfig {
 	}
 }
 
+// filterSkills returns only skills whose names are in the required list.
+func filterSkills(allSkills []*core.Skill, required []string) []*core.Skill {
+	need := make(map[string]bool, len(required))
+	for _, name := range required {
+		need[name] = true
+	}
+	var result []*core.Skill
+	for _, s := range allSkills {
+		if need[s.Name] {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
 // DefaultConfig returns an AgentConfig with sensible defaults for a general-purpose agent.
 func DefaultConfig() *core.AgentConfig {
 	return &core.AgentConfig{
@@ -106,6 +121,7 @@ type agentSetup struct {
 
 	// Tools & Skills
 	extraTools     []core.FuncTool
+	excludeTools   []string
 	skipAllBundled bool
 	skipToolNames  map[string]bool
 	skillDirs      []string
@@ -117,6 +133,9 @@ type agentSetup struct {
 
 	// Behavior rules
 	ruleRegistry core.RuleRegistry
+
+	// Unified logging interface (injected from external)
+	logger core.Logger
 
 	// Unified Prompt (if nil, built from config defaults)
 	prompt *reactor.Prompt
@@ -181,6 +200,16 @@ func WithSession(sessionID string, maxTokens int64) AgentOption {
 func WithExtraTools(tools ...core.FuncTool) AgentOption {
 	return func(s *agentSetup) {
 		s.extraTools = append(s.extraTools, tools...)
+	}
+}
+
+// WithExcludeTools removes tools from the ToolRegistry by name after all
+// tools (bundled, extra, skill-registered) have been registered. This is
+// useful for selectively disabling specific tools from skills or the bundle
+// without disabling entire skill sets.
+func WithExcludeTools(names ...string) AgentOption {
+	return func(s *agentSetup) {
+		s.excludeTools = append(s.excludeTools, names...)
 	}
 }
 
@@ -271,6 +300,27 @@ func WithPrompt(p *reactor.Prompt) AgentOption {
 func WithRuleRegistry(reg core.RuleRegistry) AgentOption {
 	return func(s *agentSetup) {
 		s.ruleRegistry = reg
+	}
+}
+
+// WithLogger sets a unified logging interface for the Agent and all its internal components
+// (Reactor, ToolExecutor, Tools). This enables external log management (Zap, Logrus, etc.).
+//
+// Example (MindX integration):
+//
+//	import "github.com/DotNetAge/mindx/pkg/logging"
+//
+//	zapLogger := logging.DefaultZapLogger(&logging.ZapConfig{
+//	    Filename: "logs/app.log",
+//	    Console: true,
+//	})
+//	agent := goreact.NewAgent(
+//	    goreact.WithModel(model),
+//	    goreact.WithLogger(zapLogger),  // ← All logs go through Zap
+//	)
+func WithLogger(logger core.Logger) AgentOption {
+	return func(s *agentSetup) {
+		s.logger = logger
 	}
 }
 
@@ -381,6 +431,9 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 	if len(setup.extraTools) > 0 {
 		reactorOpts = append(reactorOpts, reactor.WithExtraTools(setup.extraTools...))
 	}
+	if len(setup.excludeTools) > 0 {
+		reactorOpts = append(reactorOpts, reactor.WithExcludeTools(setup.excludeTools...))
+	}
 	if setup.skipAllBundled {
 		reactorOpts = append(reactorOpts, reactor.WithoutBundledTools())
 	}
@@ -401,6 +454,10 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 
 	// Build ReactorConfig from ModelConfig — align all generation parameters
 	reactorConfig := buildReactorConfig(model, config.Introduction)
+
+	if setup.logger != nil {
+		reactorConfig.Logger = setup.logger
+	}
 
 	// Build default Prompt if none provided
 	if setup.prompt == nil {
@@ -428,9 +485,17 @@ func NewAgent(opts ...AgentOption) (*Agent, error) {
 
 	// Populate skills catalog and rules on the Prompt
 	if p := r.Prompt(); p != nil {
-		skills := r.SkillRegistry().ListSkills()
-		if catalog := reactor.BuildSkillsCatalog(skills); catalog != "" {
-			p.SkillsCatalog = catalog
+		// Only inject skills that the agent explicitly declared in its config.
+		// Progressive disclosure: we do NOT dump all loaded skills into the prompt.
+		// The LLM discovers additional skills on-demand via the Skill tool.
+		if len(config.Skills) > 0 {
+			skills := r.SkillRegistry().ListSkills()
+			filtered := filterSkills(skills, config.Skills)
+			if len(filtered) > 0 {
+				if catalog := reactor.BuildSkillsCatalog(filtered); catalog != "" {
+					p.SkillsCatalog = catalog
+				}
+			}
 		}
 		// Merge custom rules from RuleRegistry into Prompt.Rules (if set)
 		if reg := r.RuleRegistry(); reg != nil {
@@ -635,20 +700,25 @@ func (a *Agent) AskWithContext(ctx context.Context, sessionID string, question s
 		effectiveSessionID = a.SessionID()
 	}
 
-	// 1. Build complete conversation history from SessionStore
+	// Ensure ContextWindow is set with the correct sessionID before execution
+	cw := a.reactor.ContextWindow()
+	if cw == nil || cw.SessionID != effectiveSessionID {
+		cw = core.NewContextWindowWithRole(effectiveSessionID, a.Name(), int64(a.model.MaxTokens))
+		a.reactor.SetContextWindow(cw)
+	}
+
+	// 1. Build conversation history from SessionStore (does NOT include current question)
 	history := a.buildHistory(ctx, effectiveSessionID)
 
-	// 2. Persist user message before execution
-	a.persistMessage(ctx, effectiveSessionID, "user", question)
-
-	// 3. Execute via Reactor (pure engine — no session awareness)
+	// 2. Execute via Reactor — user message is added by assembleMessages via UserMessage
 	runResult, err := a.reactor.Run(runCtx, question, reactor.ConversationHistory(history))
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Persist assistant response and manage sliding window
+	// 3. Persist user message and assistant response after execution
 	if runResult.Answer != "" {
+		a.persistMessage(ctx, effectiveSessionID, "user", question)
 		a.persistMessage(ctx, effectiveSessionID, "assistant", runResult.Answer)
 		a.checkSlide(ctx, effectiveSessionID)
 	}

@@ -3,7 +3,6 @@ package reactor
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -12,8 +11,6 @@ import (
 	"github.com/DotNetAge/goreact/core"
 	"github.com/DotNetAge/goreact/tools"
 )
-
-var logger = slog.Default()
 
 const (
 	historyTokenBudgetRatio = 0.7
@@ -57,6 +54,8 @@ type ReactorConfig struct {
 
 	SystemPrompt  string
 	MaxIterations int
+
+	Logger core.Logger // Unified logging interface (optional, defaults to slog)
 
 	IsLocal bool
 }
@@ -106,6 +105,8 @@ type Reactor struct {
 	eventBus           EventBus
 
 	resultStore *core.ResultStore
+	kvStore     core.KVStore
+	fileStore   core.FileStore
 
 	// SpawnFunc creates sub-agents for the delegate tool.
 	// Set by Agent after Reactor creation to avoid circular deps.
@@ -130,6 +131,8 @@ type Reactor struct {
 	agentRegistry tools.AgentDefinitionRegistry
 	runtimeDir    *core.RuntimeDirectory
 	modelRegistry core.ModelRegistry
+
+	auditLogger core.AuditLogger
 }
 
 func (r *Reactor) EventBus() EventBus { return r.eventBus }
@@ -183,11 +186,20 @@ func (r *Reactor) PeekSnapshot() *RunSnapshot {
 
 func (r *Reactor) SetAskPermission(p *tools.AskPermission) { r.askPermission = p }
 
+// getLogger returns the injected Logger or default slog-based logger.
+func (r *Reactor) getLogger() core.Logger {
+	if r.config.Logger != nil {
+		return r.config.Logger
+	}
+	return core.DefaultLogger()
+}
+
 type reactorSetup struct {
 	systemPrompt   string
 	skipTools      map[string]bool
 	skipAllBundled bool
 	extraTools     []core.FuncTool
+	excludeTools   []string
 	resultLimits   core.ToolResultLimits
 	tokenEstimator core.TokenEstimator
 	eventBus       EventBus
@@ -197,6 +209,8 @@ type reactorSetup struct {
 	memory         core.Memory
 	mockLLM        MockLLMFunc
 	sessionStore   core.SessionStore
+	kvStore        core.KVStore
+	fileStore      core.FileStore
 	toolRegistry   core.ToolRegistry
 	skillRegistry  core.SkillRegistry
 	ruleRegistry   core.RuleRegistry
@@ -204,6 +218,7 @@ type reactorSetup struct {
 	agentRegistry  tools.AgentDefinitionRegistry
 	runtimeDir     *core.RuntimeDirectory
 	modelRegistry  core.ModelRegistry
+	auditLogger    core.AuditLogger
 }
 
 func (r *Reactor) applyDefaults(config *ReactorConfig) {
@@ -251,6 +266,7 @@ func (r *Reactor) initLLMCaller(config ReactorConfig, setup *reactorSetup) {
 		FrequencyPenalty: config.FrequencyPenalty,
 		MaxTokens:        config.MaxTokens,
 		ClientType:       config.ClientType,
+		Logger:           r.getLogger(), // ← 关键：注入 Logger 到 LLMCaller！
 	}
 
 	client := gochat.Client().Config(
@@ -280,7 +296,7 @@ func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
 		loader := core.NewFileSystemSkillLoader(dir)
 		skills, err := loader.Load()
 		if err != nil {
-			logger.Warn("failed to load skills", "dir", dir, "error", err)
+			r.getLogger().Warn("failed to load skills", "dir", dir, "error", err)
 			continue
 		}
 		for _, skill := range skills {
@@ -297,7 +313,7 @@ func (r *Reactor) discoverAndLoadSkills(setup *reactorSetup) {
 				}
 			}
 			if err := r.skillRegistry.RegisterSkill(skill); err != nil {
-				logger.Warn("failed to register skill", "name", skill.Name, "error", err)
+				r.getLogger().Warn("failed to register skill", "name", skill.Name, "error", err)
 			}
 		}
 	}
@@ -310,7 +326,7 @@ func (r *Reactor) initInteractionHandler() {
 		}
 	})
 	if err := r.RegisterTool(tools.NewAskUserTool()); err != nil {
-		logger.Warn("failed to register ask_user tool", "error", err)
+		r.getLogger().Warn("failed to register ask_user tool", "error", err)
 	}
 
 	r.askPermission = tools.NewAskPermission()
@@ -332,6 +348,9 @@ func (r *Reactor) initToolExecutor(setup *reactorSetup) {
 			}
 		}),
 		core.WithResultStore(r.resultStore),
+		core.WithKVStore(r.kvStore),
+		core.WithFileStore(r.fileStore),
+		core.WithLogger(r.getLogger()),
 	)
 }
 
@@ -375,12 +394,34 @@ func (r *Reactor) registerBundledTools(setup *reactorSetup) {
 		{"FindAgent", tools.NewFindAgentTool(r.runtimeDir)},
 		{"Rank", tools.NewRankTool(r.runtimeDir)},
 		{"CreateAgent", tools.NewCreateAgentTool(r.agentRegistry, r.runtimeDir)},
+		{"TaskCreate", tools.NewTaskCreateTool(func(ctx context.Context, agentName, task string) (string, error) {
+			if r.SpawnFunc != nil {
+				return r.SpawnFunc(ctx, agentName, task)
+			}
+			return "", fmt.Errorf("task_create: SpawnFunc not configured on reactor")
+		})},
+		{"TaskList", tools.NewTaskListTool()},
+		{"TaskGet", tools.NewTaskGetTool()},
+		{"TaskUpdate", tools.NewTaskUpdateTool()},
+		{"TaskStop", tools.NewTaskStopTool()},
+		{"TeamCreate", tools.NewTeamCreateTool(func(ctx context.Context, agentName, task string) (string, error) {
+			if r.SpawnFunc != nil {
+				return r.SpawnFunc(ctx, agentName, task)
+			}
+			return "", fmt.Errorf("team_create: SpawnFunc not configured on reactor")
+		})},
 	}
 	for _, bt := range bundledTools {
 		if !setup.skipTools[bt.name] {
 			if err := r.RegisterTool(bt.tool); err != nil {
-				logger.Warn("failed to register bundled tool", "name", bt.name, "error", err)
+				r.getLogger().Warn("failed to register bundled tool", "name", bt.name, "error", err)
 			}
+		}
+	}
+
+	if tools.IsWindowsPlatform() && !setup.skipTools["PowerShell"] {
+		if err := r.RegisterTool(tools.NewPowerShellTool()); err != nil {
+			r.getLogger().Warn("failed to register PowerShell tool", "error", err)
 		}
 	}
 }
@@ -405,6 +446,26 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 	r.agentRegistry = setup.agentRegistry
 	r.runtimeDir = setup.runtimeDir
 	r.modelRegistry = setup.modelRegistry
+	r.auditLogger = setup.auditLogger
+
+	if setup.kvStore == nil {
+		if kv, err := core.NewFileSystemKVStore(""); err == nil {
+			r.kvStore = kv
+		} else {
+			r.getLogger().Warn("failed to initialize default KVStore, session data sharing disabled", "error", err)
+		}
+	} else {
+		r.kvStore = setup.kvStore
+	}
+	if setup.fileStore == nil {
+		if fs, err := core.NewFileSystemFileStore(""); err == nil {
+			r.fileStore = fs
+		} else {
+			r.getLogger().Warn("failed to initialize default FileStore, session file sharing disabled", "error", err)
+		}
+	} else {
+		r.fileStore = setup.fileStore
+	}
 
 	r.initRegistries(setup)
 	r.initLLMCaller(config, setup)
@@ -416,11 +477,41 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 
 	for _, tool := range setup.extraTools {
 		if err := r.RegisterTool(tool); err != nil {
-			logger.Warn("failed to register extra tool", "error", err)
+			r.getLogger().Warn("failed to register extra tool", "error", err)
 		}
 	}
 
+	// Apply exclusions: remove tools from registry after all registration is done
+	for _, name := range setup.excludeTools {
+		if err := r.toolRegistry.Remove(name); err != nil {
+			r.getLogger().Warn("failed to exclude tool", "name", name, "error", err)
+		}
+	}
+	// Invalidate cached LLM tool definitions after exclusions
+	if len(setup.excludeTools) > 0 {
+		r.cacheMu.Lock()
+		r.cachedLLMTools = nil
+		r.cacheMu.Unlock()
+	}
+
+	// Inject logger into offload package for proper dependency injection
+	SetOffloadLogger(r.getLogger())
+
+	// Start background cleanup for offloaded files
+	CleanupOffloadedFiles()
+
 	return r
+}
+
+func (r *Reactor) AuditLogger() core.AuditLogger { return r.auditLogger }
+
+func (r *Reactor) logAudit(ctx context.Context, entry core.AuditEntry) {
+	if r.auditLogger == nil {
+		return
+	}
+	if err := r.auditLogger.Log(ctx, entry); err != nil {
+		r.getLogger().Warn("failed to write audit log", "error", err)
+	}
 }
 
 func (r *Reactor) SkillRegistry() core.SkillRegistry       { return r.skillRegistry }
@@ -428,6 +519,8 @@ func (r *Reactor) ToolRegistry() core.ToolRegistry         { return r.toolRegist
 func (r *Reactor) ToolExecutor() core.ToolExecutor         { return r.toolExecutor }
 func (r *Reactor) RuleRegistry() core.RuleRegistry         { return r.ruleRegistry }
 func (r *Reactor) SessionStore() core.SessionStore         { return r.llmCaller.SessionStore() }
+func (r *Reactor) KVStore() core.KVStore                   { return r.kvStore }
+func (r *Reactor) FileStore() core.FileStore               { return r.fileStore }
 func (r *Reactor) ContextWindow() *core.ContextWindow      { return r.llmCaller.ContextWindow() }
 func (r *Reactor) SetContextWindow(cw *core.ContextWindow) { r.llmCaller.SetContextWindow(cw) }
 func (r *Reactor) SlideConfig() core.SlideConfig           { return r.llmCaller.SlideConfig() }
@@ -539,6 +632,8 @@ func (r *Reactor) CloneReactor(configOverride ReactorConfig) *Reactor {
 		agentRegistry: r.agentRegistry,
 		runtimeDir:    r.runtimeDir,
 		modelRegistry: r.modelRegistry,
+		kvStore:       r.kvStore,
+		fileStore:     r.fileStore,
 	}
 
 	// Clone LLMCaller with parent's shared infrastructure but independent client/context
@@ -587,13 +682,11 @@ func (r *Reactor) cloneLLMCallerForChild(childConfig ReactorConfig) *LLMCaller {
 		if parentCaller.SessionStore() != nil {
 			llmOpts = append(llmOpts, WithLLMCallerSessionStore(parentCaller.SessionStore()))
 		}
-		if est := parentCaller.Estimator(); est != nil {
-			// Share the same estimator instance
-			_ = est
-		}
+		return NewLLMCaller(llmCfg, client, parentCaller.Estimator(), parentCaller.SessionStore(), llmOpts...)
 	}
 
-	return NewLLMCaller(llmCfg, client, parentCaller.Estimator(), parentCaller.SessionStore(), llmOpts...)
+	// Fallback: create standalone LLMCaller for child without parent infrastructure
+	return NewLLMCaller(llmCfg, client, nil, nil, llmOpts...)
 }
 
 func (r *Reactor) Run(ctx context.Context, input string, history ConversationHistory) (*RunResult, error) {
@@ -711,6 +804,26 @@ func (r *Reactor) buildResultFromContext(reactCtx *ReactContext, totalTokens int
 	}
 	reactCtx.EmitEvent(core.ExecutionSummary, summary)
 
+	// Emit TaskSummary for non-trivial tasks (more than 1 iteration or at least 1 tool call)
+	taskSummaryData := core.TaskSummaryData{
+		InputTokens:  totalTokens,
+		OutputTokens: 0,
+	}
+	if result.TotalIterations > 1 || summary.ToolCalls > 0 {
+		toolWord := "tool calls"
+		if summary.ToolCalls == 1 {
+			toolWord = "tool call"
+		}
+		taskSummaryData.Summary = fmt.Sprintf(
+			"Completed %d iteration(s) with %d %s in %s. Termination reason: %s.",
+			result.TotalIterations, summary.ToolCalls, toolWord,
+			totalDuration.Round(time.Millisecond), result.TerminationReason,
+		)
+	} else if result.Answer != "" {
+		taskSummaryData.Summary = fmt.Sprintf("Direct answer provided. %s", result.TerminationReason)
+	}
+	reactCtx.EmitEvent(core.TaskSummary, taskSummaryData)
+
 	return result
 }
 
@@ -729,22 +842,45 @@ func (r *Reactor) handlePauseSnapshot(reactCtx *ReactContext) {
 
 func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart time.Time) (*RunResult, error) {
 	totalTokens := initialTokens
+	sessionID := r.resolveSessionID(reactCtx)
+	r.getLogger().Info("run loop start",
+		"session_id", sessionID,
+		"max_iterations", reactCtx.MaxIterations,
+		"input_preview", truncate(reactCtx.Input, 80),
+	)
 
 	for reactCtx.CurrentIteration < reactCtx.MaxIterations {
 		if terminated, reason := r.CheckTermination(reactCtx); terminated {
 			reactCtx.IsTerminated = true
 			reactCtx.TerminationReason = reason
+			r.getLogger().Info("run loop terminated",
+				"session_id", sessionID,
+				"iteration", reactCtx.CurrentIteration+1,
+				"reason", reason,
+			)
 			break
 		}
 
 		cycleStart := time.Now()
+		cycleNum := reactCtx.CurrentIteration + 1
+		r.getLogger().Info("cycle start",
+			"session_id", sessionID,
+			"iteration", cycleNum,
+		)
 		r.toolExecutor.ResetCycle()
 
 		tokens, err := r.Think(reactCtx)
 		totalTokens += tokens
+		reactCtx.CurrentInputTokens = tokens
 		if err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("think error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			r.getLogger().Error("cycle abort", err,
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "think",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+			)
 			break
 		}
 		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
@@ -758,6 +894,12 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Act(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("act error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			r.getLogger().Error("cycle abort", err,
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "act",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+			)
 			break
 		}
 
@@ -768,15 +910,35 @@ func (r *Reactor) runLoop(reactCtx *ReactContext, initialTokens int, runStart ti
 		if err := r.Observe(reactCtx); err != nil {
 			reactCtx.TerminationReason = fmt.Sprintf("observe error: %v", err)
 			reactCtx.EmitEvent(core.Error, reactCtx.TerminationReason)
+			r.getLogger().Error("cycle abort", err,
+				"session_id", sessionID,
+				"iteration", cycleNum,
+				"phase", "observe",
+				"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+			)
 			break
 		}
 		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
 
 		r.persistStep(reactCtx, cycleStart)
 		reactCtx.CurrentIteration++
+
+		r.getLogger().Info("cycle end",
+			"session_id", sessionID,
+			"iteration", cycleNum,
+			"elapsed_ms", time.Since(cycleStart).Milliseconds(),
+			"input_tokens", tokens,
+		)
 	}
 
 	result := r.buildResultFromContext(reactCtx, totalTokens, runStart)
+	r.getLogger().Info("run loop done",
+		"session_id", sessionID,
+		"total_iterations", result.TotalIterations,
+		"total_tokens", totalTokens,
+		"total_elapsed_ms", time.Since(runStart).Milliseconds(),
+		"termination_reason", result.TerminationReason,
+	)
 	r.handlePauseSnapshot(reactCtx)
 
 	return result, nil
@@ -796,15 +958,22 @@ func (r *Reactor) persistStepToStore(ctx context.Context, role, content string) 
 	msg := core.Message{Role: role, Content: content, Timestamp: time.Now().Unix()}
 	r.llmCaller.AddContextMessage(role, content)
 	if err := ss.Append(ctx, cw.SessionID, agentName, msg); err != nil {
-		logger.Warn("failed to persist step to session store", "session_id", cw.SessionID, "role", role, "error", err)
+		r.getLogger().Warn("failed to persist step to session store", "session_id", cw.SessionID, "role", role, "error", err)
 	}
 }
 
 // emitActionResult emits ActionStart and ActionResult events for a tool call action.
 func (r *Reactor) emitActionResult(reactCtx *ReactContext) {
+	predictedTokens := reactCtx.CurrentInputTokens
+	if predictedTokens > 0 {
+		predictedTokens = int(float64(predictedTokens) * 1.5)
+	}
+
 	reactCtx.EmitEvent(core.ActionStart, core.ActionStartData{
-		ToolName: reactCtx.LastAction.Target,
-		Params:   reactCtx.LastAction.Params,
+		ToolName:        reactCtx.LastAction.Target,
+		Params:          reactCtx.LastAction.Params,
+		PredictedTokens: predictedTokens,
+		Iteration:       reactCtx.CurrentIteration,
 	})
 	resultData := core.ActionResultData{
 		ToolName: reactCtx.LastAction.Target,
@@ -834,7 +1003,7 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		return nil, fmt.Errorf("coordinator mode but no CoordState")
 	}
 
-	logger.Info("entering coordinator wait loop", "parent", cs.ParentTaskID,
+	r.getLogger().Info("entering coordinator wait loop", "parent", cs.ParentTaskID,
 		"tasks", cs.TaskProgress.Count())
 
 	// Poll interval: start at 500ms, adaptive up to 5s
@@ -850,7 +1019,6 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		}
 
 		// Check lifecycle state
-		cs.LifecycleState = cs.LifecycleState // read (for potential future locking)
 		if cs.LifecycleState.IsTerminal() {
 			break
 		}
@@ -865,13 +1033,13 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 
 		// Act (coordination status report)
 		if err := r.Act(reactCtx); err != nil {
-			logger.Warn("coordinator act error", "error", err)
+			r.getLogger().Warn("coordinator act error", "error", err)
 		}
 		reactCtx.EmitEvent(core.ThinkingDone, reactCtx.LastThought)
 
 		// Observe (check task completion)
 		if err := r.Observe(reactCtx); err != nil {
-			logger.Warn("coordinator observe error", "error", err)
+			r.getLogger().Warn("coordinator observe error", "error", err)
 			break
 		}
 		reactCtx.EmitEvent(core.ObservationDone, reactCtx.LastObservation)
@@ -891,7 +1059,7 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		// If Observe produced a final answer (all tasks done), exit loop
 		if reactCtx.LastThought != nil && reactCtx.LastThought.Decision == DecisionAnswer &&
 			reactCtx.LastThought.IsFinal {
-			logger.Info("coordinator loop complete", "iterations", reactCtx.CurrentIteration)
+			r.getLogger().Info("coordinator loop complete", "iterations", reactCtx.CurrentIteration)
 			break
 		}
 
@@ -915,6 +1083,10 @@ func (r *Reactor) runCoordinatorLoop(reactCtx *ReactContext, totalTokens int, co
 		case ctrl := <-cs.ControlChan:
 			// Lifecycle control command received
 			r.handleCoordinatorControl(cs, ctrl)
+		}
+
+		if cs.LifecycleState.IsTerminal() {
+			break
 		}
 	}
 
@@ -952,13 +1124,21 @@ func (r *Reactor) handleCoordinatorControl(cs *CoordState, cmd *core.ControlComm
 	switch cmd.Action {
 	case core.CmdInterrupt:
 		if err := cs.Interrupt(cmd.Reason); err != nil {
-			logger.Warn("coordinator interrupt failed", "error", err)
+			r.getLogger().Warn("coordinator interrupt failed", "error", err)
 		}
 	case core.CmdCancel:
 		if err := cs.Cancel(cmd.Reason); err != nil {
-			logger.Warn("coordinator cancel failed", "error", err)
+			r.getLogger().Warn("coordinator cancel failed", "error", err)
 		}
 	default:
-		logger.Info("unknown coordinator control command", "action", cmd.Action)
+		r.getLogger().Info("unknown coordinator control command", "action", cmd.Action)
 	}
+}
+
+// wrapError wraps an error with context information.
+func wrapError(err error, format string, args ...any) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), err)
 }

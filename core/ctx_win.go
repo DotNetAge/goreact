@@ -178,13 +178,14 @@ func (w *ContextWindow) calculateTotalTokens(estimateFn func(string) int) int64 
 	return total
 }
 
-// Slide batch-removes oldest messages until token usage drops to TargetRatio.
-// It always preserves at least MinPreserveMessages messages.
-// System role messages are NEVER evicted — they are always skipped.
-// Returns the evicted messages so callers can forward them to RAG/Memory.
+// Slide batch-removes the oldest non-system messages until token usage drops to
+// TargetRatio. It always preserves at least MinPreserveMessages non-system messages.
+// System role messages are NEVER evicted — they are preserved in place and skipped
+// during sliding. Returns the evicted messages so callers can forward them to
+// RAG/Memory.
 //
-// Performance: O(n) total — uses incremental token tracking instead of
-// recalculating from scratch on each iteration.
+// Performance: O(n*m) where n is evicted count and m is scan depth for the next
+// non-system message; typically small since system messages are at the front.
 func (w *ContextWindow) Slide(config SlideConfig, estimateFn func(string) int) SlidedMessages {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -213,17 +214,23 @@ func (w *ContextWindow) Slide(config SlideConfig, estimateFn func(string) int) S
 			break
 		}
 
-		removed := w.Messages[0]
-
-		// Never evict system role messages
-		if removed.Role == "system" {
-			w.Messages = w.Messages[1:]
-			continue
+		// Find the first non-system message to evict.
+		// System messages are always preserved in place during sliding.
+		evictIdx := -1
+		for i, m := range w.Messages {
+			if m.Role != "system" {
+				evictIdx = i
+				break
+			}
+		}
+		if evictIdx < 0 {
+			break
 		}
 
+		removed := w.Messages[evictIdx]
 		removedTokens := int64(estimate(removed.Content))
 
-		w.Messages = w.Messages[1:]
+		w.Messages = append(w.Messages[:evictIdx], w.Messages[evictIdx+1:]...)
 		slided = append(slided, removed)
 		slidedTokens += removedTokens
 

@@ -13,7 +13,7 @@ type testHook struct {
 }
 
 func (h *testHook) EventType() HookEventType { return h.eventType }
-func (h *testHook) Execute(ctx any) HookResult {
+func (h *testHook) Execute(ctx *HookContext) HookResult {
 	result := HookResult{Message: h.message}
 	if h.block {
 		result.PermissionResult = &PermissionResult{Behavior: PermissionDeny, Message: "blocked by test hook"}
@@ -26,9 +26,9 @@ func (h *testHook) Execute(ctx any) HookResult {
 
 func TestHookResult_Fields(t *testing.T) {
 	r := HookResult{
-		PermissionResult:     &PermissionResult{Behavior: PermissionAllow},
-		UpdatedInput:         map[string]any{"key": "val"},
-		PreventContinuation:  true,
+		PermissionResult:    &PermissionResult{Behavior: PermissionAllow},
+		UpdatedInput:        map[string]any{"key": "val"},
+		PreventContinuation: true,
 		Message:             "test message",
 	}
 	if !r.PreventContinuation {
@@ -49,9 +49,11 @@ func TestHook_PreToolUse_Block(t *testing.T) {
 		t.Errorf("expected %s, got %s", HookPreToolUse, hook.EventType())
 	}
 
-	result := hook.Execute(&ToolUseContext{
-		ToolName: "Bash",
-		Params:   map[string]any{"cmd": "rm -rf /"},
+	result := hook.Execute(&HookContext{
+		ToolUseContext: &ToolUseContext{
+			ToolName: "Bash",
+			Params:   map[string]any{"cmd": "rm -rf /"},
+		},
 	})
 	if result.PermissionResult == nil || result.PermissionResult.Behavior != PermissionDeny {
 		t.Error("pre-tool-use hook should block execution")
@@ -67,9 +69,11 @@ func TestHook_PreToolUse_Modify(t *testing.T) {
 		modify:    true,
 	}
 
-	result := hook.Execute(&ToolUseContext{
-		ToolName: "Write",
-		Params:   map[string]any{"path": "/tmp/file"},
+	result := hook.Execute(&HookContext{
+		ToolUseContext: &ToolUseContext{
+			ToolName: "Write",
+			Params:   map[string]any{"path": "/tmp/file"},
+		},
 	})
 	if result.UpdatedInput == nil {
 		t.Error("hook should modify input")
@@ -85,13 +89,15 @@ func TestHook_PostToolUse_Context(t *testing.T) {
 		message:   "logged",
 	}
 
-	ctx := &PostToolUseContext{
-		ToolUseContext: &ToolUseContext{
-			ToolName: "Read",
-			Params:   map[string]any{"path": "/tmp/f"},
+	ctx := &HookContext{
+		PostToolUseContext: &PostToolUseContext{
+			ToolUseContext: &ToolUseContext{
+				ToolName: "Read",
+				Params:   map[string]any{"path": "/tmp/f"},
+			},
+			Result:   "file content here",
+			Duration: 42,
 		},
-		Result:   "file content here",
-		Duration: 42,
 	}
 
 	result := hook.Execute(ctx)
@@ -124,9 +130,9 @@ func TestPostToolUseContext_Fields(t *testing.T) {
 	}
 	pctx := &PostToolUseContext{
 		ToolUseContext: base,
-		Result:        "3 matches found",
-		Err:           context.DeadlineExceeded,
-		Duration:      15,
+		Result:         "3 matches found",
+		Err:            context.DeadlineExceeded,
+		Duration:       15,
 	}
 	if pctx.ToolName != "Grep" {
 		t.Errorf("embedded ToolName should be accessible: %s", pctx.ToolName)
@@ -151,5 +157,160 @@ func TestPermissionResult_InHookResult(t *testing.T) {
 	hr := HookResult{PermissionResult: pr}
 	if hr.PermissionResult.Behavior == PermissionAllow {
 		t.Error("should be denied")
+	}
+}
+
+type mockHook struct {
+	eventType HookEventType
+	executeFn func(ctx *HookContext) HookResult
+	callCount int
+}
+
+func (h *mockHook) EventType() HookEventType { return h.eventType }
+func (h *mockHook) Execute(ctx *HookContext) HookResult {
+	h.callCount++
+	return h.executeFn(ctx)
+}
+
+func TestHook_PreToolUse_PreventContinuation(t *testing.T) {
+	hook := &mockHook{
+		eventType: HookPreToolUse,
+		executeFn: func(ctx *HookContext) HookResult {
+			return HookResult{
+				PreventContinuation: true,
+				Message:             "Blocked by policy",
+			}
+		},
+	}
+
+	tuc := &ToolUseContext{ToolName: "Bash", Params: map[string]any{"command": "rm -rf /"}}
+	ctx := &HookContext{ToolUseContext: tuc}
+	result := hook.Execute(ctx)
+
+	if !result.PreventContinuation {
+		t.Error("expected hook to block execution")
+	}
+	if hook.callCount != 1 {
+		t.Errorf("expected 1 call, got %d", hook.callCount)
+	}
+}
+
+func TestHook_PreToolUse_ModifyInput(t *testing.T) {
+	hook := &mockHook{
+		eventType: HookPreToolUse,
+		executeFn: func(ctx *HookContext) HookResult {
+			newInput := map[string]any{"command": "echo safe"}
+			return HookResult{UpdatedInput: newInput}
+		},
+	}
+
+	tuc := &ToolUseContext{ToolName: "Bash", Params: map[string]any{"command": "rm -rf /"}}
+	ctx := &HookContext{ToolUseContext: tuc}
+	result := hook.Execute(ctx)
+
+	if result.UpdatedInput == nil {
+		t.Fatal("expected UpdatedInput to be set")
+	}
+	if result.UpdatedInput["command"] != "echo safe" {
+		t.Errorf("expected modified command, got %v", result.UpdatedInput["command"])
+	}
+}
+
+func TestHook_PreToolUse_PermissionOverride(t *testing.T) {
+	hook := &mockHook{
+		eventType: HookPreToolUse,
+		executeFn: func(ctx *HookContext) HookResult {
+			return HookResult{
+				PermissionResult: &PermissionResult{
+					Behavior: PermissionAllow,
+					Message:  "Auto-approved by hook",
+				},
+			}
+		},
+	}
+
+	tuc := &ToolUseContext{ToolName: "Read"}
+	ctx := &HookContext{ToolUseContext: tuc}
+	result := hook.Execute(ctx)
+
+	if result.PermissionResult == nil {
+		t.Fatal("expected PermissionResult")
+	}
+	if result.PermissionResult.Behavior != PermissionAllow {
+		t.Errorf("expected Allow, got %v", result.PermissionResult.Behavior)
+	}
+}
+
+func TestHook_PostToolUse(t *testing.T) {
+	hook := &mockHook{
+		eventType: HookPostToolUse,
+		executeFn: func(ctx *HookContext) HookResult {
+			if ctx.PostToolUseContext == nil {
+				t.Fatal("expected PostToolUseContext to be populated")
+			}
+			return HookResult{Message: "Post-hook executed"}
+		},
+	}
+
+	tuc := &ToolUseContext{ToolName: "Write"}
+	postCtx := &PostToolUseContext{
+		ToolUseContext: tuc,
+		Result:         "file written",
+		Duration:       42,
+	}
+	ctx := &HookContext{
+		ToolUseContext:     tuc,
+		PostToolUseContext: postCtx,
+	}
+	result := hook.Execute(ctx)
+
+	if hook.EventType() != HookPostToolUse {
+		t.Errorf("expected PostToolUse, got %v", hook.EventType())
+	}
+	if result.Message != "Post-hook executed" {
+		t.Errorf("unexpected message: %s", result.Message)
+	}
+}
+
+func TestHook_SessionStart(t *testing.T) {
+	callCount := 0
+	hook := &mockHook{
+		eventType: HookSessionStart,
+		executeFn: func(ctx *HookContext) HookResult {
+			callCount++
+			return HookResult{Message: "Session initialized"}
+		},
+	}
+
+	ctx := &HookContext{}
+	result := hook.Execute(ctx)
+
+	if callCount != 1 {
+		t.Error("hook should have been called once")
+	}
+	if result.Message != "Session initialized" {
+		t.Errorf("unexpected message: %s", result.Message)
+	}
+	if hook.EventType() != HookSessionStart {
+		t.Errorf("expected SessionStart, got %v", hook.EventType())
+	}
+}
+
+func TestHook_Stop(t *testing.T) {
+	hook := &mockHook{
+		eventType: HookStop,
+		executeFn: func(ctx *HookContext) HookResult {
+			return HookResult{Message: "Cleanup completed"}
+		},
+	}
+
+	ctx := &HookContext{}
+	result := hook.Execute(ctx)
+
+	if hook.EventType() != HookStop {
+		t.Errorf("expected Stop, got %v", hook.EventType())
+	}
+	if result.Message != "Cleanup completed" {
+		t.Errorf("unexpected message: %s", result.Message)
 	}
 }

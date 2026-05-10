@@ -56,6 +56,13 @@ func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error)
 		return nil, err
 	}
 
+	logger := getLogger(ctx)
+
+	logger.Info("writing file",
+		"path", path,
+		"content_len", len(content),
+	)
+
 	// Security check
 	if err := ValidateFileSafety(path); err != nil {
 		return nil, err
@@ -71,6 +78,10 @@ func (w *Write) Execute(ctx context.Context, params map[string]any) (any, error)
 	appendMode := false
 	if append, ok := params["append"].(bool); ok {
 		appendMode = append
+	} else if appendStr, ok := params["append"].(string); ok {
+		appendMode = appendStr == "true" || appendStr == "1"
+	} else if appendNum, ok := params["append"].(float64); ok {
+		appendMode = appendNum != 0
 	}
 
 	var file *os.File

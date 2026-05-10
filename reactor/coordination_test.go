@@ -231,7 +231,7 @@ func TestTaskEntry_IsTerminal_IsCompletedSuccessfully_CanRetry(t *testing.T) {
 // ===========================================================================
 
 func TestNewCoordState(t *testing.T) {
-	cs := NewCoordState("parent-1", 30*time.Second)
+	cs := NewCoordState("parent-1", 30*time.Second, nil)
 
 	if cs.ParentTaskID != "parent-1" {
 		t.Errorf("ParentTaskID = %q, want %q", cs.ParentTaskID, "parent-1")
@@ -253,7 +253,7 @@ func TestNewCoordState(t *testing.T) {
 }
 
 func TestNewCoordState_NoTimeout(t *testing.T) {
-	cs := NewCoordState("parent-1", 0)
+	cs := NewCoordState("parent-1", 0, nil)
 
 	if cs.GlobalTimer != nil {
 		t.Error("GlobalTimer should be nil for zero timeout")
@@ -262,7 +262,7 @@ func TestNewCoordState_NoTimeout(t *testing.T) {
 }
 
 func TestCoordState_Lifecycle_Transitions(t *testing.T) {
-	cs := NewCoordState("parent-1", 0)
+	cs := NewCoordState("parent-1", 0, nil)
 	defer cs.Dispose()
 
 	// Running → Interrupted
@@ -305,7 +305,7 @@ func TestCoordState_Lifecycle_Transitions(t *testing.T) {
 }
 
 func TestCoordState_InvalidTransitions(t *testing.T) {
-	cs := NewCoordState("parent-1", 0)
+	cs := NewCoordState("parent-1", 0, nil)
 	defer cs.Dispose()
 
 	// Cannot interrupt when already completed
@@ -315,7 +315,7 @@ func TestCoordState_InvalidTransitions(t *testing.T) {
 	}
 
 	// Cannot resume from running
-	cs2 := NewCoordState("parent-2", 0)
+	cs2 := NewCoordState("parent-2", 0, nil)
 	defer cs2.Dispose()
 	if err := cs2.Resume(); err == nil {
 		t.Error("Resume() from Running should error")
@@ -323,7 +323,7 @@ func TestCoordState_InvalidTransitions(t *testing.T) {
 }
 
 func TestCoordState_RegisterUnregisterSubTask(t *testing.T) {
-	cs := NewCoordState("parent-1", 0)
+	cs := NewCoordState("parent-1", 0, nil)
 	defer cs.Dispose()
 
 	taskCtx := cs.RegisterSubTask("task-1")

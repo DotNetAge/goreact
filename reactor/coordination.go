@@ -362,8 +362,10 @@ type CoordState struct {
 	SubTaskResults map[string]*core.TaskResultEvent // Received results keyed by task ID
 	DispatchedAt time.Time          // When coordination started
 	GlobalTimer  *time.Timer        // Overall timeout timer
+	Logger       core.Logger        // Unified logging interface
 
 	// ====== Lifecycle control fields ======
+	mu              sync.Mutex       // Protects lifecycle state transitions
 	LifecycleCtx    context.Context              // Coordinator lifecycle context
 	LifecycleCancel context.CancelFunc           // Cancellation function
 	SubTaskCtxs     map[string]context.Context    // Per-sub-task independent context
@@ -376,7 +378,7 @@ type CoordState struct {
 }
 
 // NewCoordState creates a new CoordState for coordinator mode.
-func NewCoordState(parentTaskID string, overallTimeout time.Duration) *CoordState {
+func NewCoordState(parentTaskID string, overallTimeout time.Duration, logger core.Logger) *CoordState {
 	ctx, cancel := context.WithCancel(context.Background())
 	cs := &CoordState{
 		ParentTaskID:    parentTaskID,
@@ -389,6 +391,7 @@ func NewCoordState(parentTaskID string, overallTimeout time.Duration) *CoordStat
 		SubTaskCancels:  make(map[string]context.CancelFunc),
 		LifecycleState:  LifecycleRunning,
 		ControlChan:     make(chan *core.ControlCommand, 8),
+		Logger:          logger,
 	}
 
 	if overallTimeout > 0 {
@@ -407,13 +410,26 @@ func NewCoordState(parentTaskID string, overallTimeout time.Duration) *CoordStat
 // Dispose cleans up all resources held by the CoordState.
 // Must be called when coordination ends (success, cancellation, or error).
 func (cs *CoordState) Dispose() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	if cs.LifecycleCancel != nil {
 		cs.LifecycleCancel()
 	}
 	if cs.GlobalTimer != nil {
 		cs.GlobalTimer.Stop()
 	}
-	close(cs.ControlChan)
+
+	// Safe close: only close if not already closed
+	if cs.ControlChan != nil {
+		select {
+		case <-cs.ControlChan:
+			// Already closed
+		default:
+			close(cs.ControlChan)
+		}
+		cs.ControlChan = nil
+	}
 
 	// Cancel all sub-task contexts
 	for _, cancel := range cs.SubTaskCancels {
@@ -468,6 +484,9 @@ type TaskDecomposition struct {
 // Interrupt pauses the Coordinator, preserving all state for later resumption.
 // Sub-tasks that are currently running are cancelled via their individual contexts.
 func (cs *CoordState) Interrupt(reason string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	cs.checkLifecycleTransition(LifecycleInterrupted, reason)
 
 	if cs.LifecycleState != LifecycleRunning {
@@ -487,6 +506,9 @@ func (cs *CoordState) Interrupt(reason string) error {
 // Resume continues a previously interrupted Coordinator.
 // Creates new contexts for sub-tasks that were interrupted (not cancelled ones).
 func (cs *CoordState) Resume() error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	cs.checkLifecycleTransition(LifecycleRunning, "")
 
 	if cs.LifecycleState != LifecycleInterrupted {
@@ -510,6 +532,9 @@ func (cs *CoordState) Resume() error {
 
 // Cancel irreversibly terminates the Coordinator. This is a terminal state.
 func (cs *CoordState) Cancel(reason string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	targetState := LifecycleCancelled
 	cs.checkLifecycleTransition(targetState, reason)
 
@@ -532,6 +557,9 @@ func (cs *CoordState) Cancel(reason string) error {
 // MarkCompleted transitions the Coordinator to the completed (terminal) state.
 // Called automatically when all sub-tasks finish.
 func (cs *CoordState) MarkCompleted() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	if cs.LifecycleState.IsTerminal() {
 		return
 	}
@@ -557,7 +585,23 @@ func (cs *CoordState) UnregisterSubTask(taskID string) {
 // ===========================================================================
 
 func (cs *CoordState) checkLifecycleTransition(target LifecycleState, reason string) {
-	// Log transition attempts — useful for debugging
+	from := cs.LifecycleState
+	if from == target {
+		return
+	}
+	if !from.CanTransitionTo(target) {
+		cs.Logger.Warn("invalid lifecycle state transition",
+			"from", from,
+			"to", target,
+			"reason", reason,
+		)
+		return
+	}
+	cs.Logger.Info("coordinator lifecycle transition",
+		"from", from,
+		"to", target,
+		"reason", reason,
+	)
 }
 
 func (cs *CoordState) cancelAllSubTasks() {

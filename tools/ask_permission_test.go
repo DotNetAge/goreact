@@ -88,7 +88,7 @@ func TestAskPermission_BlockAndWait_Respond(t *testing.T) {
 			Name:          "replace",
 			SecurityLevel: core.LevelSensitive,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	var finalResult core.PermissionResult
@@ -131,7 +131,7 @@ func TestAskPermission_BlockAndWait_Denied(t *testing.T) {
 			Name:          "delete_file",
 			SecurityLevel: core.LevelHighRisk,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	var finalResult core.PermissionResult
@@ -165,7 +165,7 @@ func TestAskPermission_BlockAndWait_WithModifiedInput(t *testing.T) {
 			Name:          "write_file",
 			SecurityLevel: core.LevelSensitive,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	var finalResult core.PermissionResult
@@ -210,7 +210,7 @@ func TestAskPermission_RespondError(t *testing.T) {
 			Name:          "replace",
 			SecurityLevel: core.LevelSensitive,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	var finalResult core.PermissionResult
@@ -250,7 +250,7 @@ func TestAskPermission_WaitWithTimeout(t *testing.T) {
 			Name:          "replace",
 			SecurityLevel: core.LevelSensitive,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	done := make(chan struct{})
@@ -297,7 +297,7 @@ func TestAskPermission_BlockAndWaitReturnsCorrectResult(t *testing.T) {
 			Name:          "replace",
 			SecurityLevel: core.LevelSensitive,
 		},
-		Ctx:           newTestContext(),
+		Ctx: newTestContext(),
 	}
 
 	done := make(chan core.PermissionResult)
@@ -326,7 +326,152 @@ func newTestContext() *testContext {
 	return &testContext{done: make(chan struct{})}
 }
 
-func (c *testContext) Done() <-chan struct{} { return c.done }
-func (c *testContext) Err() error           { return nil }
+func (c *testContext) Done() <-chan struct{}       { return c.done }
+func (c *testContext) Err() error                  { return nil }
 func (c *testContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c *testContext) Value(key any) any     { return nil }
+func (c *testContext) Value(key any) any           { return nil }
+
+func TestAskPermission_NilToolInfo(t *testing.T) {
+	p := NewAskPermission()
+	ctx := &core.ToolUseContext{
+		ToolName: "unknown_tool",
+		ToolInfo: nil,
+	}
+
+	result := p.CheckPermissions(ctx)
+	if result.Behavior != core.PermissionAsk {
+		t.Errorf("expected Ask when ToolInfo is nil, got %s", result.Behavior)
+	}
+}
+
+func TestAskPermission_ContextCancellation(t *testing.T) {
+	p := NewAskPermission()
+	cancellableCtx := newCancellableContext()
+	ctx := &core.ToolUseContext{
+		ToolName: "replace",
+		ToolInfo: &core.ToolInfo{
+			Name:          "replace",
+			SecurityLevel: core.LevelSensitive,
+		},
+		Ctx: cancellableCtx,
+	}
+
+	var finalResult core.PermissionResult
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		finalResult = p.BlockAndWait(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	cancellableCtx.cancel()
+
+	wg.Wait()
+
+	if finalResult.Behavior != core.PermissionDeny {
+		t.Errorf("expected Deny on context cancellation, got %s", finalResult.Behavior)
+	}
+	if finalResult.Message == "" {
+		t.Error("expected non-empty message on cancellation")
+	}
+}
+
+func TestAskPermission_StoredResultReuse(t *testing.T) {
+	p := NewAskPermission()
+	ctx := &core.ToolUseContext{
+		ToolName: "replace",
+		ToolInfo: &core.ToolInfo{
+			Name:          "replace",
+			SecurityLevel: core.LevelSensitive,
+		},
+		Ctx: newTestContext(),
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		p.BlockAndWait(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	p.Respond(core.PermissionResult{Behavior: core.PermissionAllow, Message: "approved"})
+	wg.Wait()
+
+	// CheckPermissions doesn't reuse stored results in the current implementation
+	// The stored result is consumed by BlockAndWait
+	// So CheckPermissions still returns Ask for new calls
+	result := p.CheckPermissions(ctx)
+	if result.Behavior != core.PermissionAsk {
+		t.Logf("CheckPermissions returned %s after approval (expected Ask since CheckPermissions doesn't cache)", result.Behavior)
+	}
+}
+
+func TestAskPermission_MultipleSequentialRequests(t *testing.T) {
+	p := NewAskPermission()
+	baseCtx := &core.ToolUseContext{
+		ToolName: "write",
+		ToolInfo: &core.ToolInfo{
+			Name:          "write",
+			SecurityLevel: core.LevelSensitive,
+		},
+	}
+
+	for i := 0; i < 3; i++ {
+		ctx := &core.ToolUseContext{
+			ToolName: baseCtx.ToolName,
+			ToolInfo: baseCtx.ToolInfo,
+			Ctx:      newTestContext(),
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.BlockAndWait(ctx)
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+
+		p.Respond(core.PermissionResult{Behavior: core.PermissionAllow})
+		wg.Wait()
+
+		if p.IsWaiting() {
+			t.Errorf("iteration %d: expected IsWaiting to be false after response", i)
+		}
+	}
+}
+
+type cancellableContext struct {
+	done chan struct{}
+	err  error
+	mu   sync.Mutex
+}
+
+func newCancellableContext() *cancellableContext {
+	return &cancellableContext{done: make(chan struct{})}
+}
+
+func (c *cancellableContext) cancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err = fmt.Errorf("context cancelled")
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
+}
+
+func (c *cancellableContext) Done() <-chan struct{} { return c.done }
+func (c *cancellableContext) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+func (c *cancellableContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *cancellableContext) Value(key any) any           { return nil }

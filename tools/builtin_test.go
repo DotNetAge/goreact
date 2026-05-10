@@ -3,11 +3,21 @@ package tools
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DotNetAge/goreact/core"
 )
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("failed to resolve absolute path for %q: %v", path, err)
+	}
+	return abs
+}
 
 func TestGrep(t *testing.T) {
 	// Create Grep tool
@@ -24,7 +34,7 @@ func TestGrep(t *testing.T) {
 }
 
 func TestBash(t *testing.T) {
-	bash := NewBashTool()
+	bash := NewBashToolUnrestricted()
 
 	t.Run("basic command execution", func(t *testing.T) {
 		result, err := bash.Execute(context.Background(), map[string]any{"command": "echo hello"})
@@ -190,9 +200,10 @@ func TestGlob(t *testing.T) {
 
 func TestRead(t *testing.T) {
 	read := NewReadTool()
+	absPath := mustAbs(t, "builtin_test.go")
 
 	t.Run("read this test file", func(t *testing.T) {
-		result, err := read.Execute(context.Background(), map[string]any{"path": "builtin_test.go"})
+		result, err := read.Execute(context.Background(), map[string]any{"path": absPath})
 		if err != nil {
 			t.Fatalf("Expected no error, got %v", err)
 		}
@@ -207,7 +218,7 @@ func TestRead(t *testing.T) {
 
 	t.Run("read with line range", func(t *testing.T) {
 		result, err := read.Execute(context.Background(), map[string]any{
-			"path":       "builtin_test.go",
+			"path":       absPath,
 			"start_line": 1.0,
 			"end_line":   5.0,
 		})

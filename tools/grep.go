@@ -13,14 +13,24 @@ import (
 // It mimics ClaudeCode's GrepTool with output budget management.
 type GrepTool struct {
 	MaxResults     int
-	MaxOutputChars int // Maximum characters in output (second layer defense)
+	MaxOutputChars int
+	sandbox        *SandboxConfig
 }
 
 // NewGrepTool creates a Grep tool.
 func NewGrepTool() core.FuncTool {
 	return &GrepTool{
 		MaxResults:     100,
-		MaxOutputChars: 50000, // ~16K tokens, generous but bounded
+		MaxOutputChars: 50000,
+		sandbox:        UnrestrictedSandboxConfig(),
+	}
+}
+
+func NewGrepToolWithSandbox(config *SandboxConfig) core.FuncTool {
+	return &GrepTool{
+		MaxResults:     100,
+		MaxOutputChars: 50000,
+		sandbox:        config,
 	}
 }
 
@@ -67,6 +77,8 @@ func (t *GrepTool) Execute(ctx context.Context, params map[string]any) (any, err
 	args = append(args, pattern, ".")
 
 	cmd := exec.CommandContext(ctx, "rg", args...)
+	cmd = ApplySandbox(cmd, t.sandbox)
+	ensureTempDir(t.sandbox.TempDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// If rg returns 1, it means no matches found

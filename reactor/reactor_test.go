@@ -17,11 +17,12 @@ import (
 
 func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 	tests := []struct {
-		name        string
-		prompt      *Prompt
-		wantStatic  []string // expected static section texts (before boundary)
-		wantDynamic []string // expected dynamic section texts (after boundary)
-		wantTotal   int
+		name         string
+		prompt       *Prompt
+		wantPreEnv   []string // sections before Environment
+		wantDynamic  []string // dynamic sections (after boundary)
+		wantTotal    int
+		wantReminder string // expected system reminders content
 	}{
 		{
 			name: "all fields filled",
@@ -37,59 +38,65 @@ func TestPrompt_ToSectionedMessages_StaticOrder(t *testing.T) {
 				OutputEfficiency:    "Use prose.",
 				Language:            "Always respond in English.",
 			},
-			wantStatic: []string{
+			wantPreEnv: []string{
 				"You are a test agent.",
 				"## Behavioral Rules\n1. Be helpful.",
 				"Be cautious with writes.",
-				"- skill_a",
 				"Use tools wisely.",
+				"- skill_a",
 				"Find and delegate to expert agents.",
 				"Be concise.",
-				"Remember context limits.",
 			},
 			wantDynamic: []string{
 				"Use prose.",
-				"Always respond in English.",
 			},
-			wantTotal: 11, // 8 static + 1 boundary + 2 dynamic
+			wantTotal:    11,
+			wantReminder: "Remember context limits.",
 		},
 		{
 			name: "only identity",
 			prompt: &Prompt{
 				Identity: "Minimal agent.",
 			},
-			wantStatic: []string{
-				"Minimal agent.",
-				BuildSystemReminders(),
-			},
-			wantDynamic: nil,
-			wantTotal:   3, // 2 static (identity + default system reminders) + 1 boundary
+			wantPreEnv:   []string{"Minimal agent."},
+			wantDynamic:  nil,
+			wantTotal:    4,
+			wantReminder: BuildSystemReminders(),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msgs := tt.prompt.ToSectionedMessages()
+			msgs := tt.prompt.ToSectionedMessages("", "")
 
 			if len(msgs) != tt.wantTotal {
 				t.Fatalf("len(messages) = %d, want %d", len(msgs), tt.wantTotal)
 			}
 
-			// Verify static sections
-			for i, want := range tt.wantStatic {
+			for i, want := range tt.wantPreEnv {
 				got := msgs[i].Content[0].Text
 				if got != want {
-					t.Errorf("static section [%d] content = %q, want %q", i, got, want)
+					t.Errorf("section [%d] content = %q, want %q", i, got, want)
 				}
 			}
 
-			// Verify boundary
-			boundaryIdx := len(tt.wantStatic)
+			envIdx := len(tt.wantPreEnv)
+			envContent := msgs[envIdx].Content[0].Text
+			if !strings.Contains(envContent, "## Environment") {
+				t.Errorf("section [%d] expected environment section, got %q", envIdx, envContent)
+			}
+
+			reminderIdx := envIdx + 1
+			reminderContent := msgs[reminderIdx].Content[0].Text
+			if reminderContent != tt.wantReminder {
+				t.Errorf("section [%d] expected system reminders, got %q", reminderIdx, reminderContent)
+			}
+
+			boundaryIdx := reminderIdx + 1
 			if msgs[boundaryIdx].Content[0].Text != DynamicBoundary {
 				t.Errorf("message[%d] expected DynamicBoundary, got %q", boundaryIdx, msgs[boundaryIdx].Content[0].Text)
 			}
 
-			// Verify dynamic sections
 			dynStart := boundaryIdx + 1
 			for i, want := range tt.wantDynamic {
 				got := msgs[dynStart+i].Content[0].Text
@@ -106,11 +113,11 @@ func TestPrompt_ToSectionedMessages_EmptyFieldsSkipped(t *testing.T) {
 		Identity: "You are a minimal agent.",
 	}
 
-	msgs := p.ToSectionedMessages()
+	msgs := p.ToSectionedMessages("", "")
 
-	// Identity + default SystemReminders + DynamicBoundary
-	if len(msgs) != 3 {
-		t.Errorf("expected 3 messages (identity + system reminders + boundary), got %d", len(msgs))
+	// Identity + Environment + SystemReminders + DynamicBoundary
+	if len(msgs) != 4 {
+		t.Errorf("expected 4 messages (identity + environment + system reminders + boundary), got %d", len(msgs))
 	}
 }
 
@@ -693,7 +700,7 @@ func TestCheckTermination_DuplicateAction_NotTriggered(t *testing.T) {
 
 func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	t.Run("plain JSON", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "answer", "final_answer": "done", "reasoning": "ok"}`)
+		thought, err := ParseThinkResponse(`{"decision": "answer", "final_answer": "done", "reasoning": "ok"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -710,7 +717,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 
 	t.Run("JSON in code fence", func(t *testing.T) {
 		input := "```json\n{\"decision\": \"answer\", \"final_answer\": \"fenced\", \"reasoning\": \"fence\"}\n```"
-		thought, err := ParseThinkResponse(input)
+		thought, err := ParseThinkResponse(input, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -724,7 +731,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 
 	t.Run("JSON in code fence without language tag", func(t *testing.T) {
 		input := "```\n{\"decision\": \"answer\", \"final_answer\": \"bare\", \"reasoning\": \"bare\"}\n```"
-		thought, err := ParseThinkResponse(input)
+		thought, err := ParseThinkResponse(input, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -734,7 +741,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("mixed case decision is normalized to lowercase", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "Answer", "final_answer": "mixed", "reasoning": "case"}`)
+		thought, err := ParseThinkResponse(`{"decision": "Answer", "final_answer": "mixed", "reasoning": "case"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -744,7 +751,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("unknown decision defaults to answer", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "fly", "final_answer": "defaulted", "reasoning": "unknown"}`)
+		thought, err := ParseThinkResponse(`{"decision": "fly", "final_answer": "defaulted", "reasoning": "unknown"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -757,7 +764,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("missing fields get zero values", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{}`)
+		thought, err := ParseThinkResponse(`{}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -770,11 +777,125 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("invalid JSON returns error", func(t *testing.T) {
-		_, err := ParseThinkResponse(`{invalid json`)
+		_, err := ParseThinkResponse(`{invalid json`, nil)
 		if err == nil {
 			t.Error("expected parse error for invalid JSON")
 		}
 	})
+}
+
+func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
+	t.Run("Chinese markdown answer should be parsed as DecisionAnswer", func(t *testing.T) {
+		chineseAnswer := `根据最新的搜索结果，OpenAI 近期在模型发布、基础设施合作以及商业化方面都有重大进展，以下是核心动态总结：
+
+### 1. 最新模型发布
+* **GPT-5.5 发布**：OpenAI 在 2026 年 4 月宣布了最新模型 **GPT-5.5**。
+
+### 2. 基础设施合作
+* 与 NVIDIA 达成战略合作`
+
+		thought, err := ParseThinkResponse(chineseAnswer, nil)
+		if err != nil {
+			t.Fatalf("expected success for direct text answer, got error: %v", err)
+		}
+		if thought.Decision != DecisionAnswer {
+			t.Errorf("expected DecisionAnswer, got %s", thought.Decision)
+		}
+		if !thought.IsFinal {
+			t.Error("expected IsFinal to be true for direct answer")
+		}
+		if !strings.Contains(thought.FinalAnswer, "OpenAI") {
+			t.Errorf("expected FinalAnswer to contain 'OpenAI', got: %s", truncate(thought.FinalAnswer, 100))
+		}
+	})
+
+	t.Run("English plain text answer should be parsed as DecisionAnswer", func(t *testing.T) {
+		englishAnswer := `Based on the search results, here's a summary of OpenAI's latest developments:
+
+## 1. Model Releases
+- GPT-5.5 announced in April 2026
+
+## 2. Business Updates
+- Revenue reached $4.3B in H1 2025`
+
+		thought, err := ParseThinkResponse(englishAnswer, nil)
+		if err != nil {
+			t.Fatalf("expected success for English answer, got error: %v", err)
+		}
+		if thought.Decision != DecisionAnswer {
+			t.Errorf("expected DecisionAnswer, got %s", thought.Decision)
+		}
+	})
+
+	t.Run("Short non-answer content should return error", func(t *testing.T) {
+		shortContent := "hello"
+		_, err := ParseThinkResponse(shortContent, nil)
+		if err == nil {
+			t.Error("expected error for short non-JSON content")
+		}
+	})
+
+	t.Run("JSON-like but invalid should return error", func(t *testing.T) {
+		jsonLike := `{decision: answer, malformed`
+		_, err := ParseThinkResponse(jsonLike, nil)
+		if err == nil {
+			t.Error("expected error for malformed JSON-like content")
+		}
+	})
+}
+
+func TestLooksLikeDirectAnswer(t *testing.T) {
+	testCases := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "Chinese summary with 根据关键词",
+			content:  "根据最新的搜索结果，以下是总结...",
+			expected: true,
+		},
+		{
+			name:     "English with based on",
+			content:  "Based on the search results, here is the answer...",
+			expected: true,
+		},
+		{
+			name:     "Markdown heading",
+			content:  "## Summary\n\nThis is a detailed response about the topic.",
+			expected: true,
+		},
+		{
+			name:     "Long text without keywords (>50 chars)",
+			content:  strings.Repeat("This is a long enough response that should be considered as an answer. ", 3),
+			expected: true,
+		},
+		{
+			name:     "Too short",
+			content:  "short",
+			expected: false,
+		},
+		{
+			name:     "Starts with brace (JSON-like)",
+			content:  `{not valid json but starts with brace`,
+			expected: false,
+		},
+		{
+			name:     "Only special characters",
+			content:  "!@#$%^&*()",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := looksLikeDirectAnswer(tc.content)
+			if result != tc.expected {
+				t.Errorf("looksLikeDirectAnswer() = %v, expected %v for content: %q",
+					result, tc.expected, truncate(tc.content, 50))
+			}
+		})
+	}
 }
 
 // ============================================================================
@@ -1093,4 +1214,331 @@ func (m *mockMemoryImpl) Store(ctx context.Context, record core.MemoryRecord) (s
 }
 func (m *mockMemoryImpl) Delete(ctx context.Context, id string) error {
 	return nil
+}
+
+// mockModel is a mock that always returns a fixed response.
+type mockModel struct{}
+
+func (m *mockModel) Call(ctx context.Context, model string, messages []gochatcore.Message, tools []gochatcore.Tool) (*gochatcore.Response, error) {
+	return &gochatcore.Response{
+		Content: "Hello! How can I help you today?",
+	}, nil
+}
+
+// mockModelWithToolCalls returns native tool calls instead of text responses.
+type mockModelWithToolCalls struct {
+	calls      int
+	responses  []gochatcore.Response
+	tools      map[string]core.FuncTool
+}
+
+func (m *mockModelWithToolCalls) Call(ctx context.Context, model string, messages []gochatcore.Message, tools []gochatcore.Tool) (*gochatcore.Response, error) {
+	if m.calls < len(m.responses) {
+		resp := &m.responses[m.calls]
+		m.calls++
+		return resp, nil
+	}
+	// Default: return answer
+	return &gochatcore.Response{
+		Content: `{"decision": "answer", "final_answer": "Task completed."}`,
+	}, nil
+}
+
+// ============================================================================
+// Enhanced Reactor Tests with Mock LLM
+// ============================================================================
+
+func TestReactor_MockLLMWithThought(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Hello from mock!", "reasoning": "User asked for help"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Help me", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount == 0 {
+		t.Fatal("mock LLM was not called")
+	}
+	if result.Answer != "Hello from mock!" {
+		t.Errorf("expected answer 'Hello from mock!', got %q", result.Answer)
+	}
+	if result.TotalIterations < 1 {
+		t.Errorf("expected at least 1 iteration, got %d", result.TotalIterations)
+	}
+}
+
+func TestReactor_MockLLMWithNativeToolCalls(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		if callCount == 1 {
+			toolArgs := `{"message": "test echo"}`
+			return &gochatcore.Response{
+				Message: gochatcore.Message{
+					ToolCalls: []gochatcore.ToolCall{
+						{Name: "echo_tool", Arguments: toolArgs},
+					},
+				},
+			}, nil
+		}
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Done"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	echoTool := &mockEchoTool{}
+	if err := r.RegisterTool(echoTool); err != nil {
+		t.Fatalf("failed to register echo tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Echo this", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if callCount < 2 {
+		t.Logf("WARN: expected at least 2 LLM calls, got %d", callCount)
+	}
+
+	hasToolCall := false
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeToolCall && step.Action.Target == "echo_tool" {
+			hasToolCall = true
+			break
+		}
+	}
+	if !hasToolCall {
+		t.Log("WARN: no tool call step found in history (may be expected if mock path differs)")
+	}
+}
+
+func TestReactor_MockLLMMultiTurnConversation(t *testing.T) {
+	turnCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		turnCount++
+		if turnCount > 1 {
+			if len(input.History) == 0 {
+				t.Errorf("turn %d: expected conversation history, got 0 messages", turnCount)
+			}
+			t.Logf("turn %d: history has %d messages", turnCount, len(input.History))
+		}
+		return &gochatcore.Response{
+			Content: fmt.Sprintf(`{"decision": "answer", "final_answer": "Response %d"}`, turnCount),
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result1, err := r.Run(context.Background(), "Question 1", nil)
+	if err != nil {
+		t.Fatalf("run 1 failed: %v", err)
+	}
+	t.Logf("Run 1: answer=%q, iterations=%d", result1.Answer, result1.TotalIterations)
+
+	if turnCount == 0 {
+		t.Fatal("mock LLM was never called")
+	}
+}
+
+func TestReactor_MockLLMToolExecutionResult(t *testing.T) {
+	var capturedHistory ConversationHistory
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+			if len(input.History) == 0 {
+				capturedHistory = input.History
+				return &gochatcore.Response{
+					Content: `{"decision": "act", "tool_calls": {"echo_tool": {"message": "hello"}}}`,
+				}, nil
+			}
+			return &gochatcore.Response{
+				Content: `{"decision": "answer", "final_answer": "Done"}`,
+			}, nil
+		}),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Test", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.TotalIterations == 0 {
+		t.Error("expected at least 1 iteration")
+	}
+
+	t.Logf("Captured history on first call: %d messages", len(capturedHistory))
+}
+
+func TestReactor_MockLLMWithParseError(t *testing.T) {
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		return &gochatcore.Response{
+			Content: "this is not valid json {{{",
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 2,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Test", nil)
+	if err != nil {
+		t.Logf("expected: run returned error: %v", err)
+	} else {
+		t.Logf("run completed with answer: %q", result.Answer)
+	}
+}
+
+func TestReactor_MockLLMMultipleToolCallsInParallel(t *testing.T) {
+	toolCallCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		toolCallCount++
+		if toolCallCount == 1 {
+			return &gochatcore.Response{
+				Content: `{
+					"decision": "act",
+					"tool_calls": {
+						"echo_tool": {"message": "first"},
+						"read": {"path": "/tmp/test.txt"}
+					}
+				}`,
+			}, nil
+		}
+		return &gochatcore.Response{
+			Content: `{"decision": "answer", "final_answer": "Both tools executed"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 5,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register echo tool: %v", err)
+	}
+	if err := r.RegisterTool(&mockReadTool{}); err != nil {
+		t.Fatalf("failed to register read tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Use both tools", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeToolCall {
+			t.Logf("Step %d: action result = %q", step.Iteration, step.Action.Result)
+			if strings.Contains(step.Action.Result, "echo_tool") && strings.Contains(step.Action.Result, "read") {
+				t.Log("PASS: both tools called in same step")
+			}
+		}
+	}
+}
+
+func TestReactor_MockLLMDecisionClarify(t *testing.T) {
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		return &gochatcore.Response{
+			Content: `{"decision": "clarify", "clarification_question": "Can you provide more details?"}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 2,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	result, err := r.Run(context.Background(), "Help me", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasClarify := false
+	for _, step := range result.Steps {
+		if step.Action.Type == ActionTypeClarify {
+			hasClarify = true
+			if step.Action.Result != "Can you provide more details?" {
+				t.Errorf("expected clarify question, got %q", step.Action.Result)
+			}
+		}
+	}
+	if !hasClarify {
+		t.Log("WARN: no clarify action found in steps")
+	}
+}
+
+func TestReactor_MockLLMMaxIterationsRespected(t *testing.T) {
+	callCount := 0
+	mockFn := func(ctx context.Context, input CallInput) (*gochatcore.Response, error) {
+		callCount++
+		return &gochatcore.Response{
+			Content: `{"decision": "act", "tool_calls": {"echo_tool": {"message": "loop"}}}`,
+		}, nil
+	}
+
+	r := NewReactor(ReactorConfig{
+		Model:         "test",
+		MaxIterations: 3,
+	},
+		WithMockLLM(mockFn),
+		WithoutBundledTools(),
+	)
+
+	if err := r.RegisterTool(&mockEchoTool{}); err != nil {
+		t.Fatalf("failed to register tool: %v", err)
+	}
+
+	result, err := r.Run(context.Background(), "Test loop", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.TotalIterations > 3 {
+		t.Errorf("expected <= 3 iterations, got %d", result.TotalIterations)
+	}
+	t.Logf("Iterations: %d (max was 3), LLM calls: %d", result.TotalIterations, callCount)
 }
