@@ -52,6 +52,17 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 	}
 
 	var contentBuf strings.Builder
+
+	// 防御性检查：确保 LLMCaller 已初始化
+	if r.llmCaller == nil {
+		r.getLogger().Error("llm caller is nil, cannot execute think",
+			fmt.Errorf("LLMCaller not initialized in Reactor"),
+			"session_id", sessionID,
+			"iteration", iter,
+		)
+		return 0, fmt.Errorf("llm caller not initialized")
+	}
+
 	result := r.llmCaller.CallStream(ctx.Ctx(), callInput, func(chunk string) {
 		contentBuf.WriteString(chunk)
 		ctx.EmitEvent(core.ThinkingDelta, chunk)
