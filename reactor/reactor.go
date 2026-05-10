@@ -266,6 +266,7 @@ func (r *Reactor) initLLMCaller(config ReactorConfig, setup *reactorSetup) {
 		FrequencyPenalty: config.FrequencyPenalty,
 		MaxTokens:        config.MaxTokens,
 		ClientType:       config.ClientType,
+		Logger:           r.getLogger(), // ← 关键：注入 Logger 到 LLMCaller！
 	}
 
 	client := gochat.Client().Config(
