@@ -10,24 +10,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AgentRegistry holds parsed agent configurations indexed by name.
 type AgentRegistry struct {
 	path   string
 	agents map[string]*core.AgentConfig
+	logger core.Logger
+}
+
+// agentRegistryOption holds configuration options for LoadAgentsFrom.
+type agentRegistryOption struct {
+	logger core.Logger
+}
+
+// AgentRegistryOption is a function that configures agent registry loading.
+type AgentRegistryOption func(*agentRegistryOption)
+
+// WithRegistryLogger returns an Option that sets the logger for agent registry operations.
+func WithRegistryLogger(logger core.Logger) AgentRegistryOption {
+	return func(o *agentRegistryOption) { o.logger = logger }
 }
 
 // LoadFrom loads all agent definition files (.md) from the specified directory,
 // parses their YAML frontmatter and system prompt body, and returns an AgentRegistry.
-func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
+//
+// Options:
+//   - WithRegistryLogger: custom logger for parsing warnings (defaults to core.DefaultLogger)
+func LoadAgentsFrom(dir string, opts ...AgentRegistryOption) (*AgentRegistry, error) {
 	absPath, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	logger := core.DefaultLogger()
+	cfg := &agentRegistryOption{logger: core.DefaultLogger()}
+	for _, opt := range opts {
+		opt(cfg)
+	}
 
 	registry := &AgentRegistry{
 		path:   absPath,
 		agents: make(map[string]*core.AgentConfig),
+		logger: cfg.logger,
 	}
 
 	entries, err := os.ReadDir(absPath)
@@ -43,7 +65,7 @@ func LoadAgentsFrom(dir string) (*AgentRegistry, error) {
 			filePath := filepath.Join(absPath, entry.Name())
 			agent, err := parseAgentFile(filePath)
 			if err != nil {
-				logger.Warn("failed to parse agent file, skipping",
+				registry.logger.Warn("failed to parse agent file, skipping",
 					"path", filePath,
 					"error", err)
 				continue

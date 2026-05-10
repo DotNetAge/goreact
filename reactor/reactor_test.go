@@ -700,7 +700,7 @@ func TestCheckTermination_DuplicateAction_NotTriggered(t *testing.T) {
 
 func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	t.Run("plain JSON", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "answer", "final_answer": "done", "reasoning": "ok"}`)
+		thought, err := ParseThinkResponse(`{"decision": "answer", "final_answer": "done", "reasoning": "ok"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -717,7 +717,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 
 	t.Run("JSON in code fence", func(t *testing.T) {
 		input := "```json\n{\"decision\": \"answer\", \"final_answer\": \"fenced\", \"reasoning\": \"fence\"}\n```"
-		thought, err := ParseThinkResponse(input)
+		thought, err := ParseThinkResponse(input, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -731,7 +731,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 
 	t.Run("JSON in code fence without language tag", func(t *testing.T) {
 		input := "```\n{\"decision\": \"answer\", \"final_answer\": \"bare\", \"reasoning\": \"bare\"}\n```"
-		thought, err := ParseThinkResponse(input)
+		thought, err := ParseThinkResponse(input, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -741,7 +741,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("mixed case decision is normalized to lowercase", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "Answer", "final_answer": "mixed", "reasoning": "case"}`)
+		thought, err := ParseThinkResponse(`{"decision": "Answer", "final_answer": "mixed", "reasoning": "case"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -751,7 +751,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("unknown decision defaults to answer", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{"decision": "fly", "final_answer": "defaulted", "reasoning": "unknown"}`)
+		thought, err := ParseThinkResponse(`{"decision": "fly", "final_answer": "defaulted", "reasoning": "unknown"}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -764,7 +764,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("missing fields get zero values", func(t *testing.T) {
-		thought, err := ParseThinkResponse(`{}`)
+		thought, err := ParseThinkResponse(`{}`, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -777,7 +777,7 @@ func TestParseThinkResponse_JSONFormats(t *testing.T) {
 	})
 
 	t.Run("invalid JSON returns error", func(t *testing.T) {
-		_, err := ParseThinkResponse(`{invalid json`)
+		_, err := ParseThinkResponse(`{invalid json`, nil)
 		if err == nil {
 			t.Error("expected parse error for invalid JSON")
 		}
@@ -794,7 +794,7 @@ func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
 ### 2. 基础设施合作
 * 与 NVIDIA 达成战略合作`
 
-		thought, err := ParseThinkResponse(chineseAnswer)
+		thought, err := ParseThinkResponse(chineseAnswer, nil)
 		if err != nil {
 			t.Fatalf("expected success for direct text answer, got error: %v", err)
 		}
@@ -818,7 +818,7 @@ func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
 ## 2. Business Updates
 - Revenue reached $4.3B in H1 2025`
 
-		thought, err := ParseThinkResponse(englishAnswer)
+		thought, err := ParseThinkResponse(englishAnswer, nil)
 		if err != nil {
 			t.Fatalf("expected success for English answer, got error: %v", err)
 		}
@@ -829,7 +829,7 @@ func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
 
 	t.Run("Short non-answer content should return error", func(t *testing.T) {
 		shortContent := "hello"
-		_, err := ParseThinkResponse(shortContent)
+		_, err := ParseThinkResponse(shortContent, nil)
 		if err == nil {
 			t.Error("expected error for short non-JSON content")
 		}
@@ -837,7 +837,7 @@ func TestParseThinkResponse_DirectTextAnswer(t *testing.T) {
 
 	t.Run("JSON-like but invalid should return error", func(t *testing.T) {
 		jsonLike := `{decision: answer, malformed`
-		_, err := ParseThinkResponse(jsonLike)
+		_, err := ParseThinkResponse(jsonLike, nil)
 		if err == nil {
 			t.Error("expected error for malformed JSON-like content")
 		}

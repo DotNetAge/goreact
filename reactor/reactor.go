@@ -493,6 +493,9 @@ func NewReactor(config ReactorConfig, opts ...ReactorOption) *Reactor {
 		r.cacheMu.Unlock()
 	}
 
+	// Inject logger into offload package for proper dependency injection
+	SetOffloadLogger(r.getLogger())
+
 	// Start background cleanup for offloaded files
 	CleanupOffloadedFiles()
 

@@ -65,7 +65,10 @@ func stripJSONWrappers(s string) string {
 // ParseThinkResponse parses an LLM response string into a Thought struct.
 // If the content is not valid JSON (e.g., LLM returned a direct text answer),
 // it will be automatically wrapped as a DecisionAnswer Thought.
-func ParseThinkResponse(content string) (*Thought, error) {
+//
+// The logger parameter enables dependency injection for TUI/testing environments.
+// Pass nil to disable logging for this operation.
+func ParseThinkResponse(content string, logger core.Logger) (*Thought, error) {
 	content = stripJSONWrappers(content)
 
 	var thought Thought
@@ -73,10 +76,12 @@ func ParseThinkResponse(content string) (*Thought, error) {
 		// Check if content looks like a direct answer (non-empty, substantial text)
 		trimmed := strings.TrimSpace(content)
 		if len(trimmed) > 10 && looksLikeDirectAnswer(trimmed) {
-			core.DefaultLogger().Info("parsing non-JSON response as direct answer",
-				"content_length", len(trimmed),
-				"preview", truncate(trimmed, 100),
-			)
+			if logger != nil {
+				logger.Info("parsing non-JSON response as direct answer",
+					"content_length", len(trimmed),
+					"preview", truncate(trimmed, 100),
+				)
+			}
 			return &Thought{
 				Decision:    DecisionAnswer,
 				Reasoning:   "LLM returned direct text answer (not JSON)",

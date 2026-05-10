@@ -86,7 +86,7 @@ func (r *Reactor) Think(ctx *ReactContext) (int, error) {
 		)
 	} else {
 		var parseErr error
-		thought, parseErr = ParseThinkResponse(content)
+		thought, parseErr = ParseThinkResponse(content, r.getLogger())
 		if parseErr != nil {
 			r.getLogger().Error("think parse failed", parseErr,
 				"session_id", sessionID,

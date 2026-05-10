@@ -22,11 +22,21 @@ const offloadDirName = ".goreact" + string(os.PathSeparator) + "offload"
 // offloadPrefix is the marker prefix for offload reference text in message content.
 const offloadPrefix = "[offload:"
 
-// offloadSuffix is the marker suffix for offload reference text.
+// offloadSuffix is the marker suffix for offload reference text in message content.
 const offloadSuffix = "]"
 
 // offloadTTL defines how long offloaded files are kept before cleanup (24 hours).
 const offloadTTL = 24 * time.Hour
+
+// offloadLogger allows dependency injection for TUI/testing environments.
+// Must be set via SetOffloadLogger before any offload operation if custom logging is needed.
+var offloadLogger core.Logger = core.DefaultLogger()
+
+// SetOffloadLogger sets the logger for all offload operations.
+// This enables proper logging control in TUI and test environments.
+func SetOffloadLogger(logger core.Logger) {
+	offloadLogger = logger
+}
 
 // offloadCleanupInterval defines how often to check for expired files (1 hour).
 const offloadCleanupInterval = 1 * time.Hour
@@ -169,7 +179,7 @@ func cleanupExpiredOffloads() {
 		if os.IsNotExist(err) {
 			return
 		}
-		core.DefaultLogger().Warn("failed to read offload directory", "dir", rootDir, "error", err)
+		offloadLogger.Warn("failed to read offload directory", "dir", rootDir, "error", err)
 		return
 	}
 
@@ -196,7 +206,7 @@ func cleanupExpiredOffloads() {
 			if now.Sub(info.ModTime()) > offloadTTL {
 				filePath := filepath.Join(sessionDir, file.Name())
 				if err := os.Remove(filePath); err != nil {
-					core.DefaultLogger().Warn("failed to clean up offloaded file",
+					offloadLogger.Warn("failed to clean up offloaded file",
 						"file", filePath,
 						"error", err,
 					)
@@ -213,7 +223,7 @@ func cleanupExpiredOffloads() {
 	}
 
 	if totalCleaned > 0 {
-		core.DefaultLogger().Info("offload cleanup completed",
+		offloadLogger.Info("offload cleanup completed",
 			"files_removed", totalCleaned,
 		)
 	}
@@ -235,7 +245,7 @@ func CleanupSessionOffloads(sessionID string) error {
 	for _, entry := range entries {
 		filePath := filepath.Join(sessionDir, entry.Name())
 		if err := os.Remove(filePath); err != nil {
-			core.DefaultLogger().Warn("failed to remove session offload file",
+			offloadLogger.Warn("failed to remove session offload file",
 				"file", filePath,
 				"error", err,
 			)
@@ -246,7 +256,7 @@ func CleanupSessionOffloads(sessionID string) error {
 		return fmt.Errorf("failed to remove session offload directory: %w", err)
 	}
 
-	core.DefaultLogger().Info("session offload cleanup completed",
+	offloadLogger.Info("session offload cleanup completed",
 		"session_id", sessionID,
 		"files_removed", len(entries),
 	)
